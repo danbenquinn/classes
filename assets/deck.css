@@ -1,0 +1,385 @@
+/* MAE 2501 — shared deck stylesheet (extracted 2026-07 from the four per-deck <style> blocks).
+   One copy for every deck; per-deck HTML keeps only per-slide overrides (e.g. #hw-q3 .qchoice).
+   Colors/sizes come from tokens.css (linked separately). Feature rules (stack, camera, quad, playlist)
+   are inert unless a deck's slides use them. Edit here, and every deck picks it up. */
+
+  /* Color + type tokens (--ink, --muted, --mma-*, --accent, --ok, --bg, --font-sans, …) come from
+     house-style/tokens.css, linked above. Edit tokens.json + rerun build_css.py, never here. */
+  .reveal{ font-family:"Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color:var(--ink); }
+  .reveal .slides section{ text-align:left; }
+  .reveal .slides{ z-index:6; }
+  .reveal h1,.reveal h2,.reveal h3{ text-transform:none; letter-spacing:-0.01em; color:var(--ink); font-weight:650; }
+  .reveal .backgrounds{ background:var(--bg); }
+  section.stage{ background:var(--bg); }
+
+  .title-wrap .kicker{ color:var(--accent); font-size:calc(var(--size-caption) * 720px); letter-spacing:.18em; text-transform:uppercase; margin-bottom:.4em;}
+  .title-wrap h1{ font-size:calc(var(--size-title) * 720px); margin:0 0 .15em; }
+  .title-wrap .subtitle{ color:var(--muted); font-style:italic; font-size:calc(var(--size-subtitle) * 720px); }
+
+  /* Presenter-remote QR setup slide (my reference only — trimmed before publishing).
+     TWO COLUMNS: QR left, text right. It was a centred vertical stack, which was fine until the backend
+     health panel arrived underneath and pushed everything off the bottom of the slide. A stack has no
+     spare room on a 720-tall slide once a 300px QR is in it; a second column has plenty.
+     The QR is 200px rather than 300px because this one is only ever scanned from arm's length, at the
+     laptop — unlike the poll QRs, which the back row has to read. */
+  .reveal .slides section#remote-qr{ top:0 !important; height:100%; text-align:left; }
+  .remoteqr{ height:100%; display:grid;
+             grid-template-columns:auto minmax(0, 1fr);
+             grid-template-rows:auto auto auto auto;
+             column-gap:1.15em; row-gap:.3em; align-content:center; }
+  .remoteqr .rq-code  { grid-column:1; grid-row:1 / -1; align-self:center;
+                        background:#fff; padding:14px; border-radius:14px; line-height:0; }
+  .remoteqr .rq-code img, .remoteqr .rq-code canvas{ width:200px !important; height:200px !important; display:block; }
+  .remoteqr .rq-kicker{ grid-column:2; grid-row:1; align-self:end;
+                        color:var(--accent); font-size:.5em; letter-spacing:.16em; text-transform:uppercase; }
+  .remoteqr .rq-url   { grid-column:2; grid-row:2; color:var(--muted); font-size:.42em;
+                        font-family:ui-monospace,monospace; }
+  .remoteqr .rq-hint  { grid-column:2; grid-row:3; color:var(--muted); font-size:.42em; margin:0; }
+  /* Backend health, checked when the deck opens and shown here — the one slide you always pass on the
+     way in. Silent when healthy; loud when not, because the alternative is finding out while a room
+     watches you scan a QR that will never connect.
+     max-height + overflow:auto is the guarantee: whatever the panel ends up saying, it scrolls inside
+     its own box instead of growing the slide. Structural, not a guess about how long the text runs —
+     which is what the old vertical stack was relying on, right up until it wasn't. Rows stay `auto` so
+     the block still centres vertically when the status is a single healthy green line. */
+  .remoteqr .rq-status{ grid-column:2; grid-row:4; max-height:58%; overflow:auto;
+                        font-size:.4em; line-height:1.45; margin:.35em 0 0;
+                        padding:.55em .8em; border-radius:8px; border:1px solid transparent; }
+  .remoteqr .rq-status.checking{ color:var(--muted); padding-left:0; }
+  .remoteqr .rq-status.ok{ color:var(--spring); padding-left:0; }
+  .remoteqr .rq-status.fail{ color:#e8eaed; background:rgba(192,80,77,.16); border-color:#c0504d; }
+  .remoteqr .rq-status.fail b{ color:#f0a9a7; }
+  .remoteqr .rq-status a{ color:var(--accent); }
+  .remoteqr .rq-status ol{ margin:.4em 0 0; padding-left:1.2em; }
+  .remoteqr .rq-status li{ margin:.2em 0; }
+
+  .divider .num{ color:var(--accent); font-size:3.2em; font-weight:700; line-height:1; }
+  .divider .lbl{ font-size:1.5em; color:var(--ink); margin-top:.15em; }
+
+  section.board, section.intro{ background:#000; }
+  .reveal .slides section.board, .reveal .slides section.intro{ top:0 !important; height:100%; }  /* full slide, so the cue pins to the real lower-left corner, not the vertically-centered box */
+  section.board .cue, section.intro .cue{ position:absolute; left:2%; bottom:3.5%; width:.5em; height:.5em;
+                      border-radius:50%; background:rgba(255,255,255,.14); }
+  /* --- supplemental (in-class-only) slides ------------------------------------------------------
+     A slide marked `scope: supplemental` in the manifest sits past the end of the deck and is stripped
+     from every student-facing artifact (DESIGN.md "Supplemental slides"). The cue guards exactly one
+     failure: talking through one of these believing the room has a copy of it.
+     Painted on .reveal, not inside the <section>, because a supplemental slide is usually a video and
+     #media-layer (z-index 5) covers everything inside .slides — same reason #exitquiz is a sibling of
+     the media layer rather than a child of a slide. Suppressed in the Esc overview, where it would
+     float over the whole grid rather than over one tile. */
+  .reveal:has(.slides section[data-scope="supplemental"].present)::after{
+    content:"supplemental · not in the published deck"; position:absolute; right:2%; top:3%; z-index:30;
+    font-size:calc(var(--size-caption) * 720px); letter-spacing:.12em; text-transform:uppercase;
+    font-weight:600; color:rgba(255,255,255,.30); pointer-events:none;
+    text-shadow:0 1px 6px rgba(0,0,0,.9); }
+  .reveal.overview:has(.slides section[data-scope="supplemental"].present)::after{ content:none; }
+
+  /* Overview-only slide labels: video/sim/blank slides render black in Esc overview (the media layer is hidden there),
+     so tag each with its name to make the grid navigable. */
+  .slabel{ display:none; }
+  /* Esc-overview thumbnails: each media slide's own clip/image, shown only in overview (label sits on top) */
+  .ovthumb{ display:none; }
+  .reveal.overview section.vid > .ovthumb{ display:block; position:absolute; inset:0; width:100%; height:100%;
+    object-fit:contain; background:#000; z-index:1; pointer-events:none; }
+  .reveal.overview .slabel{ display:block; position:absolute; left:0; top:0; z-index:20; pointer-events:none;
+    font-size:1.6em; padding:.35em .6em; color:#d6d9de; background:rgba(0,0,0,.55);
+    border-bottom-right-radius:.45em; letter-spacing:.02em; text-transform:none; font-weight:600; }
+
+  section.vid, section.cam{ background:transparent !important; }
+
+  /* --- the course-map strip on the walk-in slide ------------------------------------------------
+     One shared asset (<course>/course-map/), the same geometry as the Class A course-map slide, with
+     today's class or workshop lit in house green. It pins to the TOP OF THE SLIDE and sits above the
+     media layer, so it reads over the walk-in clip. Built by course-map/build_course_map.py — never
+     hand-edit the SVGs. Lives HERE rather than in each deck's <style>: it is the same object in every
+     deck, and the per-deck copies were subtly wrong (see below) in all eight at once.
+
+     TWO reveal defaults have to be beaten or the strip does not render at all — this is the fix for
+     "the strip is in the HTML but nothing shows on the warm-up slide" (found 2026-08-19):
+     • The theme sets `.reveal img{ max-width:95%; max-height:95% }`, at specificity (0,1,1) — which
+       OUTRANKS a bare `.coursestrip` (0,1,0), so the per-deck rule never won. A warm-up section holds
+       nothing but this absolutely-positioned img, so the section's own height is 0, and a percentage
+       max-height resolves against that 0: the strip was laid out 1143px wide and 0px TALL. Present in
+       the DOM, invisible on screen. Hence `img.coursestrip` (0,2,1) and explicit max-width/max-height.
+     • With `center:true` reveal parks that 0-height section at top:360px, so `top:0` on an absolute
+       child is the MIDDLE of the frame, not the top. Give the warm-up section the whole slide box —
+       exactly what .board/.intro already get, and for the same reason.
+     The margin/border/background resets kill the theme's `.reveal section img` picture frame, which
+     would otherwise put a white border and drop shadow around the strip.
+     Giving the section the full slide box means its own background now covers the frame, which on the
+     iframe flavour (`warmup-html`, e.g. Class C's elevator) hid the walk-in page behind house black —
+     so the warm-up box is transparent too. `.vid` already was; `.warmup-html` is not a video slide. */
+  .reveal .slides section.warmup, .reveal .slides section.warmup-html{
+                top:0 !important; height:100%; background:transparent !important; }
+  .reveal img.coursestrip{ position:absolute; left:0; top:0; width:100%; height:auto;
+                max-width:none; max-height:none; margin:0; border:0; background:none; box-shadow:none;
+                z-index:6; pointer-events:none;
+                opacity:.92; filter:drop-shadow(0 2px 14px rgba(0,0,0,.85)); }
+
+  /* Shared full-viewport media layer (outside reveal's scaled slides) */
+  #media-layer{ position:absolute; inset:0; z-index:5; background:#000; display:none; overflow:hidden; cursor:pointer; }
+  #starfield{ position:absolute; inset:0; display:none; pointer-events:none; }   /* toggled on by data-stars slides */
+  #starfield span{ position:absolute; border-radius:50%; background:#fff; }
+  /* Exit-quiz overlay (final slide): revealed on advance, bottom-left, above the media layer */
+  /* HOUSE RULE (2026-08): the exit-quiz notice is LEFT-ALIGNED WITH THE ATTRIBUTION BADGE, not with
+     the screen. --mrect-l is the media rectangle's left edge + the same pad deck.js gives the @handle,
+     so on a letterboxed clip the notice and the site logo share one margin instead of the notice
+     floating out in the black. Falls back to 3% on slides with no media. Applies to every deck. */
+  #exitquiz{ position:absolute; left:var(--mrect-l, 3%); bottom:14%; z-index:20; display:none; color:var(--ink);
+    text-shadow:0 2px 12px rgba(0,0,0,.95); line-height:1.25; }
+  #exitquiz .eq-title{ font-size:calc(var(--size-subtitle) * 720px); font-weight:700; }
+  #exitquiz .eq-pw{ font-size:calc(var(--size-subtitle) * 720px); font-weight:600; color:var(--accent); margin-top:.15em; }
+
+  /* Static quiz (concept + homework MC) — question + choices, correct turns green on advance. No QR/bars/backend. */
+  .reveal .slides section.quiz{ top:0 !important; height:100%; }
+  .quiz .qlabel{ color:var(--accent); font-size:calc(var(--size-caption) * 720px); letter-spacing:.14em; text-transform:uppercase; margin:5% 0 .3em; }
+  .quiz .qfig{ display:block; margin:1% auto .55em; max-width:58%; max-height:34vh; border-radius:8px; box-shadow:0 4px 20px rgba(0,0,0,.5); }
+  .quiz:has(.qfig) .qlabel{ margin-top:1.5%; }
+  .quiz:has(.qfig) .qprompt{ font-size:calc(var(--size-body) * 720px); margin-bottom:.5em; }
+  .quiz .qprompt{ font-size:calc(var(--size-subtitle) * 720px); line-height:1.36; max-width:88%; margin:0 0 .65em; font-weight:600; }
+  .quiz .qchoices{ display:flex; flex-direction:column; gap:.38em; max-width:88%; }
+  /* ANSWERS DEFAULT TO body, NOT subtitle (settled 2026-08). The prompt stays at subtitle — it is the
+     thing being read from the back of the room — but an answer is scanned, not read aloud, and at
+     subtitle the long ones ran to 3-4 lines or overflowed the frame outright. House rule: an answer
+     should never exceed THREE rendered lines and ideally sits at two. At body, ~88% of 1280 px holds
+     roughly 74 characters per line, so a 120-character full-sentence option lands at two. */
+  .quiz .qchoice{ display:flex; align-items:flex-start; gap:.6em; padding:.33em .65em; border:1px solid rgba(255,255,255,.14);
+                  border-radius:.5em; font-size:calc(var(--size-body) * 720px); line-height:1.3; transition:background .35s, border-color .35s; }
+  .quiz .qchoice .qtxt{ white-space:normal; }   /* long math / sentence choices wrap rather than overflow */
+  .quiz .qchoice .key{ flex:none; min-width:1.4em; text-align:center; padding:.05em .2em; border:1px solid var(--muted);
+                       border-radius:.3em; color:var(--muted); font-weight:600; }
+  .quiz .qchoice .qtxt{ flex:1; }
+  .quiz .qchoice .tick{ margin-left:auto; opacity:0; color:var(--ok); font-weight:700; transition:opacity .35s; }
+  .quiz.revealed .qchoice.correct{ background:rgba(143,176,50,.15); border-color:var(--ok); }
+  .quiz.revealed .qchoice.correct .qtxt{ color:var(--ok); }
+  .quiz.revealed .qchoice.correct .key{ border-color:var(--ok); color:var(--ok); }
+  .quiz.revealed .qchoice.correct .tick{ opacity:1; }
+
+  /* Visible content slide — homework setup + worked solutions (heading + equation + prose) */
+  .reveal .slides section.doc{ top:0 !important; height:100%; }
+  .doc .dhead{ color:var(--accent); font-size:calc(var(--size-caption) * 720px); letter-spacing:.08em; text-transform:uppercase; margin:6% 0 .55em; }
+  .doc .deq{ font-size:calc(var(--size-body) * 720px); margin:.1em 0 .5em; }
+  .doc .dtext{ font-size:calc(var(--size-body) * 720px); line-height:1.55; max-width:86%; color:var(--ink); }
+  @keyframes twinkle{ 50%{ opacity:.25; } }
+  /* Slow drift + full rotation for data-float media (the asteroid), so it reads as floating in space */
+  @keyframes floatspin{
+    0%   { transform:translate(0px,0px)   rotate(0deg);   }
+    25%  { transform:translate(20px,-14px) rotate(90deg);  }
+    50%  { transform:translate(7px,18px)   rotate(180deg); }
+    75%  { transform:translate(-18px,5px)  rotate(270deg); }
+    100% { transform:translate(0px,0px)    rotate(360deg); }
+  }
+  #stillimg.floating{ animation:floatspin 105s linear infinite; transform-origin:50% 50%; }
+  /* override reveal theme's .reveal video/img{max-width:95%} so our sizing wins */
+  #player,#playerB,#stillimg{ position:absolute; top:0; left:0; max-width:none !important; max-height:none !important; }
+  #stillimg,#playerB{ display:none; }
+  /* z-index 9: #attrib is a CHILD OF .reveal (deck.js moves it there), so this competes with
+     `.reveal .slides` at 6 rather than with its old siblings inside #media-layer. Below #exitquiz
+     (20) and the supplemental cue (30), above the slide surface — which is what makes the
+     data-fullvideo link clickable at all. */
+  #attrib{ position:absolute; z-index:9; display:none; align-items:center; gap:.3em; line-height:1;
+           color:#e6e6e6; font-size:calc(var(--size-caption) * 720px); opacity:.5; text-shadow:0 1px 4px rgba(0,0,0,.9); }
+  #attrib img{ width:1em; height:1em; display:block; max-width:none; }
+  /* data-fullvideo — the clip on this slide was trimmed to fit Canvas, so the badge becomes a way out to
+     the whole thing. Same badge, no new furniture: it already sits under the media, already says whose
+     video this is, and "whose" and "where's the rest" are the same question. It brightens on hover
+     rather than being permanently underlined, so a slide nobody clicks looks exactly as it did. */
+  #attrib.hasfull{ opacity:.62; pointer-events:auto; }
+  #attrib.hasfull a{ color:inherit; text-decoration:none; display:flex; align-items:center; gap:.3em; }
+  #attrib.hasfull a:hover{ text-decoration:underline; }
+  #attrib .full{ opacity:.85; white-space:nowrap; }
+  #attrib:not(.hasfull){ pointer-events:none; }
+  #slidecap{ position:absolute; z-index:8; display:none; color:#fff; font-size:calc(var(--size-caption) * 720px); font-weight:600;
+             letter-spacing:.01em; line-height:1.2; }
+
+  /* Synced / tiled video STACK (Class E). SYNC mode: the animation fills the whole frame and its
+     impulse-graph strip(s) overlay the bottom (sized in JS). COVER mode (walk-in warm-up): two
+     full-width, half-height tiles. */
+  #stackwrap{ position:absolute; inset:0; display:none; }
+  #stackwrap video{ display:block; background:transparent; max-width:none !important; max-height:none !important; }
+  /* width/height:100% are REQUIRED. #stackwrap video sets max-width/max-height:none, so a video with no
+     explicit size falls back to its intrinsic 1920×1080 and overflows the frame. data-animfit therefore
+     overrides the HEIGHT in px from JS (never by dropping these). */
+  #stackwrap .stack-anim{ position:absolute; top:0; left:0; width:100%; height:100%; object-fit:contain; }
+  #stackwrap .stack-strips{ position:absolute; left:0; right:0; bottom:2%; display:flex; flex-direction:row;
+                            justify-content:center; align-items:flex-end; gap:1.5%; pointer-events:none; }
+  /* Drop the graph strip's black background so the full-frame animation shows through it (the hand isn't
+     covered). mix-blend-mode:screen is the reliable way to do this on a <video>: black → invisible, brighter
+     pixels (the traces) composite over the animation. */
+  #stackwrap .stack-strips video{ object-fit:contain; mix-blend-mode:screen; }
+  #stackwrap .stack-axis{ position:absolute; pointer-events:none; z-index:2; }
+  #stackwrap.cover{ flex-direction:column; align-items:center; justify-content:center; }
+  #stackwrap.cover video{ width:100%; height:50%; object-fit:cover; }
+  #stackwrap.cover video:first-child{ object-position:center 70%; }   /* nudge the sloth up so it doesn't spill off the bottom */
+
+  /* Practice slides */
+  .practice .pnum{ color:var(--accent); font-size:calc(var(--size-caption) * 720px); letter-spacing:.12em; text-transform:uppercase; margin-bottom:.5em; }
+  .practice .lead{ font-size:calc(var(--size-subtitle) * 720px); line-height:1.5; max-width:90%; }
+  .practice .eval{ color:var(--muted); }
+  .practice .soln{ font-size:calc(var(--size-body) * 720px); margin-top:.2em; border-left:3px solid var(--accent); padding-left:.8em; }
+  .practice .soln .ans{ color:var(--muted); font-size:calc(var(--size-body) * 720px); }
+
+  /* Definition / finale text slide */
+  .defn{ text-align:center; width:100%; }
+  .defn h2{ font-size:1.7em; margin:0 0 .55em; }
+  .defn p{ font-size:1.05em; color:var(--muted); max-width:80%; margin:.35em auto; }
+  .defn p b{ color:var(--ink); }
+
+  /* Poll slides: full-slide so absolutely-placed QR + bars anchor to the canvas, not the centered box */
+  .reveal .slides section.poll{ top:0 !important; height:100%; }
+  .poll .qprompt{ font-size:calc(var(--size-subtitle) * 720px); line-height:1.4; max-width:56%; margin:7% 0 0; }
+  .poll .hint{ display:block; margin-top:.4em; color:var(--muted); font-size:.68em; font-weight:400; }
+  .poll .qr{ position:absolute; top:4%; right:3%; background:#fff; padding:14px 14px 8px; border-radius:12px; text-align:center; }
+  .poll .qr .qrimg{ width:300px; height:300px; }
+  .poll .qr .qrimg img{ width:300px !important; height:300px !important; display:block; }
+  .poll .qr .qrimg canvas{ display:none; }
+  .poll .qr .scan{ color:#111; font-size:.4em; margin-top:6px; }
+  .poll .choices{ position:absolute; left:4%; right:4%; bottom:7%; display:flex; gap:2.5%; align-items:flex-end; }
+  .poll .choice{ flex:1; text-align:center; }
+  .poll .barwrap{ height:240px; display:flex; flex-direction:column; justify-content:flex-end; }
+  .poll .pct{ font-size:.58em; color:var(--muted); height:1.3em; opacity:0; transition:opacity .4s; }
+  .poll .bar{ height:0; background:var(--accent); border-radius:7px 7px 0 0; transition:height .8s cubic-bezier(.26,.86,.44,.985); }
+  /* Answers default to body and WRAP (settled 2026-08). The old default — subtitle + nowrap — meant a
+     full-sentence option ran straight off the frame, and six of the eight built decks carried the same
+     per-deck override to undo it. Same house rule as the quiz choices: never more than three lines,
+     ideally two. */
+  .poll .opt{ margin-top:.5em; font-size:calc(var(--size-body) * 720px); white-space:normal; line-height:1.25; }
+  .poll .key{ display:inline-block; min-width:1.4em; padding:.05em .15em; border:1px solid var(--muted); border-radius:.3em; margin-right:.35em; color:var(--muted); }
+  .poll.sealed .pct{ opacity:1; }
+  .poll.sealed .choice.correct .bar{ background:var(--ok); }
+  .poll.sealed .choice.correct .txt{ color:var(--ok); font-weight:650; }
+  .poll.sealed .choice.correct .key{ border-color:var(--ok); color:var(--ok); }
+  .pollmode{ position:absolute; left:3%; top:3%; z-index:8; font-size:.5em; letter-spacing:.12em;
+             text-transform:uppercase; font-weight:650; display:flex; align-items:center; gap:.5em;
+             color:var(--muted); padding:.35em .7em; border-radius:999px; background:rgba(255,255,255,.06);
+             border:1px solid rgba(255,255,255,.12); }
+  .pollmode .lamp{ width:.8em; height:.8em; border-radius:50%; background:var(--muted); }
+  .pollmode.live{ color:var(--ok); border-color:rgba(143,176,50,.55); } .pollmode.live .lamp{ background:var(--ok); box-shadow:0 0 8px var(--ok); }
+  .pollmode.demo{ color:var(--mma-amber); border-color:rgba(225,156,36,.55); } .pollmode.demo .lamp{ background:var(--mma-amber); }
+  .poll-reset{ position:absolute; left:15%; top:3%; z-index:8; font:inherit; font-size:.42em; letter-spacing:.04em;
+               color:var(--muted); background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.15);
+               border-radius:999px; padding:.45em .85em; cursor:pointer; }
+  .poll-reset:hover{ border-color:var(--muted); color:var(--ink); }
+  .poll-reset.armed{ color:var(--mma-red); border-color:var(--mma-red); background:rgba(235,98,53,.14); }
+
+  /* Interactive sim slides */
+  .reveal .slides section.sim{ top:0 !important; height:100%; }
+  section.sim{ background:#000 !important; }
+  .simcanvas{ position:absolute; inset:0; width:100%; height:100%; display:block; touch-action:none; cursor:grab; }
+  .simhint{ position:absolute; left:2%; top:4%; z-index:3; color:var(--muted); font-size:.5em; pointer-events:none; transition:opacity .3s; }
+  section.sim.running .simhint{ opacity:0; }
+  .simctrls{ position:absolute; left:0; right:0; bottom:0; display:flex; align-items:center; gap:1.1em; flex-wrap:wrap;
+             justify-content:center; padding:.75em 1em; font-size:.5em; color:var(--ink);
+             background:linear-gradient(transparent, rgba(0,0,0,.6) 45%); }
+  /* HUD-corner variant: the controls move to the TOP-LEFT, under a sim's in-canvas score readout, with
+     no full-width gradient. For a sim whose canvas BOTTOM is occupied — LauncherGame's scrolling energy
+     graph lives there, and the default bottom bar sat right on top of it. */
+  .simctrls.hud-left{ left:2.2%; right:auto; bottom:auto; top:12%; width:auto;
+                      justify-content:flex-start; background:none; padding:0; }
+  .simctrls label{ display:flex; align-items:center; gap:.45em; color:var(--muted); }
+  .simctrls input[type=range]{ width:6.5em; accent-color:var(--accent); }
+  .simctrls input[type=checkbox]{ accent-color:var(--accent); }
+  .simctrls input[type=number]{ width:3.4em; background:#12151a; color:var(--ink); border:1px solid #2c3038;
+                                border-radius:6px; padding:.15em .3em; font:inherit; font-variant-numeric:tabular-nums; }
+  .simctrls .u{ color:var(--muted); }
+  .simbtn{ background:#1a1d22; color:var(--ink); border:1px solid #2c3038; border-radius:8px;
+           padding:.4em .75em; font:inherit; cursor:pointer; }
+  .simbtn:hover{ border-color:var(--accent); }
+  .simbtn.play{ background:var(--accent); color:#04121d; border-color:var(--accent); font-weight:650; }
+  .simctrls .simbtn.play{ min-width:7em; text-align:center; }   /* fixed to the longest label (Resume) so it doesn't resize as Play↔Pause↔Resume */
+  .simbtn.on{ border-color:var(--accent); color:var(--accent); background:rgba(93,158,199,.16); }
+  .toggle-readout{ position:absolute; right:2%; top:3.5%; font-size:.5em; opacity:.7; }
+  .toggle-readout.on{ border-color:var(--accent); color:var(--accent); opacity:1; }
+
+  /* Prize wheel — TWO Price-Is-Right vertical reels side by side (winner | prize).
+     Both reels spin the same way (upward) — counter-rotating them was tried and reverted; two reels
+     running opposite ways for several seconds is unpleasant to watch.
+     WINNER reel is deliberately colourless: white on black, so the only colour on the slide carries
+     meaning. Amber marks the selection — the pointer band on both reels, and the winning name once
+     it lands. PRIZE reel keeps colour because there the colour IS the information: a blue band of
+     100 identical "select a prize" slots, one of which is green and says $20. Every prize slot is
+     labelled — cluttered on purpose, because an unlabelled band read as a mystery. Prize slots are
+     shorter than name slots (40 vs 64 px) so eight of them are visible at once and the 1-in-100
+     is legible as a proportion. */
+  /* Centring: the REELS are centred on the slide, not the block as a whole — the labels, the Spin
+     controls and the result line are all out of the flow, because while they were in it their
+     combined height sat below the windows and pushed the reels above the optical centre.
+     The stage is pinned with top:50% + translateY(-50%) rather than by making the section a
+     centring flex box. Both work in principle, but the flex version depends on `display:flex`
+     out-ranking reveal's own `display:block` on `.present` — and on NOT out-ranking its
+     `display:none` on every other slide. That is a cascade fight with a nasty failure mode (the
+     wheel rendering on top of every slide), and it has to be won in whatever browser the lecture
+     hall has. Absolute positioning inside the already-full-height section needs no such luck. */
+  .reveal .slides section.wheel{ top:0 !important; height:100%; }
+  section.wheel{ background:#000 !important; text-align:center; }
+  .wheel-title{ color:var(--accent); font-size:.9em; margin:.3em 0 .5em; font-weight:650; }
+  .wheel-stage{ position:absolute; left:0; right:0; top:50%; transform:translateY(-50%);
+                display:flex; gap:1.4em; justify-content:center; align-items:center; }
+  .wheel-col{ position:relative; display:flex; flex-direction:column; align-items:center; }
+  .wheel-label{ position:absolute; bottom:100%; left:0; right:0; margin-bottom:.6em;
+                font-size:.36em; font-weight:700; letter-spacing:.16em; text-transform:uppercase;
+                color:var(--muted); }
+  .wheel-window{ position:relative; width:8.5em; height:320px; margin:0; overflow:hidden;
+                 border-radius:14px; box-shadow:0 0 0 2px #2c3038, 0 14px 44px rgba(0,0,0,.6); }
+  .wheel-strip{ will-change:transform; }
+  /* ONE slot height across both reels — 40 px, which puts the two amber pointer bands at the same
+     thickness and the same eight-slots-per-window rhythm. That match is the whole point: the reels
+     briefly had 64 px and 40 px slots, and the mismatched amber lines were the thing that read wrong.
+     Text size still differs by reel, because the content does: `SELECT A PRIZE` is 14 characters of
+     small caps, a computing ID is six. Change the height here and in SEGH/PSEGH together. */
+  .wheel-seg{ height:40px; display:flex; align-items:center; justify-content:center;
+              font-weight:700; font-size:.44em; color:#000000; letter-spacing:.01em; white-space:nowrap; }
+  /* winner reel — no colour until there is a winner */
+  .wheel-seg.name{ background:#000; color:#fff; font-weight:600; }
+  /* Amber is light, so the winning band flips to dark ink — white on --mma-amber does not carry
+     across a lecture-hall projector. */
+  .wheel-seg.name.hit{ background:var(--mma-amber); color:#241800; }
+  /* prize reel — 26 labelled slots, one of them green */
+  .wheel-seg.prize{ background:var(--mma-blue); color:#06111d; font-size:.3em;
+                    font-weight:800; letter-spacing:.1em; text-transform:uppercase;
+                    box-shadow:inset 0 1px 0 rgba(0,0,0,.16); }
+  .wheel-seg.jackpot{ background:var(--mma-green); color:#152207;
+                      font-weight:800; letter-spacing:.04em;
+                      box-shadow:inset 0 0 0 2px #dff0b4, 0 0 22px rgba(143,176,50,.55); }
+  .wheel-seg.jackpot.hit{ box-shadow:inset 0 0 0 3px #ffffff, 0 0 30px rgba(143,176,50,.8); }
+  /* One pointer height for both reels — must equal .wheel-seg's height. */
+  .wheel-pointer{ position:absolute; top:50%; left:0; right:0; height:40px; transform:translateY(-50%);
+                  border-top:3px solid var(--mma-amber); border-bottom:3px solid var(--mma-amber);
+                  pointer-events:none; }
+  .wheel-ctrls{ position:absolute; left:0; right:0; bottom:6%; margin:0;
+                display:flex; gap:1em; justify-content:center; align-items:center; font-size:.5em; }
+  .wheel-count{ color:var(--muted); }
+  /* One line, once, when the name lands — nothing during the spin. text-align is declared HERE, not
+     inherited: `section.wheel{text-align:center}` loses to the house `.reveal .slides section{
+     text-align:left}` on specificity, so without this the result line sits against the left edge of
+     the slide instead of under the reels. A declaration on the element itself beats any inherited
+     value, so this needs no specificity war. */
+  .wheel-winner{ position:absolute; left:0; right:0; bottom:17%; margin:0; font-size:1em; min-height:1.3em;
+                 text-align:center; }
+  .wheel-winner b{ color:#fff; }
+  .wheel-winner b.jack{ color:var(--mma-green); }
+  .wheel-winner .dim{ color:var(--muted); font-size:.8em; }
+
+  /* ---- Live-camera slide (Class D feature; active only when a deck has section.cam) ---- */
+  .reveal .slides section.cam{ top:0 !important; height:100%; }
+  section.cam .cue{ position:absolute; left:2%; bottom:3.5%; width:.5em; height:.5em; border-radius:50%; background:rgba(255,255,255,.14); }
+  #camera{ position:absolute; inset:0; width:100%; height:100%; object-fit:contain; background:#000; display:none; }
+  #camctrls{ position:absolute; right:2.5%; top:3%; z-index:9; display:none; align-items:center; gap:.6em; font-size:.5em; color:var(--muted); }
+  #camctrls select{ background:#12151a; color:var(--ink); border:1px solid #2c3038; border-radius:6px; padding:.25em .45em; font:inherit; max-width:12em; }
+  #cammsg{ position:absolute; left:0; right:0; top:50%; transform:translateY(-50%); z-index:9; display:none;
+    text-align:center; color:var(--muted); font-size:.7em; pointer-events:none; }
+  /* Four-up grid (data-quad): a centered 16:9 box (each cell itself 16:9 so 16:9 clips fill with no
+     internal letterboxing); clip 1 full-screen first, then the four tiles. */
+  #quadgrid{ position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+             width:min(100vw, 177.78vh); height:min(100vh, 56.25vw);
+             display:none; grid-template-columns:1fr 1fr; grid-template-rows:1fr 1fr; gap:2px; background:#000; }
+  #quadgrid video{ width:100%; height:100%; min-width:0; min-height:0; object-fit:contain; background:#000; display:block; }
+  /* Year tag (data-year): lower-right of the media rectangle, mirroring the attribution overlay */
+  #yeartag{ position:absolute; z-index:7; display:none; color:#e9e9e9; font-size:1.15rem; font-weight:600;
+            letter-spacing:.02em; opacity:.6; text-shadow:0 1px 6px rgba(0,0,0,.95); }
+
+  /* ---- Section divider (practice-intro / hw-intro): white text over black ---- */
+  section.divider{ background:transparent !important; }
+  .divider h2{ color:var(--ink); font-size:calc(var(--size-title) * 720px); font-weight:700;
+               text-align:center; margin-top:38vh; letter-spacing:.01em; }

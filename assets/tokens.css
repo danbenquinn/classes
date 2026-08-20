@@ -1,0 +1,92 @@
+/* tokens.css — GENERATED from tokens.json by build_css.py. DO NOT EDIT BY HAND.
+   The browser-side surface of the house style: link this, then read via var(--x) (CSS) or
+   getComputedStyle (interactive.js). Re-run build_css.py after editing tokens.json. */
+:root {
+
+  /* Mathematica ColorData[97] palette */
+  --mma-blue: #5e81b5;
+  --mma-amber: #e19c24;
+  --mma-green: #8fb032;
+  --mma-red: #eb6235;
+  --mma-purple: #8778b3;
+  --mma-brown: #c56e1a;
+  --mma-ltblue: #5d9ec7;
+  --mma-gold: #ffbf00;
+  --mma-mauve: #a5609d;
+  --mma-olive: #929600;
+
+  /* semantic roles (color = physical role) */
+  --gravity: #eb6235;
+  --normal: #8778b3;
+  --velocity: #5e81b5;
+  --spring: #8fb032;
+  --applied: #5d9ec7;
+  --friction: #e19c24;
+
+  /* the moving mass + trail */
+  --mass: #f0f0f5;
+  --trail: #e8e8f0;
+
+  /* structural grays (by function) */
+  --surface: #c8c8d0;
+  --support: #4a4a52;
+  --boundary: #9090a0;
+  --guide: #5a5a68;
+  --ground: #3a3a40;
+
+  /* one background */
+  --bg: #000000;
+
+  /* deck chrome / text */
+  --ink: #f2f2ef;
+  --muted: #9aa0a6;
+  --accent: #5d9ec7;
+  --ok: #8fb032;
+
+  /* type */
+  --font-sans: Inter, sans-serif;
+  --font-mono: ui-monospace, monospace;
+
+  /* shared drawn dimensions (fraction of frame height) — read by the canvas sim */
+  --frame-w: 14.222;
+  --frame-h: 8.0;
+  --mass-radius: 0.0225;
+  --origin-dot: 0.004375;
+  --arrow-stroke: 0.0065;
+  --trail-stroke: 0.00278;
+  --arrow-head-len: 0.017;
+  --arrow-head-hw: 0.0085;
+  --arrow-min-stem-k: 0.0;
+  --crosshair-half: 0.02;
+
+  /* drawn spring coil (OBJECTS 'Spring') — read by the canvas sim */
+  --spring-coils: 14;
+  --spring-coils-min: 10;
+  --spring-coils-max: 20;
+  --spring-width: 0.0425;
+  --spring-lead: 0.035;
+
+  /* shared animation behavior — read by the canvas sim */
+  --blur-frames: 10;
+  --blur-dt-s: 0.03333333333333333;
+  --blur-alpha0: 0.42;
+  --blur-falloff: 0.8;
+  --trail-fade-s: 1.2;
+  --trail-cap: butt;
+  --trail-alpha0: 1.0;
+
+  /* draggable initial-velocity cue (idle sims) — read by the canvas sim */
+  --vel-scale: 0.2;
+  --cue-dash: 0.011;
+
+  /* font sizes (fraction of frame height) — deck: font-size: calc(var(--size-x) * <frame-h>) */
+  --size-title: 0.09;
+  --size-subtitle: 0.055;
+  --size-body: 0.04;
+  --size-caption: 0.03;
+
+  /* graph */
+  --stack-graph-h: 0.26;
+  --stack-bottom-pct: 6.0;
+  --stack-gap-pct: 1.4;
+}

@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>MAE 2501 — Fall 2026 Schedule</title>
+<style>
+  :root{
+    /* house palette — slide-suite/style/tokens.json (Mathematica ColorData[97]) */
+    --mma-blue:#5e81b5; --mma-amber:#e19c24; --mma-green:#8fb032; --mma-red:#eb6235;
+    /* category color: classes + homework in TYPE, exams + workshops in FILL at 20% */
+    --class:#ffffff; --office:#eef0f3; --exam:var(--mma-amber); --shop:var(--mma-blue);
+    --shade:.2;
+    --brk:#e3e3e7; --ink:#1a1a22; --officeink:#5a5a68; --mut:#8a8a96; --line:#cfcfd6;
+  }
+  *{box-sizing:border-box;}
+  body{font-family:Inter,-apple-system,Segoe UI,Helvetica,Arial,sans-serif;color:var(--ink);
+       margin:0;padding:14px 16px;background:#fff;}
+  h1{font-size:17px;margin:0 0 2px;}
+  .sub{font-size:11px;color:var(--mut);margin:0 0 8px;}
+  table{border-collapse:collapse;width:100%;table-layout:fixed;}
+  col.wk{width:4.5%;}
+  th{font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--mut);
+     padding:3px 4px;border-bottom:1px solid var(--line);text-align:left;}
+  td{border:1px solid var(--line);vertical-align:top;height:52px;padding:3px 5px;font-size:10.5px;line-height:1.25;}
+  td.wk{background:#fafafb;color:var(--mut);font-size:10px;text-align:center;vertical-align:middle;}
+  .d{color:var(--mut);font-size:9px;display:block;margin-bottom:1px;}
+  .t{font-weight:600;}
+  .office .t{color:var(--officeink);}
+  .ti{font-weight:400;color:#3a3a44;}
+  .hw{display:inline-block;margin-top:2px;color:var(--mma-red);font-weight:600;font-size:9.5px;}
+  .class{background:var(--class);}
+  .class .t{color:var(--mma-green);}
+  .office{background:var(--office);}
+  .exam{background:color-mix(in srgb,var(--exam) 20%,#fff);}
+  .exam .t{color:var(--mma-amber);}
+  .brk{background:var(--brk);color:var(--mut);font-style:italic;}
+  .empty{background:#fcfcfd;}
+  /* workshop band: spans the whole week, day not fixed */
+  td.ws{background:color-mix(in srgb,var(--shop) 20%,#fff);height:auto;padding:2px 6px;
+        font-size:10px;border:none;}
+  .ws .t{color:var(--mma-blue);}
+  .arrows{color:var(--mma-blue);font-weight:700;letter-spacing:.12em;margin-right:5px;}
+  .wsnote{color:#5b7fae;font-size:9px;font-style:italic;margin-left:7px;}
+  @media print{@page{size:landscape;margin:8mm;} body{padding:0;}}
+</style>
+<link rel="stylesheet" href="../../assets/fonts.css"></head>
+<body>
+<h1>MAE 2501 · Applied Physics I — Fall 2026</h1>
+<p class="sub"><span style="color:#141419">Lecture MWF 11:00–12:00</span> · <span style="color:var(--mma-green)">26 Classes (A–Z)</span> · <span style="color:var(--mma-blue)">7 workshops</span> · <span style="color:var(--mma-amber)">3 midterms + final</span></p>
+<table>
+<colgroup><col class="wk"><col><col><col><col><col></colgroup>
+<tr><th></th><th>Monday</th><th>Tuesday</th><th>Wednesday</th><th>Thursday</th><th>Friday</th></tr>
+
+<tr><td class="wk">1</td>
+  <td class="empty"><span class="d">Aug 24</span></td>
+  <td class="empty"><span class="d">Aug 25</span><span class="ti">Classes begin</span></td>
+  <td class="class"><span class="d">Aug 26</span><span class="t">Class A:</span> <span class="ti">Force = Mass × Acceleration</span></td>
+  <td class="empty"><span class="d">Aug 27</span></td>
+  <td class="office"><span class="d">Aug 28</span><span class="t">Office Hours</span> <span class="ti">Calculus review</span></td></tr>
+
+<tr><td class="wk" rowspan="2">2</td>
+  <td class="class"><span class="d">Aug 31</span><span class="t">Class B:</span> <span class="ti">Constant Force</span><br><span class="hw">HW A due</span></td>
+  <td class="empty"><span class="d">Sep 1</span></td>
+  <td class="class"><span class="d">Sep 2</span><span class="t">Class C:</span> <span class="ti">Normal Force</span></td>
+  <td class="empty"><span class="d">Sep 3</span></td>
+  <td class="office"><span class="d">Sep 4</span><span class="t">Office Hours</span></td></tr>
+<tr><td class="ws" colspan="5"><span class="arrows">↔</span><span class="t">Workshop 0:</span> <span class="ti">Phyphox Intro</span></td></tr>
+
+<tr><td class="wk" rowspan="2">3</td>
+  <td class="class"><span class="d">Sep 7</span><span class="t">Class D:</span> <span class="ti">Force Components</span><br><span class="hw">HW B–C due</span></td>
+  <td class="empty"><span class="d">Sep 8</span></td>
+  <td class="class"><span class="d">Sep 9</span><span class="t">Class E:</span> <span class="ti">Impulse &amp; Momentum</span></td>
+  <td class="empty"><span class="d">Sep 10</span></td>
+  <td class="office"><span class="d">Sep 11</span><span class="t">Office Hours</span></td></tr>
+<tr><td class="ws" colspan="5"><span class="arrows">↔</span><span class="t">Workshop 1:</span> <span class="ti">Get Air</span></td></tr>
+
+<tr><td class="wk" rowspan="2">4</td>
+  <td class="class"><span class="d">Sep 14</span><span class="t">Class F:</span> <span class="ti">Harmonic Motion</span><br><span class="hw">HW D–E due</span></td>
+  <td class="empty"><span class="d">Sep 15</span></td>
+  <td class="class"><span class="d">Sep 16</span><span class="t">Class G:</span> <span class="ti">Forcing &amp; Resonance</span></td>
+  <td class="empty"><span class="d">Sep 17</span></td>
+  <td class="office"><span class="d">Sep 18</span><span class="t">Office Hours</span></td></tr>
+<tr><td class="ws" colspan="5"><span class="arrows">↔</span><span class="t">Workshop 2:</span> <span class="ti">Human Pong</span></td></tr>
+
+<tr><td class="wk">5</td>
+  <td class="class"><span class="d">Sep 21</span><span class="t">Class H:</span> <span class="ti">Bouncing</span></td>
+  <td class="empty"><span class="d">Sep 22</span></td>
+  <td class="office"><span class="d">Sep 23</span><span class="t">Office Hours</span> <span class="ti">Exam I review</span><br><span class="hw">HW F–G–H due</span></td>
+  <td class="empty"><span class="d">Sep 24</span></td>
+  <td class="exam"><span class="d">Sep 25</span><span class="t">Exam I</span> <span class="ti">Ideal Mechanics (A–G)</span></td></tr>
+
+<tr><td class="wk">6</td>
+  <td class="class"><span class="d">Sep 28</span><span class="t">Class I:</span> <span class="ti">Energy</span></td>
+  <td class="empty"><span class="d">Sep 29</span></td>
+  <td class="class"><span class="d">Sep 30</span><span class="t">Class J:</span> <span class="ti">Work</span></td>
+  <td class="empty"><span class="d">Oct 1</span></td>
+  <td class="office"><span class="d">Oct 2</span><span class="t">Office Hours</span></td></tr>
+
+<tr><td class="wk">7</td>
+  <td class="brk"><span class="d">Oct 5</span>Fall Break</td>
+  <td class="brk"><span class="d">Oct 6</span>Fall Break</td>
+  <td class="class"><span class="d">Oct 7</span><span class="t">Class K:</span> <span class="ti">Nonlinear Friction</span><br><span class="hw">HW I–J due</span></td>
+  <td class="empty"><span class="d">Oct 8</span></td>
+  <td class="class"><span class="d">Oct 9</span><span class="t">Class L:</span> <span class="ti">Linear Friction</span></td></tr>
+
+<tr><td class="wk" rowspan="2">8</td>
+  <td class="class"><span class="d">Oct 12</span><span class="t">Class M:</span> <span class="ti">Contact Friction</span></td>
+  <td class="empty"><span class="d">Oct 13</span></td>
+  <td class="class"><span class="d">Oct 14</span><span class="t">Class N:</span> <span class="ti">Multi-Body</span><br><span class="hw">HW K–L–M due</span></td>
+  <td class="empty"><span class="d">Oct 15</span></td>
+  <td class="office"><span class="d">Oct 16</span><span class="t">Office Hours</span></td></tr>
+<tr><td class="ws" colspan="5"><span class="arrows">↔</span><span class="t">Workshop 3:</span> <span class="ti">Sportsball</span></td></tr>
+
+<tr><td class="wk" rowspan="2">9</td>
+  <td class="class"><span class="d">Oct 19</span><span class="t">Class O:</span> <span class="ti">Sound in Solids</span></td>
+  <td class="empty"><span class="d">Oct 20</span></td>
+  <td class="office"><span class="d">Oct 21</span><span class="t">Office Hours</span> <span class="ti">Exam II review</span></td>
+  <td class="empty"><span class="d">Oct 22</span></td>
+  <td class="exam"><span class="d">Oct 23</span><span class="t">Exam II</span> <span class="ti">Dissipative Mechanics (H–M)</span></td></tr>
+<tr><td class="ws" colspan="5"><span class="arrows">↔</span><span class="t">Workshop 4:</span> <span class="ti">Springs Uneternal</span></td></tr>
+
+<tr><td class="wk">10</td>
+  <td class="class"><span class="d">Oct 26</span><span class="t">Class P:</span> <span class="ti">Heat in Solids</span><br><span class="hw">HW N–O due</span></td>
+  <td class="empty"><span class="d">Oct 27</span></td>
+  <td class="class"><span class="d">Oct 28</span><span class="t">Class Q:</span> <span class="ti">Work on Solids</span></td>
+  <td class="empty"><span class="d">Oct 29</span></td>
+  <td class="office"><span class="d">Oct 30</span><span class="t">Office Hours</span></td></tr>
+
+<tr><td class="wk">11</td>
+  <td class="class"><span class="d">Nov 2</span><span class="t">Class R:</span> <span class="ti">Collisions</span><br><span class="hw">HW P–Q due</span></td>
+  <td class="brk"><span class="d">Nov 3</span>Election Day</td>
+  <td class="class"><span class="d">Nov 4</span><span class="t">Class S:</span> <span class="ti">Ideal Gases</span></td>
+  <td class="empty"><span class="d">Nov 5</span></td>
+  <td class="office"><span class="d">Nov 6</span><span class="t">Office Hours</span></td></tr>
+
+<tr><td class="wk" rowspan="2">12</td>
+  <td class="class"><span class="d">Nov 9</span><span class="t">Class T:</span> <span class="ti">Sound in Fluids</span><br><span class="hw">HW R–S due</span></td>
+  <td class="empty"><span class="d">Nov 10</span></td>
+  <td class="class"><span class="d">Nov 11</span><span class="t">Class U:</span> <span class="ti">Heat in Fluids</span></td>
+  <td class="empty"><span class="d">Nov 12</span></td>
+  <td class="office"><span class="d">Nov 13</span><span class="t">Office Hours</span></td></tr>
+<tr><td class="ws" colspan="5"><span class="arrows">↔</span><span class="t">Workshop 5:</span> <span class="ti">Lukewarm</span></td></tr>
+
+<tr><td class="wk" rowspan="2">13</td>
+  <td class="class"><span class="d">Nov 16</span><span class="t">Class V:</span> <span class="ti">Work on Fluids</span></td>
+  <td class="empty"><span class="d">Nov 17</span></td>
+  <td class="class"><span class="d">Nov 18</span><span class="t">Class W:</span> <span class="ti">Fluid Dynamics</span></td>
+  <td class="empty"><span class="d">Nov 19</span></td>
+  <td class="office"><span class="d">Nov 20</span><span class="t">Office Hours</span> <span class="ti">Exam III review</span><br><span class="hw">HW T–U–V–W due</span></td></tr>
+<tr><td class="ws" colspan="5"><span class="arrows">↔</span><span class="t">Workshop 6:</span> <span class="ti">Thunder and Lightning</span></td></tr>
+
+<tr><td class="wk">14</td>
+  <td class="exam"><span class="d">Nov 23</span><span class="t">Exam III</span> <span class="ti">Collective Dynamics (N–W)</span></td>
+  <td class="empty"><span class="d">Nov 24</span></td>
+  <td class="brk"><span class="d">Nov 25</span>Thanksgiving</td>
+  <td class="brk"><span class="d">Nov 26</span>Thanksgiving</td>
+  <td class="brk"><span class="d">Nov 27</span>Thanksgiving</td></tr>
+
+<tr><td class="wk">15</td>
+  <td class="class"><span class="d">Nov 30</span><span class="t">Class X:</span> <span class="ti">Torque &amp; Angular Momentum</span></td>
+  <td class="empty"><span class="d">Dec 1</span></td>
+  <td class="class"><span class="d">Dec 2</span><span class="t">Class Y:</span> <span class="ti">Conservation of Angular Momentum</span></td>
+  <td class="empty"><span class="d">Dec 3</span></td>
+  <td class="class"><span class="d">Dec 4</span><span class="t">Class Z:</span> <span class="ti">Restoring Torques</span></td></tr>
+
+<tr><td class="wk">16</td>
+  <td class="office"><span class="d">Dec 7</span><span class="t">Office Hours</span> <span class="ti">Rotational review</span><br><span class="hw">HW X–Y–Z due</span></td>
+  <td class="brk"><span class="d">Dec 8</span>Classes end</td>
+  <td class="brk"><span class="d">Dec 9</span></td>
+  <td class="brk"><span class="d">Dec 10</span>Exams begin</td>
+  <td class="empty"><span class="d">Dec 11</span></td></tr>
+
+<tr><td class="wk">Finals</td>
+  <td class="exam"><span class="d">Dec 14</span><span class="t">Final Exam</span> <span class="ti">9:00 AM–12:00 PM</span></td>
+  <td class="brk"></td><td class="brk"></td><td class="brk"></td><td class="brk"></td></tr>
+</table>
+</body>
+</html>
