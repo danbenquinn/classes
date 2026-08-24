@@ -168,6 +168,11 @@
   #ctx .fitctl>label{color:var(--muted);}
   #ctx .fitctl input[type=number]{width:56px;padding:3px 5px;}
   #ctx .fitctl .unit{color:var(--muted);font-size:var(--fs-label);}
+  #ctx .chk{cursor:pointer;white-space:nowrap;}
+  #ctx .chk input{accent-color:var(--result);margin:0 2px 0 0;}
+  /* the measured offset, in the amber the tool uses for context rather than the green it uses for a
+     measured value — it says what was taken away, it is not itself a reading */
+  #ctx .biasnote{color:var(--edge);font-size:var(--fs-label);white-space:nowrap;font-variant-numeric:tabular-nums;}
   #ctx .fitchk{display:inline-flex;align-items:center;gap:3px;color:var(--muted);cursor:pointer;}
   #ctx .fitchk input{accent-color:var(--result);margin:0;}
   #ctx input[type=number]:disabled,#ctx .fitchk input:disabled{opacity:.5;cursor:default;}

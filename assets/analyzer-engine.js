@@ -95,6 +95,17 @@ const S = {
   visible:[],              // indices of the slots the current step shows, top to bottom
   tool:TOOLS[0]||"point",
   fitCtl:{ampFit:true, freqFit:true, ampVal:null, freqVal:null},  // Fit Sine controls: which params are free + their values
+  /* ---- zero-offset removal (PROVISIONAL, default OFF — Daniel is evaluating it, 2026-08-21) ----
+     phyphox's linear-acceleration stream should read 0 when the phone is still and doesn't: Get Air's demo
+     file sits at -0.030 m/s² through the quiet stretch, ~0.3% of g. Integrating twice turns that constant
+     into ½·a·τ², so the error grows with the SQUARE of the selection: 1 s of dead air costs 0.7 cm, 3 s
+     costs 10 cm, and a 32 cm jump can report 5 cm. When on, doIntegrate() estimates the offset from the
+     stillness at the START of the selection and subtracts it from every sample.
+     OFF by default on purpose. The next step in Get Air asks students what causes drift, and one of its
+     correct answers is that small acceleration errors pile up when you integrate twice — this is that,
+     and silently correcting it would answer the question before it is asked. Note it removes the CONSTANT
+     term only: not returning to where you started, non-constant bias and noise all survive. */
+  debias:false, debiasEst:null,
   fitLock:null,            // {amp, freq} when a step pins the fit (the challenge)
   hs:{best:null},          // R² high score (challenge)
   challenge:false,
@@ -240,7 +251,7 @@ function ingestParsed(parsed,P){
                          : (nums.find(h=>/absolute/i.test(h)) || nums[0]);
   if(S.reqAxis){ const want=nums.find(h=>new RegExp("acceleration\\s*"+S.reqAxis+"\\b","i").test(h)); if(want) pick=want; }
   P.sigH = pick; sel.value=P.sigH;
-  P.point=null; P.sel=null; P.integ=null; P.crop=null;
+  P.point=null; P.sel=null; P.integ=null; P.crop=null; P._bias=null; P._biasFor=null;
   updateCtx(); resize(); setReadout();
   // A `gate:"data"` step completes the moment a file lands, with no button involved — so this is one
   // of the places Next's look has to be recomputed, or it stays dark over a step that is now passable.
@@ -308,13 +319,51 @@ function doIntegrate(s,P){
   P=P||active();
   const r=selRange(s,P); if(!r||r[1]<=r[0]) { P.integ=null; return; }
   const [i0,i1]=r;
-  // the signal is integrated as-is: on phyphox's "without g" (linear acceleration) stream a still body
-  // reads ≈0, so no baseline/gravity subtraction is needed. Residual drift is real — and the point.
+  // By default the signal is integrated AS-IS: on phyphox's "without g" (linear acceleration) stream a
+  // still body reads ≈0, so no baseline subtraction is needed in principle. Residual drift is real — and
+  // the point of the step that follows. `S.debias` (off by default) is the opt-in correction: estimate the
+  // sensor's constant zero-offset from the stillness the student was told to start in, and subtract it.
+  // The offset is estimated from the QUIETEST half-second of the whole recording — see estimateBias().
+  const bias = S.debias ? estimateBias(s,P) : 0;
+  S.debiasEst = S.debias ? bias : null;
   let v=0, x=0;   // zero initial conditions (the reason students must start from rest)
   const t=[s.t[i0]],V=[v],X=[x]; let peak=x, peakT=s.t[i0], peakK=0, k=0;
-  for(let i=i0+1;i<=i1;i++){ const dt=s.t[i]-s.t[i-1]; const am=(s.a[i]+s.a[i-1])/2;
+  for(let i=i0+1;i<=i1;i++){ const dt=s.t[i]-s.t[i-1]; const am=(s.a[i]+s.a[i-1])/2 - bias;
     const pv=v; v+=am*dt; x+=(pv+v)/2*dt; t.push(s.t[i]);V.push(v);X.push(x); k++; if(x>peak){peak=x;peakT=s.t[i];peakK=k;} }
   P.integ={t,v:V,x:X,peak,peakT,peakK,i0,i1};
+}
+
+/* Estimate the sensor's constant zero-offset: the mean of the QUIETEST half-second anywhere in the
+   recording, found by sliding a window and taking the one with the least variance.
+
+   The first version of this took the mean of the first half-second of the SELECTION, which was wrong in
+   the one case that matters. The whole point of the reworded Method-2 step is to drag a TIGHT window —
+   about a quarter-second of stillness before the crouch — and a quarter-second of "stillness" that is
+   really the top of the crouch is not a zero reading. On Get Air's demo it estimated -1.79 m/s² and
+   reported a 767 cm jump. The two ideas were in direct conflict: the tighter the drag, the less still
+   data it contains to calibrate from.
+
+   Looking at the whole recording instead decouples them. The phone was lying still or standing still
+   somewhere in every one of these captures — before the jump, between elevator floors — and that stretch
+   is the calibration whether or not the student selected it. Cached per panel and per signal, because it
+   depends on neither the selection nor the tool. */
+function estimateBias(s,P){
+  P=P||active();
+  if(P && P._biasFor===P.sigH && Number.isFinite(P._bias)) return P._bias;
+  const WIN=0.5, MINN=8;
+  let j=0, sum=0, sum2=0, best=null;
+  for(let i=0;i<s.t.length;i++){
+    while(j<s.t.length && s.t[j]-s.t[i]<=WIN){ sum+=s.a[j]; sum2+=s.a[j]*s.a[j]; j++; }
+    const n=j-i;
+    if(n>=MINN){
+      const m=sum/n, varr=sum2/n-m*m;
+      if(!best || varr<best.varr) best={varr,m};
+    }
+    sum-=s.a[i]; sum2-=s.a[i]*s.a[i];
+  }
+  const b = best ? best.m : 0;
+  if(P){ P._bias=b; P._biasFor=P.sigH; }
+  return b;
 }
 
 /* ====================== Fit Sine ============================== */
@@ -377,7 +426,20 @@ function doFitSine(s,P){
 /* ====================== contextual controls ==================== */
 function updateCtx(){
   const box=$("ctx"); box.innerHTML="";
-  if(S.tool!=="fitsine") return;                 // integrate uses fixed zero initial conditions — no controls
+  // Integrate / Double Integrate get one control: the provisional zero-offset removal. Same row as Fit
+  // Sine's cells so the bar height never changes (house style).
+  if(S.tool==="dblint"||S.tool==="integrate"){
+    box.innerHTML='<label class="chk" title="Subtract the sensor\'s constant zero-offset, estimated from the stillness at the start of your selection">'
+      +'<input type="checkbox" id="debias"'+(S.debias?" checked":"")+'>remove zero-offset</label>'
+      +'<span class="biasnote" id="biasnote"></span>';
+    const cb=$("debias");
+    cb.addEventListener("change",()=>{ S.debias=cb.checked;
+      visiblePanels().forEach(P=>{ const ss=series(P); if(ss&&P.sel) doIntegrate(ss,P); });
+      render(); setReadout(); updateBiasNote(); });
+    updateBiasNote();
+    return;
+  }
+  if(S.tool!=="fitsine") return;                 // nothing else has controls
   const lock=S.fitLock, c=S.fitCtl;
   const ampFit = lock?false:c.ampFit, freqFit = lock?false:c.freqFit;
   const ampV = lock?lock.amp:c.ampVal, freqV = lock?lock.freq:c.freqVal;
@@ -394,6 +456,13 @@ function updateCtx(){
       recomputeFit(); });
     chk.addEventListener("change",()=>{ c[which+"Fit"]=chk.checked; recomputeFit(); }); };  // toggling fit frees/locks it
   wire("amp","amp"); wire("freq","freq");
+}
+// what the offset actually was, in the bar beside the checkbox — the number is the whole argument, and a
+// correction the student can't see the size of is indistinguishable from the tool making things up.
+function updateBiasNote(){
+  const el=$("biasnote"); if(!el) return;
+  el.textContent = (S.debias && Number.isFinite(S.debiasEst) && S.debiasEst!==null)
+    ? "removed "+S.debiasEst.toFixed(3)+" m/s²" : "";
 }
 function syncFitControls(){                       // refresh free-param textboxes with the fitted values (no rebuild → keeps focus)
   if(S.fitLock||!S.fit) return;
@@ -431,11 +500,11 @@ function updatePlotReadout(P){
     // Crop is the one tool that reads out in AMBER, not green, and that is the point of the house rule
     // rather than an exception to it: green means "a number you measured", and a crop measures nothing.
     // It says what you are looking at, in the same amber as the bounds you dragged to say it.
-    if(!P.crop){ show('<span class="ro-hint">drag the amber bounds inward to crop</span>'); return; }
+    if(!P.crop){ show('<span class="ro-hint">drag across the trace to crop</span>'); return; }
+    // Just the window. It used to add "showing …" and a percent-of-the-recording, which was three facts
+    // where one was wanted — the axis underneath already says what fraction of the run this is.
     const lo=Math.min(P.crop.a,P.crop.b), hi=Math.max(P.crop.a,P.crop.b);
-    const pct=Math.round(100*(hi-lo)/Math.max(fullSpan(s),1e-9));
-    show('<span class="ro-ctx">showing '+lo.toFixed(2)+'–'+hi.toFixed(2)+' s'
-      +(isCropped(P)?' · '+pct+'% of the recording':' · drag a bound inward')+'</span>');
+    show('<span class="ro-ctx">'+lo.toFixed(2)+'–'+hi.toFixed(2)+' s</span>');
   } else { R.style.display="none"; R.innerHTML=""; }   // integrate → on-curve callouts only
 }
 // Every visible panel repaints its own readout; the legacy no-arg call sites now mean "all of them",
@@ -504,6 +573,12 @@ function renderPanel(P){
   // The TIME axis always spans the whole recording, cropped or not — that is the deliberate half of the
   // crop design. Only the VERTICAL axis rescales, so the discarded noise stays on screen, dimmed, at its
   // true width and now visibly off the top of the plot. A student can see what they threw away.
+  // The time axis always spans the WHOLE recording, however tight the crop is. Only the vertical axis
+  // rescales to what is inside. Tried it the other way on 2026-08-21 — the view following the crop, with
+  // a margin of grey kept outside each bound to drag into — and it made the control worse to use, not
+  // better (Daniel, same day). Cropping is a drag-a-region gesture on a fixed axis; the moment the axis
+  // moves underneath the gesture, the thing you are dragging is measured in a coordinate system your own
+  // drag is changing, and no amount of care with the pointer maths makes that feel right.
   const T=niceTicks(s.t[0], s.t[s.t.length-1], 6);
   const cr=cropRange(s,P);
   const inA=s.a.slice(cr[0],cr[1]+1);
@@ -691,8 +766,9 @@ function wirePointer(P){
         const da=Math.abs(px-timeToPx(P,P.crop.a)), db=Math.abs(px-timeToPx(P,P.crop.b));
         if(Math.min(da,db)<=GRAB_PX) which = da<=db ? "a" : "b";
       }
+      // Absolute pointer mapping: the axis is fixed, so the bound simply sits under the cursor.
       if(which) P.drag={crop:which};
-      else { P.crop={a:t,b:t}; P.drag={crop:"b"}; }
+      else { P.crop={a:t,b:t}; P.drag={crop:"b"}; }   // drag out a fresh region
       render(); return;
     }
     if(S.tool==="point"){ P.point=t; P.drag={pt:true}; render(); setReadout(); }
@@ -709,10 +785,10 @@ function wirePointer(P){
     if(!P.drag) return;
     if(P.drag.crop){
       const s=series(P);
-      // a bound dragged onto its twin is a reset, not a zero-width window — same gesture the selection
-      // tools already use for "never mind"
+      // a bound dragged onto its twin is a reset, not a zero-width window — the same "never mind"
+      // gesture the selection tools already use
       if(s && Math.abs(P.crop.b-P.crop.a) < 0.01*fullSpan(s)) P.crop={a:s.t[0],b:s.t[s.t.length-1]};
-      P.drag=null; render(); return;
+      P.drag=null; render(); setReadout(); return;
     }
     if(P.drag.pt){ P.drag=null; return; }
     const t=pxToTime(P,e.clientX);

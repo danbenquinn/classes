@@ -14,7 +14,7 @@
     supabaseUrl: "https://rdbacwwbeyeqdkswwvjt.supabase.co",
     supabaseAnonKey: "sb_publishable_IQNxMMynit0aWtOS3tjiRQ_h5sNo159",
     remoteBase: "https://danbenquinn.github.io/poll/remote.html?class=",
-    remoteVersion: 4,                                // bump when remote.html changes — busts phone caches via the QR URL
+    remoteVersion: 5,                                // bump when remote.html changes — busts phone caches via the QR URL
     preferredCam: /document|doc.?cam|ipevo|elmo|aver|hue|usb/i
   }, window.DECK_CONFIG || {});
   const CLASS_ID = CFG.classId;
@@ -1468,7 +1468,11 @@
         chan.send({ type:'broadcast', event:'state', payload:{
           index: i + 1, total: slides.length,
           id: cur ? cur.id : '', notes: notesOf(cur), type: typeOf(cur),
-          nextId: next ? next.id : '', nextType: typeOf(next), nextTitle: next ? (next.dataset.title || next.id) : ''
+          nextId: next ? next.id : '', nextType: typeOf(next), nextTitle: next ? (next.dataset.title || next.id) : '',
+          // Whether the room is currently dark. The phone lights its Black button from this, because
+          // the failure mode of a blackout button is standing in front of a black screen unsure
+          // whether you blacked it out or the laptop died.
+          paused: !!(Reveal.isPaused && Reveal.isPaused())
         }});
       }catch(e){}
     }
@@ -1478,6 +1482,12 @@
         if(!payload) return;
         if(payload.action === 'next') smartNext();
         else if(payload.action === 'prev') Reveal.prev();
+        // Blacking the room out from the phone (2026-08-24). `Reveal.togglePause()` is the SAME thing
+        // the `.` / `B` key already does on the laptop, deliberately — a second blackout mechanism
+        // would be one more thing that can disagree with the first, and the laptop and the phone have
+        // to be able to undo each other. Video underneath keeps playing, which is what you want: come
+        // back from a blackout mid-clip and the clip is where the room expects it, not rewound.
+        else if(payload.action === 'blackout') Reveal.togglePause();
       });
       chan.on('broadcast', { event:'request' }, publish);   // phone (re)connected → send it the current state
       // Report the subscribe status. Silence is right for class — a dead remote must never interrupt a
@@ -1494,6 +1504,10 @@
       Reveal.on('slidechanged', publish);
       Reveal.on('fragmentshown', publish);
       Reveal.on('fragmenthidden', publish);
+      // …and on pause, so the phone learns about a blackout it did not cause — pressing `.` on the
+      // laptop has to light the phone's button too, or the two disagree the moment you use both.
+      Reveal.on('paused', publish);
+      Reveal.on('resumed', publish);
     }catch(e){ console.warn('presenter remote unavailable', e); }
   })();
 

@@ -383,3 +383,11 @@
   section.divider{ background:transparent !important; }
   .divider h2{ color:var(--ink); font-size:calc(var(--size-title) * 720px); font-weight:700;
                text-align:center; margin-top:38vh; letter-spacing:.01em; }
+
+/* ---- Blackout (reveal's pause: `.` / `B` on the laptop, the Black button on the phone) ----------
+   Reveal draws a "Resume presentation" button in the corner of its pause overlay. On a laptop that is
+   a helpful affordance; on a projector it is a caption, three metres wide, telling a lecture hall that
+   the screen they are looking at is paused — which is exactly what a blackout is trying not to say.
+   The way back is unchanged and there are two of them: `.` on the laptop, or the phone's own button,
+   which now reads "Show" while the room is dark. Added 2026-08-24 with the phone blackout. */
+.reveal .pause-overlay .resume-button{ display: none !important; }

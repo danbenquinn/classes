@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MAE 2501 · Applied Physics I · Workshops</title>
+<link rel="stylesheet" href="assets/fonts.css">
+<style>
+:root{--bg:#000;--ink:#f2f2ef;--muted:#8a8a86;--accent:#5d9ec7}
+*{box-sizing:border-box}
+body{margin:0;padding:8vh 6vw;background:var(--bg);color:var(--ink);
+     font-family:Inter,-apple-system,Segoe UI,Helvetica,Arial,sans-serif;line-height:1.5}
+h1{font-weight:600;font-size:clamp(1.6rem,4vw,2.4rem);margin:0 0 1.6em;line-height:1.25}
+/* the <br> in the heading is deliberate — the two halves are a course and a thing, and letting
+   them wrap on their own put the break in a different place at every window width. */
+ul{list-style:none;padding:0;margin:0;max-width:46rem}
+li{border-top:1px solid #23232a}
+li:last-child{border-bottom:1px solid #23232a}
+a{display:flex;gap:1rem;align-items:baseline;padding:.85em .2em;color:var(--ink);text-decoration:none}
+a:hover{background:#0e0e13}
+.k{color:var(--accent);font-weight:600;min-width:5.5rem}
+</style></head>
+<body>
+  <h1>MAE 2501 · Applied Physics I<br>Workshops</h1>
+  <ul id="items">
+
+  </ul>
+<script id="pending" type="text/plain">W3sicyI6ICJ3b3Jrc2hvcC1jNDU4MmUxOTUyNzAvP3Y9ZWY5YTEyMTIiLCAiayI6ICJXb3Jrc2hvcCAwIiwgInQiOiAiSGVsbG8gV29ybGQiLCAiciI6IDE3ODgxODEyMDAwMDB9LCB7InMiOiAid29ya3Nob3AtYjgzYzA0YjZmZjQ0Lz92PWY0MjA3Zjk0IiwgImsiOiAiV29ya3Nob3AgMSIsICJ0IjogIkdldCBBaXIiLCAiciI6IDE3ODg3ODYwMDAwMDB9XQ==</script>
+<script>
+(function(){
+  var raw = document.getElementById('pending').textContent.trim();
+  if (!raw) return;
+  var bin = atob(raw), u8 = new Uint8Array(bin.length);
+  for (var i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+  var pending = JSON.parse(new TextDecoder('utf-8').decode(u8));
+  var ul = document.getElementById('items');
+  function paint(){
+    var now = Date.now(), added = false;
+    pending = pending.filter(function(c){
+      if (c.r > now) return true;
+      var li = document.createElement('li'), a = document.createElement('a');
+      a.href = c.s;
+      var k = document.createElement('span'); k.className = 'k'; k.textContent = c.k;
+      var t = document.createElement('span'); t.textContent = c.t;
+      a.appendChild(k); a.appendChild(t); li.appendChild(a); ul.appendChild(li);
+      added = true; return false;
+    });
+    // Appended rows land at the end, which is wrong the moment one opens while the tab is already
+    // showing others. Sorting on the key text ("Class A", "Class B", …) puts it where it belongs.
+    if (added) Array.prototype.slice.call(ul.children).sort(function(a, b){
+      return a.textContent.localeCompare(b.textContent, undefined, {numeric:true});
+    }).forEach(function(li){ ul.appendChild(li); });
+  }
+  paint();
+  if (pending.length) setInterval(paint, 15000);
+})();
+</script>
+</body></html>
