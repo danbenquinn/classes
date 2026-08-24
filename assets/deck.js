@@ -340,6 +340,12 @@
   // buffer isn't ready, in which case the caller falls back to the ordinary load (which still lands on
   // the matched frame — a hard cut rather than a fade, which is a survivable degradation).
   const FADE_MS = 420;
+  // Backstop for the seek wait below. Sized in 2026-08 against single-keyframe clips, whose seeks
+  // measured 120-160 ms; the A1/A2 clips were re-encoded with dense keyframes on 2026-08-24 and now
+  // seek in ~40 ms, so this is roughly 7x the observed wait rather than 2x. Left where it is: it is a
+  // backstop, not a budget, and the value has to cover the slowest clip on the slowest machine, not
+  // the fastest one measured. Short enough that a missing event can never hang the transition.
+  const SEEK_GRACE_MS = 300;
   function stageFrameMatch(cur){
     const all = Array.from(document.querySelectorAll('.reveal .slides > section'));
     const nxt = all[all.indexOf(cur) + 1];
@@ -366,18 +372,57 @@
     incoming.style.opacity = 0; incoming.style.visibility = 'visible';
     outgoing.style.display = 'block'; outgoing.style.zIndex = 1;
     layoutActive();                                  // sizes `player`, i.e. the incoming clip
-    incoming.play().catch(()=>{});
-    requestAnimationFrame(() => {
-      incoming.style.transition = 'opacity ' + FADE_MS + 'ms linear';
-      outgoing.style.transition = 'opacity ' + FADE_MS + 'ms linear';
-      incoming.style.opacity = 1; outgoing.style.opacity = 0;
-    });
-    setTimeout(() => {
-      outgoing.pause(); outgoing.style.display = 'none';
-      outgoing.style.transition = ''; outgoing.style.opacity = 1; outgoing.style.zIndex = '';
-      incoming.style.transition = ''; incoming.style.zIndex = '';
-      stageFrameMatch(cur);        // only now is the buffer free to decode the next clip
-    }, FADE_MS + 60);
+
+    // ---- DO NOT FADE UNTIL THE SEEKED FRAME IS ON SCREEN -----------------------------------------
+    // The fade used to start in the next animation frame, immediately after the currentTime
+    // assignment. A seek is asynchronous: until it lands, the element still shows whatever it had
+    // decoded, which for a freshly-preloaded buffer is FRAME 0. So the first stretch of every
+    // cross-fade was the incoming clip's OPENING frame fading up — a still of the finished scene —
+    // and only then did it cut to the matched frame and start moving. Daniel reported it as "the
+    // thumbnail image of the next one, briefly, during the transition", which is exactly what it is.
+    //
+    // It was not a small window. Until 2026-08-24 these clips were ONE KEYFRAME EACH (151 frames,
+    // single GOP — they came out of the animation quarry that way), so seeking to t=3 s meant decoding
+    // three seconds of video from frame 0: measured at 120-160 ms with ffmpeg, and a browser is no
+    // faster. Against FADE_MS=420 that was the first third of the fade showing the wrong picture.
+    //
+    // `gen/densify_keyframes.py` re-encoded them to a keyframe every 15 frames (0.5 s at 30 fps), which
+    // caps a seek at half a second of decode and measured ~40 ms. THE WAIT IS STILL REQUIRED. Dense
+    // keyframes shorten the window; they do not close it, because a seek is asynchronous no matter how
+    // cheap it is, and the element goes on presenting frame 0 until it lands. All the densify bought is
+    // that the fallback path — the backstop firing before the seek completes — no longer has anything
+    // like enough time to show the opening frame.
+    //
+    // So: seek, wait for the frame to be PRESENTED, and only then play and fade. The outgoing clip
+    // keeps playing untouched during the wait, so the room sees continuous motion rather than a stall —
+    // which is why waiting is free here and would not be on a static slide.
+    //
+    // `requestVideoFrameCallback` is the precise signal (it fires when a frame is actually composited);
+    // `seeked` is the fallback for anything that lacks it. The timeout is a backstop for the case where
+    // neither fires — a seek to the time the element is already at may legitimately produce no event,
+    // and a fade that never starts would be a black slide, which is far worse than an early one.
+    let faded = false;
+    const beginFade = () => {
+      if(faded) return;
+      faded = true;
+      incoming.removeEventListener('seeked', beginFade);
+      logMedia('fade-start', incoming);
+      incoming.play().catch(()=>{});
+      requestAnimationFrame(() => {
+        incoming.style.transition = 'opacity ' + FADE_MS + 'ms linear';
+        outgoing.style.transition = 'opacity ' + FADE_MS + 'ms linear';
+        incoming.style.opacity = 1; outgoing.style.opacity = 0;
+      });
+      setTimeout(() => {
+        outgoing.pause(); outgoing.style.display = 'none';
+        outgoing.style.transition = ''; outgoing.style.opacity = 1; outgoing.style.zIndex = '';
+        incoming.style.transition = ''; incoming.style.zIndex = '';
+        stageFrameMatch(cur);      // only now is the buffer free to decode the next clip
+      }, FADE_MS + 60);
+    };
+    if(incoming.requestVideoFrameCallback) incoming.requestVideoFrameCallback(() => beginFade());
+    else incoming.addEventListener('seeked', beginFade);
+    setTimeout(beginFade, SEEK_GRACE_MS);
     return true;
   }
 
@@ -596,7 +641,11 @@
     if(d.fullvideo){
       attrib.classList.add('hasfull');
       attrib.innerHTML = '<a target="_blank" rel="noopener noreferrer"><img alt=""><span class="u"></span>'
-                       + '<span class="full">\u00b7 full video \u2197</span></a>';
+                       // "full video" made sense when the slide showed a TRIMMED clip and the link
+                       // went to the uncut one. On the published decks the slide is a freeze frame,
+                       // so there is no partial version for this to be the full one OF — it is just
+                       // the video. Shortened 2026-08-20.
+                       + '<span class="full">\u00b7 video \u2197</span></a>';
       attrib.querySelector('a').href = d.fullvideo;
     } else {
       attrib.classList.remove('hasfull');

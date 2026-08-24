@@ -297,11 +297,61 @@
     }
   }
 
+  // ---- Quadratic drag (Class K) -------------------------------------------------------------
+  // beta = ½·rho·C_d·A_perp  [kg/m] — the lumped constant on the FormulaSheet: F_d = -beta|ṙ|ṙ.
+  // With beta > 0 the analytic pos(t)/vel(t) are gone: in 2-D drag couples x and y through |ṙ| and
+  // there is no closed form (which is the point Class K makes). So a trajectory is RK4-integrated
+  // once at play(), sampled onto a uniform grid, and interpolated. beta = 0 short-circuits back to
+  // the analytic path, so every drag-free deck (B, D) behaves exactly as before.
+  const RHO_AIR = 1.2;                                   // sea-level air density, the course's rho
+  function betaOf(cd, area) { return 0.5 * RHO_AIR * Math.max(cd || 0, 0) * Math.max(area || 0, 0); }
+
+  // One RK4 substep of  r̈ = -g ŷ - (beta/m)|ṙ|ṙ.  `k` is beta/m and is passed in FRESH every substep,
+  // which is the whole point: the C_d / A⊥ sliders change the motion mid-flight, not just the arrows.
+  function dragStep(st, dt, g, k) {                      // st = {x, y, u, v}, mutated in place
+    const au = (u, v) => -k * Math.hypot(u, v) * u;
+    const av = (u, v) => -g - k * Math.hypot(u, v) * v;
+    const k1u = au(st.u, st.v), k1v = av(st.u, st.v);
+    const k2u = au(st.u + .5 * dt * k1u, st.v + .5 * dt * k1v), k2v = av(st.u + .5 * dt * k1u, st.v + .5 * dt * k1v);
+    const k3u = au(st.u + .5 * dt * k2u, st.v + .5 * dt * k2v), k3v = av(st.u + .5 * dt * k2u, st.v + .5 * dt * k2v);
+    const k4u = au(st.u + dt * k3u, st.v + dt * k3v),           k4v = av(st.u + dt * k3u, st.v + dt * k3v);
+    const du = dt / 6 * (k1u + 2 * k2u + 2 * k3u + k4u), dv = dt / 6 * (k1v + 2 * k2v + 2 * k3v + k4v);
+    st.x += dt * (st.u + du / 2); st.y += dt * (st.v + dv / 2); st.u += du; st.v += dv;
+  }
+
+  // Advance by one frame in fixed ~2 ms substeps, so a long frame (tab refocus, slo-mo toggle) can't
+  // destabilize it, then record the state. The history IS the trajectory now: with no closed form
+  // left, it is what pos(t)/vel(t) read for PAST times — motion blur and the drawn trail.
+  function dragAdvance(st, hist, t, dt, g, k) {
+    const n = Math.max(1, Math.min(400, Math.ceil(dt / 0.002))), s = dt / n;
+    for (let i = 0; i < n; i++) dragStep(st, s, g, k);
+    hist.push({ t, x: st.x, y: st.y, u: st.u, v: st.v });
+    if (hist.length > 6000) hist.shift();
+  }
+
+  function histAt(hist, t) {                             // binary search + linear interpolation
+    if (!hist || !hist.length) return null;
+    const last = hist[hist.length - 1];
+    if (t >= last.t) return last;
+    if (t <= hist[0].t) return hist[0];
+    let lo = 0, hi = hist.length - 1;
+    while (hi - lo > 1) { const m = (lo + hi) >> 1; if (hist[m].t <= t) lo = m; else hi = m; }
+    const A = hist[lo], B = hist[hi], f = (t - A.t) / Math.max(B.t - A.t, 1e-9);
+    return { t, x: A.x + (B.x - A.x) * f, y: A.y + (B.y - A.y) * f,
+             u: A.u + (B.u - A.u) * f, v: A.v + (B.v - A.v) * f };
+  }
+
   class Projectile extends SimBase {
     constructor(canvas, opts = {}) {
       super(canvas);
       this.focusY = opts.focusY ?? HOUSE.focusY;
       this.v0 = opts.v0 ?? 0; this.g = opts.g ?? 9.8; this.mass = opts.mass ?? 1;
+      this.beta = opts.beta ?? 0;          // ½rho·C_d·A_perp [kg/m], read LIVE off the sliders
+      this.dragMode = !!opts.dragMode;     // set by the mount, NOT by beta: a slide that can reach
+                                           // drag always integrates, so beta may change mid-flight
+      this.st = null; this.hist = null;    // live state + its history (see dragAdvance / histAt)
+      this.area = opts.area ?? 0.4;        // A_perp [m²], mirrored from the slider so the DISC can track it
+      this.areaRef = opts.areaRef ?? 0.4;  // the area drawn at exactly house size (middle of the travel)
       this.slomo = !!opts.slomo; this.slomoFactor = opts.slomoFactor ?? HOUSE.slomoFactor;   // per-sim rate, like the others
       this.showReadout = false;
       this.running = false; this.paused = false; this.gone = false; this.goneAt = null; this.fadeStart = null;
@@ -314,17 +364,36 @@
       this._bindDrag();
     }
 
-    get radius() { return HOUSE.baseRadius * Math.cbrt(this.mass); }
+    // Drag slides draw the ball at the size the slider says it is: A_perp = pi r^2, so the disc
+    // tracks sqrt(A). Bounded to [0.5, 1.75] x house size — enough that growing the area visibly
+    // grows the ball, never enough for it to vanish or swallow the frame. Off a drag slide the
+    // radius is the usual cbrt(mass).
+    get radius() {
+      if (this.dragMode) {
+        const f = Math.sqrt(Math.max(this.area, 1e-6) / Math.max(this.areaRef, 1e-6));
+        return HOUSE.baseRadius * Math.min(Math.max(f, 0.5), 1.75);
+      }
+      return HOUSE.baseRadius * Math.cbrt(this.mass);
+    }
     _forceLen(g) { return 1.3 * this.mass * (g / 9.8); }
     // resize / sx / sy inherited from SimBase (centered viewplane, focusY at screen center)
 
-    pos(t) { const L = this.L; return { x: L.x0, y: L.y0 + L.v0 * t - 0.5 * L.g * t * t }; }
-    vel(t) { return this.L.v0 - this.L.g * t; }
+    pos(t) { const L = this.L; if (!L) return { x: this.x0, y: this.y0 };
+             if (this.dragMode) { const s = histAt(this.hist, t); return { x: L.x0, y: s ? s.y : L.y0 }; }
+             return { x: L.x0, y: L.y0 + L.v0 * t - 0.5 * L.g * t * t }; }
+    vel(t) { const L = this.L; if (!L) return this.v0;
+             if (this.dragMode) { const s = histAt(this.hist, t); return s ? s.v : L.v0; }
+             return L.v0 - L.g * t; }
+    // Terminal speed sqrt(mg/beta) — the FormulaSheet result, shown live in the readout.
+    get vTerm() { return this.beta > 0 ? Math.sqrt(this.mass * this.g / this.beta) : Infinity; }
 
     play()   { this.L = { x0: this.x0, y0: this.y0, v0: this.v0, g: this.g };
+               this.st = { x: this.x0, y: this.y0, u: 0, v: this.v0 };
+               this.hist = [{ t: 0, x: this.x0, y: this.y0, u: 0, v: this.v0 }];
                this.t = 0; this.gone = false; this.goneAt = null; this.fadeStart = null;
                this.running = true; this.paused = false; this.everPlayed = true; this.last = performance.now(); }
     reset()  { this.running = false; this.paused = false; this.gone = false; this.goneAt = null; this.t = 0;
+               this.L = null; this.st = null; this.hist = null;
                this.fadeStart = performance.now(); this.render(); }
     // pause / resume inherited from SimBase
 
@@ -367,6 +436,7 @@
       if (this.running && !this.paused) {
         const dt = Math.min((now - this.last) / 1000, 0.05) * (this.slomo ? this.slomoFactor : 1);
         this.last = now; this.t += dt;
+        if (this.dragMode) dragAdvance(this.st, this.hist, this.t, dt, this.L.g, this.beta / this.mass);
         const p = this.pos(this.t), vy = this.vel(this.t), sy = this.sy(p.y);
         const belowBottom = sy > this.H + 60, aboveTop = sy < -60;
         if ((belowBottom && vy < 0) || (this.L.g <= 0 && aboveTop && vy > 0) || this.t > 120) {
@@ -391,6 +461,14 @@
       if (this._velShown()) this._velArrow(this.x0, this.y0, this.v0);   // draggable initial-velocity cue (idle only)
       this._disc(p.x, p.y, this.radius, HOUSE.mass, a);
       if (g > 0) this._arrow(p.x, p.y, 0, -this._forceLen(g), HOUSE.gravity, a);
+      // Drag: amber (roles.friction), drawn opposite the motion, length on the SAME scale as the
+      // weight arrow — so at terminal speed the two are visibly equal and opposite.
+      if (this.beta > 0) {
+        const vy = this.running ? this.vel(this.t) : this.v0;
+        const fd = -this.beta * Math.abs(vy) * vy;                 // signed force, +y up
+        if (Math.abs(fd) > 1e-9)
+          this._arrow(p.x, p.y, 0, Math.sign(fd) * this._forceLen(Math.abs(fd) / this.mass), HOUSE.friction, a);
+      }
       if (this.showReadout) this._readout(p, g);
     }
 
@@ -405,6 +483,10 @@
     _readout(p, g) {
       const ctx = this.ctx, v = this.running ? this.vel(this.t) : this.v0;
       const lines = [`t = ${this.t.toFixed(2)} s`, `x = ${p.x.toFixed(2)} m`, `y = ${p.y.toFixed(2)} m`, `v = ${v.toFixed(2)} m/s`];
+      if (this.beta > 0) {                                        // Class K: the lumped constant and its asymptote
+        lines.push(`\u03b2 = ${this.beta.toFixed(3)} kg/m`);
+        lines.push(`terminal = ${this.vTerm.toFixed(2)} m/s`);
+      }
       ctx.save(); ctx.font = (HOUSE.sizeBody * this.H) + "px " + HOUSE.fontMono; ctx.textBaseline = "top";   // readout = body tier
       const pad = this.scale * 0.22; let w = 0;
       lines.forEach(l => w = Math.max(w, ctx.measureText(l).width));
@@ -491,41 +573,161 @@
       this.t = 0; this.now = 0; this.posHist = [];
       this.ballY = this.y0; this.ballVy = 0;
       this.attached = true; this.caught = false; this.detached = false; this.cleared = false; this.noRelease = false;
+      this.catching = false; this.catchY1 = undefined; this.catchA = 0;
+      this.seating = false; this.seatA = 0;
     }
     play()   { this._resetState(); this.running = true; this.paused = false; this.everPlayed = true; this.last = performance.now(); }  // starts from the current y0
     reset()  { this.running = false; this.paused = false; this.y0 = this.y0init; this._resetState(); this.render(); }                  // back to initial rest (slide-leave)
     // pause / resume inherited from SimBase
 
+    // ---- the CATCH, as a quintic Hermite ------------------------------------------------------
+    // Until 2026-08 the catch was an assignment: `this.ballY = line; this.ballVy = 0;` — the ball's
+    // velocity went to zero inside one frame. On screen that is the abrupt stop; on Class J's energy
+    // graph it is an infinite power spike, i.e. a vertical cliff in the very curve the class is asked
+    // to read a slope off.
+    //
+    // The course already solved this. Class E's juggling hands catch a ball twice a second without a
+    // jolt, using the quintic carry in mae-2501-applied-physics-i/kernels/juggle_common.py
+    // (`_quintic` / `_quintic_accel`): a Hermite that matches POSITION, VELOCITY and ACCELERATION at
+    // both ends. Same basis here, different boundary data — enter at the ball's own height and
+    // velocity with gravity's acceleration, leave at rest with zero acceleration.
+    //
+    // Matching A0 = -g on entry is the part not to skip. It is what keeps the normal-force arrow from
+    // popping into existence at full length the instant of contact: F_N = m(g + a), and if `a` jumps
+    // from -g to something else in one frame, so does the arrow. The arrow is on screen.
+    _quintic(P0, P1, M0, M1, A0, A1, s, T) {
+      const s2 = s * s, s3 = s2 * s, s4 = s3 * s, s5 = s4 * s;
+      const H0 = 1 - 10 * s3 + 15 * s4 - 6 * s5,   H1 = s - 6 * s3 + 8 * s4 - 3 * s5,
+            H2 = 0.5 * s2 - 1.5 * s3 + 1.5 * s4 - 0.5 * s5, H3 = 0.5 * s3 - s4 + 0.5 * s5,
+            H4 = -4 * s3 + 7 * s4 - 3 * s5,        H5 = 10 * s3 - 15 * s4 + 6 * s5;
+      const D0 = -30 * s2 + 60 * s3 - 30 * s4,     D1 = 1 - 18 * s2 + 32 * s3 - 15 * s4,
+            D2 = s - 4.5 * s2 + 6 * s3 - 2.5 * s4, D3 = 1.5 * s2 - 4 * s3 + 2.5 * s4,
+            D4 = -12 * s2 + 28 * s3 - 15 * s4,     D5 = 30 * s2 - 60 * s3 + 30 * s4;
+      const E0 = -60 * s + 180 * s2 - 120 * s3,    E1 = -36 * s + 96 * s2 - 60 * s3,
+            E2 = 1 - 9 * s + 18 * s2 - 10 * s3,    E3 = 3 * s - 12 * s2 + 10 * s3,
+            E4 = -24 * s + 84 * s2 - 60 * s3,      E5 = 60 * s - 180 * s2 + 120 * s3;
+      const T2 = T * T;
+      return {
+        y:  H0 * P0 + H1 * T * M0 + H2 * T2 * A0 + H3 * T2 * A1 + H4 * T * M1 + H5 * P1,
+        vy: (D0 * P0 + D1 * T * M0 + D2 * T2 * A0 + D3 * T2 * A1 + D4 * T * M1 + D5 * P1) / T,
+        a:  (E0 * P0 + E1 * T * M0 + E2 * T2 * A0 + E3 * T2 * A1 + E4 * T * M1 + E5 * P1) / T2
+      };
+    }
+
+    // Open the catch. The hand GIVES — it keeps descending under the ball and eases both to rest,
+    // which is what a real catch does and what makes the lid of the energy graph fall smoothly
+    // instead of dropping off a cliff. The give distance is the one a smooth deceleration actually
+    // needs (mean speed over the carry is about half the entry speed), so a fast arrival gets a
+    // deeper, longer catch and a gentle one barely dips.
+    _beginCatch(t, yContact) {
+      const v = Math.abs(this.ballVy);
+      this.catchDur = Math.max(0.22, Math.min(0.55, 0.12 + 0.055 * v));
+      this.catchT0 = t; this.catchY0 = yContact; this.catchV0 = this.ballVy;
+      this.catchY1 = yContact - 0.5 * v * this.catchDur;
+      // Seed the drawn acceleration with the quintic's own entry value. `render()` reads catchA to
+      // size the normal-force arrow, and on THIS frame `_advance` is still in the free-flight branch,
+      // so catchA has not been written yet — an unseeded `|| 0` drew N = mg for exactly one frame,
+      // which is the flick of purple visible at the moment of contact. The model was always
+      // continuous here (the quintic enters at A0 = -g, so N enters at zero); only the drawing lagged.
+      this.catchA = -this.g;
+      this.catching = true; this.attached = true; this.caught = true;
+    }
+
+    // The RE-SEAT, and it is not the catch. For |a_max| a little past g the ball leaves the palm for a
+    // few frames and then meets a hand that has since decelerated — it never "flew," so it must land and
+    // carry on riding the hand's planned push rather than coming to rest. That is why this cannot just
+    // call _beginCatch: `caught` would end the run.
+    //
+    // The old code matched velocities by assignment here, which is the same infinite-power cliff the
+    // catch used to have, only smaller and more often: a visible kink in the energy bands and a ~6 N
+    // step in the normal-force arrow, both around a = -11.7. Same quintic, different boundary data —
+    // enter at the ball's own velocity with gravity's acceleration, and leave matched to where the hand
+    // will BE: its position, its velocity and its acceleration at the end of the blend. Matching all
+    // three is what lets the attached branch take over without a second discontinuity.
+    _beginSeat(t) {
+      // The blend duration is chosen from how hard the re-seat is, not fixed. The quintic must swing
+      // the ball's acceleration from -g to the hand's own value by the end, and forcing a big swing
+      // through a short blend overshoots as 1/tau^2 — a fixed 0.08 s gave a 21 N per-frame step at
+      // a = -11.7, worse than the hard snap it replaced. Two passes because the end state depends on
+      // the duration that depends on the end state; it converges immediately.
+      // The divisors are tuned, not derived: they are the ones that hold the worst per-frame step
+      // across a in [-13, -10] to about 4 N, which is inside the ordinary variation of N during a
+      // push and so reads as no event at all.
+      let dur = 0.14;
+      for (let k = 0; k < 2; k++) {
+        const e = this._hand(t + dur);
+        const dv = Math.abs(this.ballVy - e.vy);      // velocity to be matched
+        const da = Math.abs(e.a + this.g);            // acceleration swing, from -g to the hand's
+        dur = Math.max(0.12, Math.min(0.28, Math.max(dv / 12, da / 90)));
+      }
+      this.seatDur = dur;
+      const end = this._hand(t + this.seatDur);
+      this.seatT0 = t; this.seatY0 = this.ballY; this.seatV0 = this.ballVy;
+      this.seatY1 = end.y; this.seatV1 = end.vy; this.seatA1 = end.a;
+      this.seatA = -this.g;                       // entry acceleration, for the arrow on this frame
+      this.seating = true; this.attached = true; this.detached = false; this.noRelease = true;
+    }
+
+    _seatAt(t) {
+      const s = Math.min(1, Math.max(0, (t - this.seatT0) / this.seatDur));
+      if (s >= 1) { const e = this._hand(t); return { y: e.y, vy: e.vy, a: e.a }; }
+      return this._quintic(this.seatY0, this.seatY1, this.seatV0, this.seatV1,
+                           -this.g, this.seatA1, s, this.seatDur);
+    }
+
+    _catchAt(t) {
+      const s = Math.min(1, Math.max(0, (t - this.catchT0) / this.catchDur));
+      if (s >= 1) return { y: this.catchY1, vy: 0, a: 0 };
+      return this._quintic(this.catchY0, this.catchY1, this.catchV0, 0, -this.g, 0, s, this.catchDur);
+    }
+
+    // The physics, one fixed step. Split out of step() in 2026-08 so a subclass can run the whole
+    // trajectory headlessly before showing it (HandLiftEnergy precomputes its axes this way). step()
+    // is now only "what is dt, and draw"; nothing about the model lives there.
+    _advance(dt) {
+      this.t += dt; this.now = this.t * 1000;                   // blur/history keyed to SIM-time (baked-consistent)
+      if (this.catching) {                                      // the hand is easing the ball to rest
+        const p = this._catchAt(this.t);
+        this.ballY = p.y; this.ballVy = p.vy; this.catchA = p.a;
+        if (this.t - this.catchT0 >= this.catchDur) { this.catching = false; this.ballVy = 0; }
+      } else if (this.seating) {                                // landing back on a still-moving hand
+        const p = this._seatAt(this.t);
+        this.ballY = p.y; this.ballVy = p.vy; this.seatA = p.a;
+        if (this.t - this.seatT0 >= this.seatDur) this.seating = false;
+      } else if (this.attached && !this.caught) {               // riding the hand's planned push
+        const p = this._hand(this.t);
+        this.ballY = p.y; this.ballVy = p.vy;
+        if (!this.noRelease && p.a < -this.g) {                 // palm would have to pull -> release
+          this.attached = false; this.detached = true; this.cleared = false;
+          this.detachT = this.t; this.detachY = p.y; this.detachV = p.vy;
+        }
+      } else if (this.attached && this.caught) {                // resting in the hand again after a catch
+        this.ballY = this.catchY1 !== undefined ? this.catchY1 : this._handTraj(this.t).y; this.ballVy = 0;
+      } else {                                                  // free flight
+        this.ballVy -= this.g * dt; this.ballY += this.ballVy * dt;
+        const line = this._handTraj(this.t).y;
+        if (this.ballY > line + 0.05) this.cleared = true;      // ball got clearly above the hand
+        // Re-contact the hand only when it can actually support the ball again (its accel is no longer
+        // steeper than g) OR the ball flew up and is falling back. Otherwise a genuine drop keeps
+        // free-falling — the hand is still accelerating away below it, so it must not re-seat.
+        const handCanHold = this._hand(this.t).a >= -this.g;
+        if (this.ballY <= line && (this.cleared || handCanHold)) {
+          if (this.cleared) this._beginCatch(this.t, line);   // flew and came back -> CATCH it
+          else this._beginSeat(this.t);                       // brief false release -> blend back onto the hand
+        }
+      }
+      this._recordPos(this.x0, this.ballY, this.now);           // record EVERY frame → blur shows during the push + flight
+      if (this.t >= this.tMove && this.attached && !this.catching && !this.seating && Math.abs(this.ballVy) < 1e-3) {
+        this.running = false; this.y0 = this.ballY;             // settle + "walk"
+      }
+      if (this.ballY < this.focusY - HOUSE.frameH - 1) { this.running = false; }   // safety: fell far off-screen
+    }
+
     step(now) {
       if (this.running && !this.paused) {
         const dt = Math.min((now - this.last) / 1000, 0.05) * (this.slomo ? this.slomoFactor : 1);
-        this.last = now; this.t += dt; this.now = this.t * 1000;   // blur/history keyed to SIM-time (baked-consistent)
-        if (this.attached && !this.caught) {                    // riding the hand's planned push
-          const p = this._hand(this.t);
-          this.ballY = p.y; this.ballVy = p.vy;
-          if (!this.noRelease && p.a < -this.g) {               // palm would have to pull -> release
-            this.attached = false; this.detached = true; this.cleared = false;
-            this.detachT = this.t; this.detachY = p.y; this.detachV = p.vy;
-          }
-        } else if (this.attached && this.caught) {              // resting in the hand again after a catch
-          this.ballY = this._handTraj(this.t).y; this.ballVy = 0;
-        } else {                                                // free flight
-          this.ballVy -= this.g * dt; this.ballY += this.ballVy * dt;
-          const line = this._handTraj(this.t).y;
-          if (this.ballY > line + 0.05) this.cleared = true;    // ball got clearly above the hand
-          // Re-contact the hand only when it can actually support the ball again (its accel is no longer
-          // steeper than g) OR the ball flew up and is falling back. Otherwise a genuine drop keeps
-          // free-falling — the hand is still accelerating away below it, so it must not re-seat.
-          const handCanHold = this._hand(this.t).a >= -this.g;
-          if (this.ballY <= line && (this.cleared || handCanHold)) {
-            this.ballY = line; this.ballVy = 0;
-            if (this.cleared) { this.attached = true; this.caught = true; }                 // flew and came back -> caught
-            else { this.attached = true; this.detached = false; this.noRelease = true; }    // brief false release -> re-seat
-          }
-        }
-        this._recordPos(this.x0, this.ballY, this.now);         // record EVERY frame → blur shows during the push + flight
-        if (this.t >= this.tMove && this.attached && Math.abs(this.ballVy) < 1e-3) { this.running = false; this.y0 = this.ballY; }  // settle + "walk"
-        if (this.ballY < this.focusY - HOUSE.frameH - 1) { this.running = false; }   // safety: fell far off-screen
+        this.last = now;
+        this._advance(dt);
       }
       this.render();
     }
@@ -535,13 +737,19 @@
       this._ticks();
       // Running: the hand follows its trajectory (the ball may separate). Idle: the hand simply cups the
       // ball wherever it rests, so nudging the a_max slider (or a finished run) never repositions the scene.
-      const handY = this.running ? this._handTraj(this.t).y : this.ballY;
+      // Through the CATCH the hand is not on its planned trajectory — it is under the ball, giving,
+      // which is the whole point of the quintic. `_handTraj` still reports the release height there, so
+      // reading it would leave the hand hanging while the ball sinks past it.
+      const handY = !this.running ? this.ballY
+                  : ((this.catching || this.seating) ? this.ballY : this._handTraj(this.t).y);
       this._drawHand(this.x0, handY - this.handGap);
       this._motionBlur(this.radius, k => this._posAtBack(k * HOUSE.blurDt * 1000));   // shared house blur model
       this._disc(this.x0, this.ballY, this.radius, HOUSE.mass, 1);
       this._arrow(this.x0, this.ballY, 0, -this._flen(this.mass * this.g), HOUSE.gravity, 1);   // weight, down
       let acc, N;
-      if (this.attached) { acc = (this.running && !this.caught) ? this._hand(this.t).a : 0; N = this.mass * (this.g + acc); }
+      if (this.catching) { acc = this.catchA || 0; N = this.mass * (this.g + acc); }               // the give: F_N = m(g+a), a < 0
+      else if (this.seating) { acc = this.seatA || 0; N = this.mass * (this.g + acc); }             // landing back on the hand
+      else if (this.attached) { acc = (this.running && !this.caught) ? this._hand(this.t).a : 0; N = this.mass * (this.g + acc); }
       else { acc = -this.g; N = 0; }                                                            // free fall: no normal force
       if (N > 1e-4) this._arrow(this.x0, this.ballY, 0, this._flen(N), HOUSE.normal, 1);         // normal, up
       if (this.showReadout) this._readout(acc, N);
@@ -596,7 +804,11 @@
       this.c.addEventListener("pointermove", (ev) => {
         if (!mode) return; const w = toWorld(ev);
         this.x0 = Math.max(0.6, Math.min(HOUSE.frameW - 0.6, w.x));
-        this.y0 = Math.max(this.focusY - 3, Math.min(this.focusY + 3, w.y));
+        // `dragSpanY` rather than a hard 3: a subclass that reserves part of the canvas for a graph
+        // sees a shorter world, and a clamp written for the full-height framing would let the ball be
+        // dragged out of its own play area.
+        const span = this.dragSpanY || 3;
+        this.y0 = Math.max(this.focusY - span, Math.min(this.focusY + span, w.y));
         this._resetState(); this.render();
       });
       window.addEventListener("pointerup", () => { mode = null; });
@@ -615,6 +827,31 @@
         <label><span class="var"><i>g</i>:</span> <input type="range" class="s-g" min="0" max="12" step="0.2"><input type="number" class="n-g" step="0.2"><span class="u">m/s²</span></label>
       </div>`;
 
+  // Class K drag controls: exactly the two sliders that make up beta — shape and size. They are two
+  // ways of changing one number (the readout shows beta itself), which is the point of lumping them.
+  const DRAG_CONTROLS_HTML = `
+      <canvas class="simcanvas"></canvas>
+      <button class="simbtn toggle-readout" title="show / hide numbers">123</button>
+      <div class="simctrls">
+        <button class="simbtn play">▶ Play</button>
+        <button class="simbtn reset">↺ Reset</button>
+        <button class="simbtn slomo" title="Slow motion">🐢</button>
+        <label><span class="var"><i>C</i><sub>d</sub>:</span> <input type="range" class="s-cd" min="0" max="1.5" step="0.05"><input type="number" class="n-cd" step="0.05"></label>
+        <label><span class="var"><i>A</i><sub>⊥</sub>:</span> <input type="range" class="s-area" min="0.1" max="1" step="0.05"><input type="number" class="n-area" step="0.05"><span class="u">m²</span></label>
+      </div>`;
+
+  // Same two sliders on the wide 2-D frame; area in cm² because the object is a ball, not a skydiver.
+  const DRAG_CONTROLS_2D_HTML = `
+      <canvas class="simcanvas"></canvas>
+      <button class="simbtn toggle-readout" title="show / hide numbers">123</button>
+      <div class="simctrls">
+        <button class="simbtn play">▶ Play</button>
+        <button class="simbtn reset">↺ Reset</button>
+        <button class="simbtn slomo" title="Slow motion">🐢</button>
+        <label><span class="var"><i>C</i><sub>d</sub>:</span> <input type="range" class="s-cd" min="0" max="1" step="0.05"><input type="number" class="n-cd" step="0.05"></label>
+        <label><span class="var"><i>A</i><sub>⊥</sub>:</span> <input type="range" class="s-area" min="10" max="100" step="1"><input type="number" class="n-area" step="1"><span class="u">cm²</span></label>
+      </div>`;
+
   const HAND_CONTROLS_HTML = `
       <canvas class="simcanvas"></canvas>
       <button class="simbtn toggle-readout" title="show / hide numbers">123</button>
@@ -625,7 +862,94 @@
       </div>`;
 
   // HandLift preset: one signed a_max slider, Play, Reset, slo-mo, readout. Drag the ball to reposition.
-  function mountHandLift(section) {
+  // Its own controls and its own mount, rather than a branch inside mountHandLift: the slider asks for
+  // a different quantity in a different unit, there is a Reset button, and Play can be disabled. Class C's
+  // path is left exactly as it was.
+  const HAND_ENERGY_CONTROLS_HTML = `
+      <canvas class="simcanvas"></canvas>
+      <button class="simbtn toggle-readout" title="show / hide numbers">123</button>
+      <div class="simctrls">
+        <button class="simbtn play">▶ Play</button>
+        <button class="simbtn reset">↺ Reset</button>
+        <button class="simbtn slomo" title="Slow motion">🐢</button>
+        <label><span class="var">max <i>ẏ</i>:</span> <input type="range" class="s-vmax" step="0.1"><input type="number" class="n-vmax" step="any"><span class="u">m/s</span></label>
+      </div>`;
+
+  function mountHandLiftEnergy(section) {
+    if (!section.querySelector(".simcanvas")) section.insertAdjacentHTML("beforeend", HAND_ENERGY_CONTROLS_HTML);
+    const d = section.dataset;
+    const canvas = section.querySelector(".simcanvas");
+    const sim = new HandLiftEnergy(canvas, {
+      vMax:   d.vmax  !== undefined ? +d.vmax  : 0,
+      g:      d.g     !== undefined ? +d.g     : 9.8,
+      y0:     d.y0    !== undefined ? +d.y0    : undefined,
+      focusY: d.focus !== undefined ? +d.focus : undefined,
+      slomo:  d.slomo === "true"                       // OFF unless a slide asks for it
+    });
+    const q = s => section.querySelector(s);
+    const readonly = window.self !== window.top;
+    const rng = q(".s-vmax"), num = q(".n-vmax");
+    rng.min = -HandLiftEnergy.V_MAX; rng.max = HandLiftEnergy.V_MAX;
+    const clamp = v => Math.max(+rng.min, Math.min(+rng.max, v));
+    rng.value = sim.vMax; num.value = sim.vMax;
+
+    const playBtn = q(".play"), resetBtn = q(".reset");
+    // Play is dead at a standstill. Without this the old sim happily "ran" a zero-speed push: nothing
+    // moved for a beat and then the controls came back, which reads as a bug rather than as a no-op.
+    const refreshPlay = () => {
+      playBtn.textContent = !sim.running ? "▶ Play" : (sim.paused ? "▶ Resume" : "⏸ Pause");
+      const dead = !sim.running && !sim.canPlay;
+      playBtn.disabled = readonly || dead;
+      playBtn.style.opacity = dead ? ".35" : "";
+      playBtn.title = dead ? "set a speed first" : "";
+    };
+    sim.refreshPlayBtn = refreshPlay;
+
+    // Only commit between runs — changing the speed mid-flight would rewrite the trajectory under the
+    // graph that is being drawn from it.
+    const apply = () => { if (!sim.running) { sim.setV(+rng.value); sim.cal = null; sim.render(); refreshPlay(); } };
+    rng.addEventListener("input", () => { num.value = rng.value; apply(); });
+    num.addEventListener("input", () => { const v = parseFloat(num.value); if (isNaN(v)) return; rng.value = clamp(v); apply(); });
+    num.addEventListener("change", () => { const v = parseFloat(num.value); num.value = isNaN(v) ? rng.value : clamp(v); rng.value = num.value; apply(); });
+
+    playBtn.addEventListener("click", () => {
+      if (!sim.running) { sim.setV(+rng.value); sim.play(); }
+      else if (sim.paused) sim.resume(); else sim.pause();
+      refreshPlay();
+    });
+    // Reset earns its place here and nowhere else: a slow lift runs for seconds, and without this you
+    // are stuck watching one you have already changed your mind about.
+    resetBtn.addEventListener("click", () => { sim.reset(); refreshPlay(); });
+
+    const slo = q(".slomo"); slo.classList.toggle("on", sim.slomo);
+    slo.addEventListener("click", () => { sim.slomo = !sim.slomo; slo.classList.toggle("on", sim.slomo); });
+    const rt = q(".toggle-readout");
+    if (rt) rt.addEventListener("click", () => { sim.showReadout = !sim.showReadout; rt.classList.toggle("on", sim.showReadout); if (!sim.running) sim.render(); });
+    if (readonly) {
+      canvas.style.pointerEvents = "none";
+      [playBtn, resetBtn, slo, rt, rng, num].forEach(el => { if (el) el.disabled = true; });
+      const ctrls = q(".simctrls"); if (ctrls) ctrls.style.opacity = ".4";
+    }
+    refreshPlay();
+    // deck.js calls resize / render / start on slide entry and stop on exit — the same rAF wiring every
+    // other mount in this file attaches by hand. It is a contract, not a base-class method.
+    let raf = null, prev = sim.running;
+    sim.start = () => {
+      if (raf) return;
+      const loop = (now) => {
+        sim.step(now);
+        if (sim.running !== prev) { prev = sim.running; refreshPlay(); }
+        raf = requestAnimationFrame(loop);
+      };
+      sim.last = performance.now();
+      raf = requestAnimationFrame(loop);
+    };
+    sim.stop = () => { if (raf) { cancelAnimationFrame(raf); raf = null; } };
+    window.addEventListener("resize", () => { sim.resize(); sim.render(); });
+    return sim;
+  }
+
+  function mountHandLift(section, Klass) {
     if (!section.querySelector(".simcanvas")) section.insertAdjacentHTML("beforeend", HAND_CONTROLS_HTML);
     const d = section.dataset;
     const opts = {
@@ -637,11 +961,15 @@
       slomo: d.slomo !== "false"   // default ON; a slide opts out with data-slomo="false"
     };
     const canvas = section.querySelector(".simcanvas");
-    const sim = new HandLift(canvas, opts);
+    const sim = new (Klass || HandLift)(canvas, opts);
     const q = s => section.querySelector(s);
     const readonly = window.self !== window.top;
     const rng = q(".s-amax"), num = q(".n-amax");
     const clamp = v => Math.max(+rng.min, Math.min(+rng.max, v));
+    // The energy variant shows a FIXED slice of world height (so the scene is not shrunk by the graph
+    // strip), which means a full +/-25 m/s^2 throw would leave the top of the frame. +/-15 keeps every
+    // setting on screen and still spans the three regimes the slide is about: in-contact, thrown, dropped.
+    if (sim instanceof HandLiftEnergy) { rng.min = -HandLiftEnergy.A_MAX; rng.max = HandLiftEnergy.A_MAX; }
     rng.value = sim.aMax; num.value = sim.aMax;
     // Only commit the slider between runs — changing a_max mid-flight would warp the trajectory and can
     // make the ball miss the catch. While running, the control moves but the sim keeps its launch value.
@@ -676,6 +1004,295 @@
     window.addEventListener("resize", () => { sim.resize(); sim.render(); });
     return sim;
   }
+
+  // ---- HandLiftEnergy: the same hand, with a live energy graph -------------------------------
+  // Class J's slide. The hand and its physics are HandLift's, unchanged; what is added is a stacked
+  // energy strip underneath, on the same graph.stack_* tokens a baked energy-graph slide uses, so the
+  // live strip lands exactly where students have seen every strip land all term.
+  //
+  // WHY THIS IS SIMPLER THAN LauncherGame, the only other sim with a live graph. LauncherGame must
+  // SCROLL, because the student keeps interacting with it and the record has no end. This one does
+  // not: the slider is committed at Play (mountHandLift has always frozen it mid-run) and nothing the
+  // student does after that changes the trajectory. The run is therefore fully determined the moment
+  // Play is pressed — so it is precomputed there, and BOTH AXES ARE FIXED FROM FRAME ZERO. The bands
+  // simply fill in left to right against axes that never move. An axis that rescales mid-run silently
+  // redefines "tall," which is precisely the reading this slide is asking for.
+  //
+  // The graph carries two bands only. Blue is kinetic; red is gravitational potential; there is no
+  // spring anywhere in this problem, so there is no green — and no lid line, per the house default:
+  // the total is the stack's own top edge, and tracing it reads as a separate quantity that happens to
+  // be constant, which is the opposite of today's message.
+  //
+  // The gravitational datum is the LOWEST point the run reaches, so U >= 0 and the stack never has to
+  // render a negative band. That is a choice of origin and nothing else — only differences in U mean
+  // anything — but it has to be made once and held for the whole run, or the lid would move for a
+  // reason that is not physics.
+  class HandLiftEnergy extends HandLift {
+    constructor(canvas, opts = {}) {
+      // focusY is both the ball's rest height and the center of the view, so defaulting it here moves
+      // the scene down to where the asymmetric motion actually sits. A slide can still override it
+      // with data-focus.
+      super(canvas, Object.assign({}, opts, { focusY: opts.focusY ?? HandLiftEnergy.REST_Y }));
+      this.run = null;           // the precomputed run — the ONE trajectory, and what the graph draws
+      this.cal = null;           // the frozen axis: { y0, yDatum, eMax } — see _calibrate()
+      // Slo-mo OFF by default here, unlike every other sim: the durations ARE the physics now, and a
+      // 0.16x rate would turn the slowest lift into half a minute.
+      this.slomo = !!opts.slomo;
+      this.setV(opts.vMax ?? 0);
+      this.resize();
+      this.render();
+    }
+
+    // ---- framing: hand on top, energy strip beneath it, control bar beneath THAT ------------------
+    // Daniel's order, and it puts the controls back where every other sim in the course keeps them.
+    // The bar is a sibling DOM element overlaying the canvas, so its height is measured rather than
+    // assumed — it wraps at narrow widths, and a hard-coded reserve would be wrong exactly then.
+    resize() {
+      const dpr = window.devicePixelRatio || 1;
+      const w = this.c.clientWidth || this.c.width, h = this.c.clientHeight || this.c.height;
+      this.c.width = Math.round(w * dpr); this.c.height = Math.round(h * dpr);
+      this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      this.W = w; this.H = h;
+      const bar = this.c.parentElement && this.c.parentElement.querySelector(".simctrls");
+      const ctrlH = bar ? bar.offsetHeight : h * 0.12;
+      const gap = h * (HOUSE.stackGapPct / 100);
+      this.gh = h * HOUSE.stackGraphH;
+      this.gy = h - ctrlH - gap - this.gh;
+      this.playH = this.gy - gap;
+      // The play area shows a FIXED slice of world height instead of being scaled by whatever height is
+      // left over. Left to `playH / frameH` the whole scene shrank by the size of the graph strip, which
+      // is how it came to read small; pinning the slice keeps the ball and the hand at very nearly the
+      // size Class C draws them. The slider is narrowed to match (see mountHandLift) so the motion still
+      // fits the slice at every setting.
+      this.scale = Math.min(w / HOUSE.frameW, this.playH / HandLiftEnergy.PLAY_WORLD_H);
+      this.ox = (w - HOUSE.frameW * this.scale) / 2;
+      // Half the world height actually visible, less a margin for the ball and its weight arrow — the
+      // bound the drag clamp uses, so the ball cannot be parked behind the graph or off the top.
+      this.dragSpanY = Math.max(0.5, (this.playH / this.scale) / 2 - 0.9);
+    }
+    // focusY sits at the center of the PLAY AREA, not of the canvas...
+    sy(y) { return this.playH / 2 - (y - this.focusY) * this.scale; }
+    // ...and the inverse has to agree, or drag-to-reposition puts the ball somewhere else. SimBase's
+    // version inverts the canvas-centered sy; this one inverts the play-area-centered sy. Without it
+    // the hand jumped on every pointerdown.
+    _toWorldCentered(ev) {
+      const r = this.c.getBoundingClientRect();
+      const px = (ev.clientX - r.left) / r.width * this.W, py = (ev.clientY - r.top) / r.height * this.H;
+      return { x: (px - this.ox) / this.scale, y: this.focusY + (this.playH / 2 - py) / this.scale };
+    }
+
+    // Fixed travel, speed-driven duration. Overrides HandLift's fixed-duration / acceleration-driven
+    // version; everything downstream (`_handTraj`, the release test, the catch, the re-seat) is written
+    // against `_hand`'s output and needs no change.
+    _hand(t) {
+      const H = HandLiftEnergy.TRAVEL, v = this.vMax || 0;
+      if (!v) return { y: this.y0, vy: 0, a: 0 };
+      const T = this.tMove, rise = (v < 0 ? -1 : 1) * H;
+      if (t <= 0) return { y: this.y0, vy: 0, a: 0 };
+      if (t >= T) return { y: this.y0 + rise, vy: 0, a: 0 };
+      const s = t / T;
+      const S  = 6 * s ** 5 - 15 * s ** 4 + 10 * s ** 3;
+      const S1 = 30 * s ** 4 - 60 * s ** 3 + 30 * s ** 2;
+      const S2 = 120 * s ** 3 - 180 * s ** 2 + 60 * s;
+      return { y: this.y0 + rise * S, vy: rise * S1 / T, a: rise * S2 / (T * T) };
+    }
+
+    // The one place vMax is set, because tMove has to move with it. max S' = 15/8, so
+    // T = 1.875*H/|v| is exactly the duration whose peak speed is the one asked for.
+    setV(v) {
+      this.vMax = v;
+      const mag = Math.max(Math.abs(v), 1e-6);
+      this.tMove = 1.875 * HandLiftEnergy.TRAVEL / mag;
+      return this;
+    }
+    get canPlay() { return Math.abs(this.vMax || 0) >= HandLiftEnergy.V_MIN; }
+
+    _energyAt(y, vy, yDatum) {
+      return { ke: 0.5 * this.mass * vy * vy, gpe: this.mass * this.g * (y - yDatum) };
+    }
+
+    // Run the whole trajectory before showing any of it, driving the SAME `_advance` the live loop
+    // drives — the physics exists in one place. State is snapshotted and restored around it.
+    //
+    // What is kept is the whole banded record, not just the axes. The first version graphed samples
+    // taken LIVE and only took the axes from here, which sounds harmless and is not: the live loop
+    // steps at whatever dt requestAnimationFrame hands it (times the slo-mo factor) while this steps at
+    // a fixed 1/240, so the two Euler integrations drift apart. The live path could then dip below this
+    // pass's y-minimum — a negative U, drawn as a band hanging under the time axis — and outlast this
+    // pass's duration, with every late sample clamped onto the right edge as a vertical wedge. Both are
+    // visible in Daniel's screenshot. Drawing the precomputed record and revealing it by time removes
+    // the disagreement rather than clamping it, and it is what a baked energy clip does with `still=`.
+    _precompute() {
+      const cal = this._calibrate();
+      const { path } = this._probe(this.vMax);
+      // Thin to a drawable number of points — 900 is well past one per pixel of the strip's width.
+      const STRIDE = Math.max(1, Math.ceil(path.length / 900));
+      const t = [], ke = [], gpe = [];
+      const push = p => {
+        const e = this._energyAt(p.y, p.vy, cal.yDatum);
+        t.push(p.t); ke.push(e.ke); gpe.push(Math.max(0, e.gpe));
+      };
+      for (let i = 0; i < path.length; i += STRIDE) push(path[i]);
+      const last = path[path.length - 1];
+      if (t[t.length - 1] < last.t) push(last);
+      // BOTH axes come from the calibration, and the time axis is the one that makes the slide work.
+      // Now that every run covers the same distance, the lid ends at the same height for every speed
+      // below the release threshold — same work — and the ONLY difference is how long it took. Stretch
+      // each run to fill the strip and that difference vanishes: slow and fast come out as identical
+      // pictures. At fixed seconds-per-pixel the slow lift fills the strip and is shallow, the fast one
+      // ends a fifth of the way across and is steep, and the slope is the power. A fast run leaving
+      // most of the strip empty is not a bug here; it is the measurement.
+      this.run = { t, ke, gpe, dur: cal.dur, eMax: cal.eMax };
+    }
+
+    // Run one trajectory at a given a_max from the CURRENT rest height, with nothing drawn and nothing
+    // left behind, and report what it reached. The shared probe behind both _precompute and _calibrate.
+    _probe(vMax) {
+      const keep = ["t", "now", "ballY", "ballVy", "attached", "caught", "detached", "cleared",
+                    "noRelease", "catching", "catchT0", "catchY0", "catchV0", "catchY1", "catchDur",
+                    "catchA", "detachT", "detachY", "detachV", "running", "y0", "aMax",
+                    "vMax", "tMove", "seating", "seatA"];
+      const save = {}; for (const k of keep) save[k] = this[k];
+      const savePos = this.posHist.slice();
+      this.setV(vMax); this._resetState(); this.running = true;
+      const dt = 1 / 240, LIMIT = 240 * 15;
+      const path = [{ t: 0, y: this.ballY, vy: this.ballVy }];
+      let yMin = this.ballY, guard = 0;
+      while (this.running && guard++ < LIMIT) {
+        this._advance(dt);
+        if (this.ballY < yMin) yMin = this.ballY;
+        path.push({ t: this.t, y: this.ballY, vy: this.ballVy });
+      }
+      for (const k of keep) this[k] = save[k];
+      this.posHist = savePos;
+      return { path, yMin };
+    }
+
+    // ONE FROZEN AXIS PER SIGN of a_max — Daniel's refinement, and it uses the strip far better than a
+    // single axis did.
+    //
+    // The problem with one axis for everything is the DATUM. A drop needs the datum at the deepest point
+    // the ball can be driven to, or U goes negative; but then a lift — which never goes below the rest
+    // height at all — inherits that whole offset as a constant red base. It was eating about 55% of the
+    // strip on every positive run, so a gentle push moved the lid by a few percent of the picture.
+    //
+    // Split by sign and each branch gets the datum it actually needs. **Lifts measure from the rest
+    // height**, so U starts at zero and the entire strip is the work being done — which is the thing the
+    // slide is about. **Drops measure from the deepest reachable point**, as before. Runs stay comparable
+    // within the branch being demonstrated, which is how the slide is used: you sweep the lifts against
+    // each other, or the drops against each other, not one against the other.
+    //
+    // Worth saying out loud in class, because it IS a real choice and not a trick: only differences in U
+    // mean anything, so where zero sits is ours to pick — and we pick it where it makes the picture
+    // legible. The lift branch takes min(rest height, deepest reached) rather than the rest height
+    // outright, because the catch's give can in principle end a throw slightly below where it started;
+    // in practice they are the same number.
+    _calibrate() {
+      const sign = (this.vMax || 0) < 0 ? -1 : 1;
+      if (this.cal && Math.abs(this.cal.y0 - this.y0) < 1e-9 && this.cal.sign === sign) return this.cal;
+      const V = HandLiftEnergy.V_MAX, VMIN = HandLiftEnergy.V_MIN;
+      // V_MIN is in the probe set on purpose: it is the SLOWEST run the branch allows and therefore the
+      // one that sets the time axis. The fastest sets the energy axis.
+      const probes = [V, V * 0.6, V * 0.3, VMIN].map(f => sign * Math.max(f, VMIN));
+      let yDatum = this.y0, runs = [];
+      for (const a of probes) { const r = this._probe(a); runs.push(r); yDatum = Math.min(yDatum, r.yMin); }
+      let eMax = 0, durMax = 0;
+      for (const r of runs) {
+        durMax = Math.max(durMax, r.path[r.path.length - 1].t);
+        for (const p of r.path) {
+          const e = this._energyAt(p.y, p.vy, yDatum);
+          eMax = Math.max(eMax, e.ke + Math.max(0, e.gpe));
+        }
+      }
+      this.cal = { y0: this.y0, sign, yDatum, eMax: Math.max(eMax, 1e-6) * 1.06,
+                   dur: Math.max(durMax, 0.4) * 1.04 };
+      return this.cal;
+    }
+
+    play()  { if (!this.canPlay) return; super.play(); this._precompute(); }
+    reset() { this.run = null; super.reset(); }
+
+    _graph(ctx) {
+      const x0 = this.W * 0.062, x1 = this.W * 0.985;
+      const gy = this.gy, gh = this.gh, ay = gy + gh;
+      // Axes are drawn from frame zero, before there is any data — the point of a fixed frame is that it
+      // is visibly fixed, so the bands grow into a picture whose scale never moved.
+      ctx.save(); ctx.strokeStyle = HOUSE.ink; ctx.fillStyle = HOUSE.ink;
+      ctx.lineWidth = 2; ctx.lineCap = "butt";
+      ctx.beginPath(); ctx.moveTo(x0, ay); ctx.lineTo(x0, ay - gh * 0.45); ctx.stroke();
+      ctx.font = (HOUSE.sizeCaption * this.H * 0.85) + "px " + HOUSE.fontSans;
+      ctx.textAlign = "center"; ctx.textBaseline = "top";
+      ctx.fillText("time", x0 + this.W * 0.022, ay + 4);
+      ctx.save(); ctx.translate(x0 - 6, ay - gh * 0.225); ctx.rotate(-Math.PI / 2);
+      ctx.textBaseline = "bottom"; ctx.fillText("energy", 0, 0); ctx.restore();
+      ctx.restore();
+
+      const timeAxis = () => {
+        ctx.save(); ctx.strokeStyle = HOUSE.ink; ctx.lineWidth = 2; ctx.lineCap = "butt";
+        ctx.beginPath(); ctx.moveTo(x0, ay); ctx.lineTo(x1, ay); ctx.stroke(); ctx.restore();
+      };
+      const R = this.run;
+      if (!R) { timeAxis(); return; }
+
+      // Reveal up to the live clock, with the leading edge interpolated so the bands grow smoothly
+      // rather than in one-sample steps.
+      const tNow = Math.min(this.t, R.t[R.t.length - 1]);
+      let n = 0; while (n < R.t.length && R.t[n] <= tNow) n++;
+      if (n < 2) { timeAxis(); return; }
+
+      const yOf = v => ay - Math.max(0, Math.min(1, v / R.eMax)) * gh;
+      const xOf = t => x0 + Math.max(0, Math.min(1, t / R.dur)) * (x1 - x0);
+      const at = (arr, i) => arr[i];
+      const edge = (arr) => {                       // linear interpolation to exactly tNow
+        if (n >= R.t.length) return arr[arr.length - 1];
+        const t0 = R.t[n - 1], t1 = R.t[n], f = t1 > t0 ? (tNow - t0) / (t1 - t0) : 0;
+        return arr[n - 1] + f * (arr[n] - arr[n - 1]);
+      };
+      const bands = [
+        { col: HOUSE.velocity, top: i => at(R.ke, i),                  edge: () => edge(R.ke) },
+        { col: HOUSE.gravity,  top: i => at(R.ke, i) + at(R.gpe, i),   edge: () => edge(R.ke) + edge(R.gpe) }
+      ];
+      // Painter's order, lowest band LAST — adjacent bands then share no edge against the background,
+      // so there is no antialiased seam. Same rule the baked renderer follows.
+      for (let bi = bands.length - 1; bi >= 0; bi--) {
+        const b = bands[bi];
+        ctx.save(); ctx.fillStyle = b.col;
+        ctx.beginPath(); ctx.moveTo(xOf(R.t[0]), ay);
+        for (let i = 0; i < n; i++) ctx.lineTo(xOf(R.t[i]), yOf(b.top(i)));
+        ctx.lineTo(xOf(tNow), yOf(b.edge()));
+        ctx.lineTo(xOf(tNow), ay); ctx.closePath(); ctx.fill();
+        ctx.restore();
+      }
+      timeAxis();   // over the fills, so the baseline is one even rule
+    }
+
+    render() {
+      super.render();
+      this._graph(this.ctx);
+    }
+  }
+  // Slider bound, play-area world height, and rest position — one set of numbers, all three measured
+  // together from a headless sweep rather than guessed, and they have to move together.
+  //
+  // At +/-15 the ball never left y in [0.56, 3.01] and there was no throw worth watching. At +/-22 the
+  // excursion is about 4.25 m, so the play area has to show more world, and showing more world costs
+  // drawn size: 5.6 m puts this at ~80 px/m against Class C's 90, i.e. about 11% smaller. That is the
+  // trade Daniel asked for — a real throw is worth more here than matching Class C exactly, because
+  // this slide is about watching the lid move and Class C's is about the normal force.
+  //
+  // The rest position drops to 1.8 because the motion is NOT symmetric about the start: a throw climbs
+  // roughly twice as far as a drop falls, so centering the view on the old y = 2 wasted the top of the
+  // frame. `focusY` is both the rest height and the center of the view, so moving it does both at once.
+  // Re-measure all three before changing any of them, or before changing tMove.
+  // The hand's travel is the same every run — that is the whole point of this variant — and the slider
+  // asks for a peak SPEED, from which the duration follows. V_MIN is not decoration: T = 1.875*H/|v|, so
+  // a speed of 0.2 m/s would be an eleven-second animation. Below V_MIN, Play is off.
+  HandLiftEnergy.TRAVEL = 1.2;      // metres the hand moves, every time
+  HandLiftEnergy.V_MAX  = 5;        // slider bound, m/s
+  HandLiftEnergy.V_MIN  = 0.8;      // below this, Play is disabled (longest run ~2.8 s)
+  HandLiftEnergy.A_MAX = 22;        // kept: HandLift's own slider bound, unused by this preset
+  HandLiftEnergy.PLAY_WORLD_H = 5.6;
+  HandLiftEnergy.REST_Y = 1.8;
 
   // ============================================================================================
   // DeflectGame (data-sim="deflect") — Class E's impulse target game.
@@ -1111,6 +1728,13 @@
       this.u0 = opts.u0 ?? 28.284; this.v0 = opts.v0 ?? 28.284; this.g = opts.g ?? 9.8;       // default = 40 m/s @ 45° (the baseball record)
       this.x0 = 0; this.y0 = 0;                                  // ALWAYS launch from the origin <0,0> (drag-to-position disabled)
       this.maxSpeed = opts.maxSpeed ?? 40;                       // speed cap → the max range just fills the screen, never overshoots
+      this.mass = opts.mass ?? 0.145;      // a baseball — sized so real ball drag lands in the slider's middle
+      this.beta = opts.beta ?? 0;          // ½rho·C_d·A_perp [kg/m], read LIVE off the sliders
+      this.dragMode = !!opts.dragMode;     // as in Projectile: capability, not current beta
+      this.lockVec = !!opts.lockVec;       // Class K locks speed + angle so only drag varies
+      this.st = null; this.hist = null;
+      this.area = opts.area ?? 42e-4;      // A_perp [m²], mirrored from the slider so the DISC can track it
+      this.areaRef = opts.areaRef ?? 42e-4;// a real baseball — drawn at exactly house size
       this.slomo = !!opts.slomo; this.slomoFactor = opts.slomoFactor ?? 0.5;   // 0.5 = half real-time (2× slower)
       this.showReadout = false;
       this.running = false; this.paused = false; this.landed = false;
@@ -1125,7 +1749,15 @@
     // House mass size on this sim's WIDE frame: the mass-radius token is a fraction of frame HEIGHT
     // (baseRadius = fraction × 8), so rescale it by this world's own frame height. (Was frameW*0.011,
     // ~13% under house size.)
-    get radius() { return HOUSE.baseRadius * this.frameH / cnum("--frame-h", 8); }
+    // Same rule as the 1-D drag sim: A_perp = pi r^2, so the disc tracks sqrt(A), bounded to
+    // [0.5, 1.75] x house size. Worth doing here too — on this frame the ball is ~13 px, not the
+    // couple of pixels it looks like it should be, so the change reads clearly.
+    get radius() {
+      const base = HOUSE.baseRadius * this.frameH / cnum("--frame-h", 8);
+      if (!this.dragMode) return base;
+      const f = Math.sqrt(Math.max(this.area, 1e-9) / Math.max(this.areaRef, 1e-9));
+      return base * Math.min(Math.max(f, 0.5), 1.75);
+    }
     _forceLen(g) { return this.frameH * 0.11 * (g / 9.8); }
     _landTime(y0, v0, g) { return g > 0 ? (v0 + Math.sqrt(Math.max(0, v0 * v0 + 2 * g * y0))) / g : 999; }
     resize() {
@@ -1140,11 +1772,25 @@
     }
     sx(x) { return this.ox + x * this.scale; }
     sy(y) { return (this.H - this.padB) - y * this.scale; }   // world y = 0 = ground line, anchored just above the controls
-    pos(t) { const L = this.L; return { x: L.x0 + L.u0 * t, y: L.y0 + L.v0 * t - 0.5 * L.g * t * t }; }
-    velY(t) { return this.L.v0 - this.L.g * t; }
+    pos(t) { const L = this.L; if (!L) return { x: this.x0, y: this.y0 };
+             if (this.dragMode) { const s = histAt(this.hist, t); return s ? { x: s.x, y: s.y } : { x: L.x0, y: L.y0 }; }
+             return { x: L.x0 + L.u0 * t, y: L.y0 + L.v0 * t - 0.5 * L.g * t * t }; }
+    velY(t) { const L = this.L; if (!L) return this.v0;
+              if (this.dragMode) { const s = histAt(this.hist, t); return s ? s.v : L.v0; }
+              return L.v0 - L.g * t; }
+    velX(t) { const L = this.L; if (!L) return this.u0;
+              if (this.dragMode) { const s = histAt(this.hist, t); return s ? s.u : L.u0; }
+              return L.u0; }
+    get vTerm() { return this.beta > 0 ? Math.sqrt(this.mass * this.g / this.beta) : Infinity; }
     play() {
       this.L = { x0: this.x0, y0: this.y0, u0: this.u0, v0: this.v0, g: this.g };
-      this.tLand = this._landTime(this.y0, this.v0, this.g);
+      if (this.dragMode) {                                  // landing is detected live, not solved for
+        this.st = { x: this.x0, y: this.y0, u: this.u0, v: this.v0 };
+        this.hist = [{ t: 0, x: this.x0, y: this.y0, u: this.u0, v: this.v0 }];
+        this.tLand = Infinity;
+      } else {
+        this.tLand = this._landTime(this.y0, this.v0, this.g);
+      }
       this.t = 0; this.running = true; this.paused = false; this.landed = false;
       this.everPlayed = true; this.last = performance.now();
     }
@@ -1154,7 +1800,10 @@
       if (this.running && !this.paused) {
         const dt = Math.min((now - this.last) / 1000, 0.05) * (this.slomo ? this.slomoFactor : 1);  // real-time by default; slomoFactor=0.5 when slo-mo is on
         this.last = now; this.t += dt;
-        if (this.t >= this.tLand) { this.t = this.tLand; this.running = false; this.landed = true; }
+        if (this.dragMode) {
+          dragAdvance(this.st, this.hist, this.t, dt, this.L.g, this.beta / this.mass);
+          if (this.st.y <= this.L.y0 && this.st.v < 0) { this.running = false; this.landed = true; this.tLand = this.t; }
+        } else if (this.t >= this.tLand) { this.t = this.tLand; this.running = false; this.landed = true; }
       }
       this.render();
     }
@@ -1164,8 +1813,11 @@
       const ctx = this.ctx; ctx.clearRect(0, 0, this.W, this.H); this._axes();
       const active = this.running || this.landed;
       const src = active ? this.L : { x0: this.x0, y0: this.y0, u0: this.u0, v0: this.v0, g: this.g };
-      const tEnd = active ? this.tLand : this._landTime(src.y0, src.v0, src.g);
+      // The faint dashed path is ALWAYS the drag-free parabola — it is the reference the real
+      // (solid, integrated) trail is being compared against, so it must not use the live tLand.
+      const tEnd = (active && !this.dragMode) ? this.tLand : this._landTime(src.y0, src.v0, src.g);
       ctx.save(); ctx.globalAlpha = 0.32; this._path(src, 0, tEnd, HOUSE.velocity, 2, [9, 8]); ctx.restore();   // dashed velocity-blue predicted parabola (house style: optional prediction)
+      if (this.dragMode) this._refLanding(src, tEnd);   // ...and make sure it visibly lands
       const tNow = active ? Math.min(this.t, this.tLand) : 0;
       if (active) this._trail(src, tNow);                                      // white fading trajectory (house style)
       if (active) this._motionBlur(this.radius, k => { const tk = tNow - k * HOUSE.blurDt; return tk < 0 ? null : this.pos(tk); });
@@ -1173,6 +1825,14 @@
       if (this._velShown()) this._velArrow(this.x0, this.y0, this.u0, this.v0);
       this._disc(p.x, p.y, this.radius, HOUSE.mass, 1);
       if (src.g > 0) this._arrow(p.x, p.y, 0, -this._forceLen(src.g), HOUSE.gravity, 1);
+      if (this.beta > 0) {                                        // amber drag, opposite the motion
+        const st = active ? { u: this.velX(tNow), v: this.velY(tNow) } : { u: src.u0, v: src.v0 };
+        const sp = Math.hypot(st.u, st.v);
+        if (sp > 1e-6) {
+          const len = this._forceLen(this.beta * sp * sp / this.mass);
+          this._arrow(p.x, p.y, -st.u / sp * len, -st.v / sp * len, HOUSE.friction, 1);
+        }
+      }
       if (this.showReadout) this._readout(p);
     }
     _trail(src, tNow) {                              // white fading trajectory: last trailFadeS s of the analytic path
@@ -1181,10 +1841,27 @@
       const N = 40, pts = [];
       for (let i = 0; i <= N; i++) {
         const t = t0 + (tNow - t0) * i / N;
-        const x = src.x0 + src.u0 * t, y = src.y0 + src.v0 * t - 0.5 * src.g * t * t;
-        pts.push({ x: this.sx(x), y: this.sy(y), t });
+        // The SOLID trail is the real path (integrated when drag is on); the faint dashed _path stays
+        // analytic on purpose — it is the drag-free parabola the shot is being compared against.
+        const q = this.dragMode ? (histAt(this.hist, t) || { x: src.x0, y: src.y0 })
+                                : { x: src.x0 + src.u0 * t, y: src.y0 + src.v0 * t - 0.5 * src.g * t * t };
+        pts.push({ x: this.sx(q.x), y: this.sy(q.y), t });
       }
       this._whiteTrail(pts, tNow, fade);             // one shared drawer; width/cap/alpha are house tokens
+    }
+    // The dashed reference is the drag-free parabola, and its END is the number the whole slide is
+    // arguing about — the range this shot would have had with no air. A dashed stroke can finish
+    // mid-gap, which left the curve hanging ~3 m above the ground line looking like it stopped short
+    // (it did reach y = 0; the last ~11 px were simply in an "off" phase). So the final stretch is
+    // redrawn solid, and the landing point gets a tick on the ground line.
+    _refLanding(src, tEnd) {
+      const ctx = this.ctx;
+      ctx.save(); ctx.globalAlpha = 0.32;
+      this._path(src, tEnd * 0.96, tEnd, HOUSE.velocity, 2, null);
+      const X = this.sx(src.x0 + src.u0 * tEnd), Y = this.sy(src.y0);
+      ctx.strokeStyle = HOUSE.velocity; ctx.lineWidth = 2; ctx.lineCap = "round"; ctx.setLineDash([]);
+      ctx.beginPath(); ctx.moveTo(X, Y - this.scale * 1.7); ctx.lineTo(X, Y + this.scale * 1.7); ctx.stroke();
+      ctx.restore();
     }
     _path(src, t0, t1, color, width, dash) {
       const ctx = this.ctx; if (t1 <= t0) return;
@@ -1241,6 +1918,10 @@
       const lines = [`t = ${(active ? Math.min(this.t, this.tLand) : 0).toFixed(2)} s`,
                      `x = ${p.x.toFixed(1)} m`, `y = ${p.y.toFixed(1)} m`,
                      `u = ${ux.toFixed(1)} m/s`, `v = ${vy.toFixed(1)} m/s`];
+      if (this.beta > 0) {
+        lines.push(`\u03b2 = ${this.beta.toExponential(1)} kg/m`);
+        lines.push(`terminal = ${this.vTerm.toFixed(0)} m/s`);
+      }
       ctx.save(); ctx.font = Math.max(HOUSE.sizeBody * this.H, 12) + "px " + HOUSE.fontMono; ctx.textBaseline = "top";
       const pad = 10; let w = 0; lines.forEach(l => w = Math.max(w, ctx.measureText(l).width));
       // shift the box left enough to clear the top-right 123 button (see DESIGN.md → readout clearance)
@@ -1258,7 +1939,7 @@
       };
       const nearTip  = (w) => { const t = this._velTip(); return Math.hypot(w.x - t.x, w.y - t.y) < Math.max(this.frameW * 0.03, this.radius * 2); };
       this.c.addEventListener("pointerdown", (ev) => {                // only the velocity arrowhead is draggable; the ball stays pinned at <0,0>
-        if (this.running) return; const w = toWorld(ev);
+        if (this.running || this.lockVec) return; const w = toWorld(ev);   // lockVec: Class K fixes speed + angle
         mode = (this._velShown() && nearTip(w)) ? "vel" : null;
         if (mode) this.c.setPointerCapture?.(ev.pointerId);
       });
@@ -1367,7 +2048,12 @@
       this.discMinPx = 2;
       this.k = opts.k ?? 20; this.mass = opts.mass ?? 1;   // free-variant defaults are deliberately NOT the spray-can values (students dial those in to discover 1.4 Hz)
       this.hasGravity = !!opts.gravity; this.g = this.hasGravity ? (opts.g ?? 0) : 0;
+      // DAMPED variant (Class L, data-zeta): one slider, and it is the damping ratio. k and m are fixed
+      // and hidden on purpose — the three regimes depend on zeta ALONE, and a student who can reach k
+      // will reach for it instead of answering the question the board just posed.
+      this.damped = !!opts.damped; this.zeta = opts.zeta ?? 0;
       this.d = 0;                       // displacement about the (gravity-shifted) equilibrium, meters
+      this.v = 0;                       // damped variant only: integrated velocity, m/s
       this.amp = 0; this.phase = 0; this.oscillating = false; this.dragging = false;
       this.simT = 0; this.last = 0;
       this.slomo = false; this.slomoFactor = 0.3;
@@ -1378,7 +2064,15 @@
       this.resize(); this._bindDrag();
     }
     get omega() { return Math.sqrt(Math.max(1e-6, this.k / this.mass)); }
-    get freq()  { return this.omega / TAU; }
+    get gamma() { return this.zeta * this.omega; }                          // decay rate, alpha/2m
+    get alpha() { return 2 * this.zeta * Math.sqrt(this.k * this.mass); }   // the dimensional coefficient
+    // The DAMPED frequency. The FormulaSheet writes it out rather than naming it: sqrt(w^2 - g^2).
+    // Zero at and beyond critical, where there is no oscillation left to have a frequency.
+    get omegaD() { return this.zeta < 1 ? this.omega * Math.sqrt(1 - this.zeta * this.zeta) : 0; }
+    get regime() { return this.zeta === 0 ? "undamped"
+                        : this.zeta < 0.999 ? "underdamped"
+                        : this.zeta < 1.001 ? "critically damped" : "overdamped"; }
+    get freq()  { return (this.damped ? this.omegaD : this.omega) / TAU; }
     get xeq()   { return this.hasGravity ? -this.mass * this.g / this.k : 0; }
     get radius(){ return HOUSE.baseRadius * Math.cbrt(this.mass / 0.4); }
     resize() {
@@ -1397,19 +2091,35 @@
     sx(x) { return x; }  sy(y) { return y; }        // identity → the shared _disc / _arrow get screen px directly
     _massScreenY(d) { return this.eqY0 - (this.xeq + d) * this.pxPerM; }
     play() {}                                       // auto-running; the Play button toggles pause
-    reset() { this.d = 0; this.amp = 0; this.phase = 0; this.oscillating = false; this.dragging = false;
+    reset() { this.d = 0; this.v = 0; this.amp = 0; this.phase = 0; this.oscillating = false; this.dragging = false;
               this.trace = []; this.simT = 0; this.running = true; this.paused = false; this.render(); }
     step(now) {
       if (this.running && !this.paused) {
-        const dt = Math.min((now - this.last) / 1000, 0.05) * (this.slomo ? this.slomoFactor : 1); this.last = now;
+        // dt is floored at 0 as well as capped: `reset()` does not touch `last`, so a caller that
+        // restarts its own clock can hand this a NEGATIVE dt, and the damped branch integrates it —
+        // one backwards step of a few seconds blows the oscillator up. The closed-form branch was
+        // immune (it only advances a phase), which is why this never mattered before 2026-08-20.
+        const dt = Math.max(0, Math.min((now - this.last) / 1000, 0.05)) * (this.slomo ? this.slomoFactor : 1); this.last = now;
         this.simT += dt;
-        if (this.oscillating && !this.dragging) { this.phase += this.omega * dt; this.d = this.amp * Math.cos(this.phase); }
+        if (this.damped) {
+          // Integrated, not solved in closed form, for three reasons: zeta is dragged LIVE mid-motion
+          // and a closed form would jump; the over/critical branches are different formulas; and the
+          // same three lines cover all of them. Semi-implicit Euler, substepped so it stays stable at
+          // high zeta (the decay time 1/gamma gets short fast).  d'' = -w^2 d - 2 zeta w d'
+          if (this.oscillating && !this.dragging) {
+            const w = this.omega, sub = Math.max(1, Math.ceil(dt / 0.002)), h = dt / sub;
+            for (let i = 0; i < sub; i++) {
+              this.v += (-w * w * this.d - 2 * this.zeta * w * this.v) * h;
+              this.d += this.v * h;
+            }
+          }
+        } else if (this.oscillating && !this.dragging) { this.phase += this.omega * dt; this.d = this.amp * Math.cos(this.phase); }
         this.trace.push({ t: this.simT, d: this.d });
         while (this.trace.length > 1 && this.massX - (this.simT - this.trace[0].t) * this.paperSpeed < -4) this.trace.shift();
       } else { this.last = now; }
       this.render();
     }
-    _release() { this.amp = this.d; this.phase = 0; this.oscillating = true; this.dragging = false; }   // released from rest at d → cos phase starts at 0
+    _release() { this.amp = this.d; this.phase = 0; this.v = 0; this.oscillating = true; this.dragging = false; }   // released from REST at d, in both variants   // released from rest at d → cos phase starts at 0
     _bindDrag() {
       const toPx = (ev) => { const r = this.c.getBoundingClientRect(); return { x: (ev.clientX - r.left) / r.width * this.W, y: (ev.clientY - r.top) / r.height * this.H }; };
       const nearMass = (p) => Math.hypot(p.x - this.massX, p.y - this._massScreenY(this.d)) < Math.max(this.radius * this.scale * 1.8, 28);
@@ -1417,7 +2127,7 @@
         if (nearMass(p)) { this.dragging = true; this.oscillating = false; this.c.setPointerCapture?.(ev.pointerId); } });
       this.c.addEventListener("pointermove", (ev) => { if (!this.dragging) return; const p = toPx(ev);
         const d = (this.eqY0 - p.y) / this.pxPerM - this.xeq;
-        this.d = Math.max(this.dMin, Math.min(this.dMax, d)); this.render(); });
+        this.d = Math.max(this.dMin, Math.min(this.dMax, d)); this.v = 0; this.render(); });
       window.addEventListener("pointerup", () => { if (this.dragging) this._release(); });
     }
     // Drawn Spring (OBJECTS.md): boundary-gray coil, token geometry. The coil COUNT is a graphical cue — it
@@ -1471,11 +2181,28 @@
         this._arrow(this.massX, my, 0, lenPx, HOUSE.gravity, 1);   // identity coords → +vy is down-screen
       }
       this._springForceArrow(my);   // green restoring force — ALWAYS shown (all spring sims)
+      // Damper force, amber (roles.friction — the same color as the heat band it produces, and the same
+      // color Class K's drag arrow uses). Drawn opposite the motion, on the spring arrow's own force
+      // scale, and from the CENTROID of the mass like every other force arrow (Daniel's rule,
+      // 2026-08-20b — it shipped offset to the left for one afternoon and read as unattached).
+      // Damped variant only, and it vanishes at the turning points — which is the whole point: a force
+      // proportional to velocity takes nothing from a mass that is momentarily still. Drawn AFTER the
+      // green spring arrow so that when the two point the same way the shorter one lands on top.
+      if (this.damped && this.zeta > 0) {
+        const fd = -this.alpha * this.v;                       // N, signed: + is up in world terms
+        const lenPx = Math.abs(fd) / this.k * this.pxPerM;     // same N→px scale as the spring arrow
+        if (lenPx > 1.5) this._arrow(this.massX, my, 0, -Math.sign(fd) * lenPx, HOUSE.friction, 1);
+      }
       // NET force (spring + gravity) — WHITE, drawn just LEFT of the mass, ending exactly on the gravity-shifted
       // equilibrium (where the net force is zero). Gravity variant only. On the same force-scale as the green +
       // gravity arrows, so green(up) + gravity(down) = this white net vector — and it keeps the teaching beat of
       // a force arrow that points right at the equilibrium (which the green spring arrow, now referenced to the
       // spring's natural length, no longer does).
+      // THE ONE STANDING EXCEPTION to "every force arrow starts at the centroid" (style/OBJECTS.md →
+      // Force arrow). This is not a force ON the body, it is the SUM of the two that are, drawn beside
+      // them so it can be compared with them, and it ends on the equilibrium. Moved to the centroid it
+      // would sit exactly on top of the green spring arrow — the thing it exists to be read against.
+      // Ruled by Daniel 2026-08-20; leave it to the side.
       if (this.hasGravity && this.showNet) {
         const nx = this.massX - Math.max(this.radius * this.scale * 2.4, 42);
         this._forceToPointPx(nx, my, nx, this._massScreenY(0), HOUSE.ink, 1);
@@ -1491,7 +2218,10 @@
     }
     _readout() {
       const ctx = this.ctx, fs = HOUSE.sizeBody * this.H;
-      const lines = [`f = ${this.freq.toFixed(2)} Hz`, `ω = ${this.omega.toFixed(2)} rad/s`];
+      const lines = this.damped
+        ? [`ζ = ${this.zeta.toFixed(2)}`, this.regime,
+           this.zeta < 1 ? `√(ω²−γ²) = ${this.omegaD.toFixed(2)} rad/s` : `no oscillation`]
+        : [`f = ${this.freq.toFixed(2)} Hz`, `ω = ${this.omega.toFixed(2)} rad/s`];
       if (this.hasGravity) lines.push(`x_eq = ${this.xeq.toFixed(2)} m`);
       ctx.save(); ctx.font = fs + "px " + HOUSE.fontMono; ctx.textBaseline = "top";
       const pad = this.scale * 0.22; let w = 0; lines.forEach(l => w = Math.max(w, ctx.measureText(l).width));
@@ -1521,20 +2251,37 @@
         <label><span class="var"><i>g</i>:</span> <input type="range" class="s-g" min="0" max="20" step="0.5"><input type="number" class="n-g" step="0.5"><span class="u">m/s²</span></label>
         <label class="netchk"><input type="checkbox" class="s-net" checked> net force</label>
       </div>`;
+  const OSC_D_CONTROLS_HTML = `
+      <canvas class="simcanvas"></canvas>
+      <button class="simbtn toggle-readout on" title="show / hide numbers">123</button>
+      <div class="simctrls">
+        <button class="simbtn play">⏸ Pause</button>
+        <button class="simbtn reset">↺ Reset</button>
+        <button class="simbtn slomo" title="Slow motion">🐢</button>
+        <label><span class="var"><i>ζ</i>:</span> <input type="range" class="s-zeta" min="0" max="3" step="0.01"><input type="number" class="n-zeta" step="0.01"><span class="u">damping ratio</span></label>
+      </div>`;
   function mountOscillator(section) {
     const grav = section.dataset.gravity !== undefined;   // gravity variant: only a g slider (k & m fixed)
-    if (!section.querySelector(".simcanvas")) section.insertAdjacentHTML("beforeend", grav ? OSC_G_CONTROLS_HTML : OSC_CONTROLS_HTML);
+    const damp = section.dataset.zeta !== undefined;      // damped variant (Class L): only a zeta slider
+    if (!section.querySelector(".simcanvas"))
+      section.insertAdjacentHTML("beforeend", damp ? OSC_D_CONTROLS_HTML : grav ? OSC_G_CONTROLS_HTML : OSC_CONTROLS_HTML);
     const d = section.dataset;
     const canvas = section.querySelector(".simcanvas");
-    const sim = new Oscillator(canvas, { k: d.k !== undefined ? +d.k : (grav ? 11 : 20), mass: d.mass !== undefined ? +d.mass : (grav ? 0.4 : 1), gravity: grav, g: 0 });
+    const sim = new Oscillator(canvas, { k: d.k !== undefined ? +d.k : (grav ? 11 : 20), mass: d.mass !== undefined ? +d.mass : (grav ? 0.4 : 1), gravity: grav, g: 0,
+                                         damped: damp, zeta: damp ? +d.zeta : 0 });
     const q = s => section.querySelector(s);
     const readonly = window.self !== window.top;
     const rng = {}, num = {};
     rng.k = q(".s-k"); num.k = q(".n-k");                 // present only in the free variant
-    if (grav) { rng.g = q(".s-g"); num.g = q(".n-g"); } else { rng.mass = q(".s-mass"); num.mass = q(".n-mass"); }
+    if (damp) { rng.zeta = q(".s-zeta"); num.zeta = q(".n-zeta"); }
+    else if (grav) { rng.g = q(".s-g"); num.g = q(".n-g"); }
+    else { rng.mass = q(".s-mass"); num.mass = q(".n-mass"); }
     const clamp = (el, v) => Math.max(+el.min, Math.min(+el.max, v));
-    const apply = () => { if (rng.k) sim.k = +rng.k.value; if (grav) sim.g = +rng.g.value; else sim.mass = +rng.mass.value; sim.render(); };
-    if (rng.k) rng.k.value = sim.k; if (grav) rng.g.value = sim.g; else rng.mass.value = sim.mass;
+    const apply = () => { if (rng.k) sim.k = +rng.k.value;
+                          if (damp) sim.zeta = +rng.zeta.value; else if (grav) sim.g = +rng.g.value; else sim.mass = +rng.mass.value;
+                          sim.render(); };
+    if (rng.k) rng.k.value = sim.k;
+    if (damp) rng.zeta.value = sim.zeta; else if (grav) rng.g.value = sim.g; else rng.mass.value = sim.mass;
     Object.keys(rng).forEach(key => { const s = rng[key], n = num[key]; if (!s) return; n.value = s.value;
       s.addEventListener("input", () => { n.value = s.value; apply(); });
       n.addEventListener("input", () => { const v = parseFloat(n.value); if (isNaN(v)) return; s.value = clamp(s, v); apply(); });
@@ -1551,7 +2298,7 @@
     const netchk = q(".s-net");   // gravity variant only: toggle the white net-force arrow
     if (netchk) { netchk.checked = sim.showNet; netchk.addEventListener("change", () => { sim.showNet = netchk.checked; sim.render(); }); }
     apply();
-    if (readonly) { canvas.style.pointerEvents = "none"; [playBtn, q(".reset"), slo, rt, netchk, rng.k, num.k, rng.mass, num.mass, rng.g, num.g].forEach(el => { if (el) el.disabled = true; }); const c = q(".simctrls"); if (c) c.style.opacity = ".4"; }
+    if (readonly) { canvas.style.pointerEvents = "none"; [playBtn, q(".reset"), slo, rt, netchk, rng.k, num.k, rng.mass, num.mass, rng.g, num.g, rng.zeta, num.zeta].forEach(el => { if (el) el.disabled = true; }); const c = q(".simctrls"); if (c) c.style.opacity = ".4"; }
     let raf = null;
     sim.start = () => { sim.everPlayed = true; if (raf) return; const loop = (now) => { sim.step(now); raf = requestAnimationFrame(loop); }; sim.last = performance.now(); raf = requestAnimationFrame(loop); };
     sim.stop = () => { if (raf) { cancelAnimationFrame(raf); raf = null; } };
@@ -2370,21 +3117,593 @@
     return sim;
   }
 
+  // ============================================================================================
+  // PIN-JOINTED PLATFORM FAMILY — PlatformBounce (Class H) and FrictionRamp (Class M).
+  //
+  // PlatformBounce arrived here on 2026-08-21, from `ClassH-Bouncing/gen/classH-sims.js`, where it
+  // had been living since July behind a monkey-patch on `mount` with a TODO saying to fold it in.
+  // The trigger was Class M needing the same platform: two copies of a pin joint is exactly the
+  // drift this engine exists to prevent, so the class moved and Class H's local copy was deleted
+  // (its file still owns WallBounce and FloorBounce, and still falls through to this dispatcher for
+  // everything else — so Class H now runs the code below, unchanged in behavior).
+  //
+  // What the two share is the *stage*: a rigid bar on a center pin joint, click-draggable to any
+  // angle within +/-60 degrees, with one slider mirroring the drag. What they do with it is opposite —
+  // H drops a ball ONTO it, M puts a block ON it and asks when the block lets go — so FrictionRamp
+  // extends PlatformBounce for the platform, the pin joint and the drag binding, and overrides
+  // everything about the body.
+  // ============================================================================================
+  const D2R = Math.PI / 180;
+
+  // Motion-blur sampler that returns null for phantom frames BEFORE the sim started (each play()
+  // resets simMs to 0), so the after-images never POOL at the starting condition.
+  const platBlurBack = (sim) => (kk) => {
+    const b = kk * HOUSE.blurDt * 1000;
+    return (sim.simMs - b < 0) ? null : sim._posAtBack(b);
+  };
+
+  class PlatformBounce extends SimBase {
+    constructor(canvas, opts = {}) {
+      super(canvas); this.discMinPx = 2;
+      this.focusY = 0; this.pivX = HOUSE.frameW / 2; this.pivY = -1.6; this.halfLen = 2.6;
+      this.angle = opts.angle ?? 22;                    // platform tilt, degrees, ±60
+      this.minAngle = 1;                                // dead-zone: |angle| snaps up to this — keeps the shallow "walking" multi-bounce (≈3 at 1°) but drops the ~0° case that clips / smears vertically
+      this.mass = opts.mass ?? 1; this.g = opts.g ?? 5.0; this.yStart = opts.yStart ?? 3.0;
+      this.slomo = false; this.slomoFactor = 0.3; this.showReadout = false;
+      this.running = false; this.paused = false; this.everPlayed = false;
+      this.strike = null;                               // {x,y,nx,ny} recorded at the bounce (the actual strike point + normal)
+      this.onAngleChange = null;
+      this.resize(); this._bindDrag();
+    }
+    get radius() { return HOUSE.baseRadius * Math.cbrt(this.mass); }
+    get phi() { return this.angle * D2R; }
+    _tangent() { return { x: Math.cos(this.phi), y: Math.sin(this.phi) }; }
+    _normal() { return { x: -Math.sin(this.phi), y: Math.cos(this.phi) }; }
+    // contact: mass falls straight down through the pivot's x; it touches when its center is r/cosφ above pivot
+    _contactY() { return this.pivY + this.radius / Math.cos(this.phi); }
+    _impactSpeed() { return Math.sqrt(Math.max(0, 2 * this.g * (this.yStart - this._contactY()))); }
+    _outVel() { const v = this._impactSpeed(); return { x: -v * Math.sin(2 * this.phi), y: v * Math.cos(2 * this.phi) }; }
+    _snapAngle(a) { a = Math.max(-60, Math.min(60, a)); return Math.abs(a) < this.minAngle ? (a < 0 ? -this.minAngle : this.minAngle) : a; }   // snap out of the near-flat dead-zone
+    // Whether a pointer-down may start an angle drag. PlatformBounce locks the platform at first
+    // contact; FrictionRamp never locks it (see its override).
+    _angleLocked() { return !!this.bounced; }
+    play() { this.x = this.pivX; this.y = this.yStart; this.vx = 0; this.vy = 0; this.bounced = false;
+             this.t = 0; this.simMs = 0; this.posHist = []; this._recordPos(this.x, this.y, 0);
+             this.running = true; this.paused = false; this.everPlayed = true; this.last = performance.now(); }
+    reset() { this.running = false; this.paused = false; this.x = this.pivX; this.y = this.yStart; this.vx = 0; this.vy = 0; this.bounced = false; this.strike = null; this.render(); }
+    _bindDrag() {
+      let drag = false;
+      const nearBar = (w) => {                          // distance from pointer to the platform line, within the bar span
+        const t = this._tangent(), n = this._normal();
+        const ox = w.x - this.pivX, oy = w.y - this.pivY;
+        const along = ox * t.x + oy * t.y, perp = ox * n.x + oy * n.y;
+        return Math.abs(perp) < 0.5 && Math.abs(along) < this.halfLen + 0.5;
+      };
+      const setFromPointer = (w) => {
+        if (this._angleLocked()) return;                                // angle LOCKS at first contact (H only)
+        let a = Math.atan2(w.y - this.pivY, w.x - this.pivX) / D2R;     // bar direction angle
+        if (a > 90) a -= 180; else if (a < -90) a += 180;              // fold to a ±90 line orientation
+        this.angle = this._snapAngle(a); if (this.onAngleChange) this.onAngleChange(this.angle);
+      };
+      this.c.addEventListener("pointerdown", (ev) => { if (this._angleLocked()) return;   // draggable while falling (quasi-static)
+        const w = this._toWorldCentered(ev);
+        if (nearBar(w)) { drag = true; setFromPointer(w); this.c.setPointerCapture?.(ev.pointerId); this.render(); } });
+      this.c.addEventListener("pointermove", (ev) => { if (!drag) return; setFromPointer(this._toWorldCentered(ev)); this.render(); });
+      window.addEventListener("pointerup", () => { drag = false; });
+    }
+    step(now) {
+      if (this.running && !this.paused) {
+        let dt = Math.min((now - this.last) / 1000, 0.05) * (this.slomo ? this.slomoFactor : 1); this.last = now;
+        const sub = 4; dt /= sub;
+        for (let s = 0; s < sub; s++) {
+          this.vy += -this.g * dt; this.x += this.vx * dt; this.y += this.vy * dt; this.simMs += dt * 1000;
+          // elastic reflection — MULTIPLE bounces off the FINITE bar; the angle is frozen at first contact
+          const n = this._normal(), t = this._tangent();
+          const ox = this.x - this.pivX, oy = this.y - this.pivY;
+          const perp = ox * n.x + oy * n.y, along = ox * t.x + oy * t.y;
+          if (perp <= this.radius && Math.abs(along) <= this.halfLen) {   // within the bar's span (beyond the ends it passes through — a miss)
+            const vn = this.vx * n.x + this.vy * n.y;
+            if (vn < 0) {                                                 // moving INTO the surface → reflect (vn>0 already leaving → no re-trigger)
+              this.vx -= 2 * vn * n.x; this.vy -= 2 * vn * n.y;           // reflect about the platform normal
+              const pushOut = this.radius - perp; this.x += pushOut * n.x; this.y += pushOut * n.y;   // snap onto the surface (no sinking)
+              if (!this.bounced) { this.bounced = true; this.strike = { x: this.x, y: this.y, nx: n.x, ny: n.y }; }   // FIRST contact: lock the angle + record the strike
+            }
+          }
+        }
+        this._recordPos(this.x, this.y, this.simMs, HOUSE.trailFadeS * 1000);
+        if (this.y - this.radius < this.pivY - 5 || this.x < -1 || this.x > HOUSE.frameW + 1) { this.reset(); }   // fell off-screen → auto-reset (unlocks the platform angle + re-arms the drop)
+      } else { this.last = now; }
+      this.render();
+    }
+    _drawPlatform() {
+      const ctx = this.ctx, t = this._tangent();
+      const ax = this.sx(this.pivX - this.halfLen * t.x), ay = this.sy(this.pivY - this.halfLen * t.y);
+      const bx = this.sx(this.pivX + this.halfLen * t.x), by = this.sy(this.pivY + this.halfLen * t.y);
+      ctx.save(); ctx.strokeStyle = HOUSE.boundary; ctx.lineCap = "round"; ctx.lineWidth = Math.max(this.scale * 0.06, 4);
+      ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
+      // 45° hatch on the underside (the -normal side)
+      const n = this._normal(); const hatch = 0.26 * this.scale, gap = Math.max(this.scale * 0.42, 15);
+      ctx.lineWidth = Math.max(this.scale * 0.03, 2.2);
+      for (let s = -this.halfLen + 0.2; s <= this.halfLen - 0.1; s += gap / this.scale) {
+        const px = this.pivX + s * t.x, py = this.pivY + s * t.y;
+        ctx.beginPath(); ctx.moveTo(this.sx(px), this.sy(py));
+        ctx.lineTo(this.sx(px - 0.28 * n.x) , this.sy(py - 0.28 * n.y)); ctx.stroke();
+      }
+      ctx.restore();
+      this._drawPinJoint(this.sx(this.pivX), this.sy(this.pivY));       // hinge-style pin joint (ring + center dot)
+    }
+    // Pin joint à la X3-1_DoorHingeMid: a background-filled ring outlined in structural gray, plus a small
+    // solid center dot — reads as a hinge knuckle sitting over the platform, not a crosshair.
+    _drawPinJoint(cx, cy) {
+      const ctx = this.ctx, R = Math.max(this.scale * 0.19, 6), ri = Math.max(this.scale * 0.06, 2.2);
+      ctx.save();
+      ctx.fillStyle = HOUSE.bg; ctx.strokeStyle = HOUSE.boundary; ctx.lineWidth = Math.max(this.scale * 0.028, 2);
+      ctx.beginPath(); ctx.arc(cx, cy, R, 0, TAU); ctx.fill(); ctx.stroke();      // bg-filled ring, gray outline
+      ctx.fillStyle = HOUSE.boundary; ctx.beginPath(); ctx.arc(cx, cy, ri, 0, TAU); ctx.fill();   // solid center pin
+      ctx.restore();
+    }
+    _drawPrediction() {
+      const ctx = this.ctx;
+      // strike point + platform normal: PREDICTED from the current angle before the bounce; the ACTUAL
+      // recorded values after it (so rotating the platform post-bounce doesn't move the reflection axis).
+      let sxp, syp, nx, ny;
+      if (this.strike) { sxp = this.strike.x; syp = this.strike.y; nx = this.strike.nx; ny = this.strike.ny; }
+      else { const n = this._normal(); sxp = this.pivX; syp = this._contactY(); nx = n.x; ny = n.y; }
+      // (1) light-gray NORMAL line out of the platform at the strike point — angle in = angle out
+      ctx.save(); ctx.strokeStyle = withAlpha(HOUSE.surface, 0.5); ctx.lineWidth = Math.max(this.scale * 0.016, 1.4);
+      ctx.beginPath(); ctx.moveTo(this.sx(sxp - 0.35 * nx), this.sy(syp - 0.35 * ny));
+      ctx.lineTo(this.sx(sxp + 3.0 * nx), this.sy(syp + 3.0 * ny)); ctx.stroke(); ctx.restore();
+      // (2) dashed velocity-blue PREDICTED path — the FULL trajectory: free-fall drop + EVERY bounce off the
+      //     bar (shallow angles bounce many times, walking along the platform before leaving its end). Stepped
+      //     forward with the same reflection as the live sim, so it overlays the actual path exactly.
+      {
+        const nrm = this._normal(), tan = this._tangent(), r = this.radius, pdt = 0.01;
+        ctx.save(); ctx.strokeStyle = withAlpha(HOUSE.velocity, 0.55); ctx.setLineDash([5, 6]);
+        ctx.lineWidth = Math.max(this.scale * 0.02, 1.5); ctx.beginPath();
+        let px = this.pivX, py = this.yStart, pvx = 0, pvy = 0, nb = 0;
+        ctx.moveTo(this.sx(px), this.sy(py));
+        for (let i = 0; i < 2400; i++) {
+          pvy += -this.g * pdt; px += pvx * pdt; py += pvy * pdt;
+          const ox = px - this.pivX, oy = py - this.pivY;
+          const perp = ox * nrm.x + oy * nrm.y, along = ox * tan.x + oy * tan.y;
+          if (perp <= r && Math.abs(along) <= this.halfLen) {            // reflect off the bar (within its span)
+            const vn = pvx * nrm.x + pvy * nrm.y;
+            if (vn < 0) { pvx -= 2 * vn * nrm.x; pvy -= 2 * vn * nrm.y; px += (r - perp) * nrm.x; py += (r - perp) * nrm.y; if (++nb > 30) break; }
+          }
+          ctx.lineTo(this.sx(px), this.sy(py));
+          if (py - r < this.pivY - 5 || px < 0 || px > HOUSE.frameW) break;   // left the frame (or walked off the bar end and fell)
+        }
+        ctx.stroke(); ctx.restore();
+      }
+    }
+    render() {
+      const ctx = this.ctx; ctx.clearRect(0, 0, this.W, this.H);
+      this._drawPrediction();                                          // behind everything
+      this._drawPlatform();
+      if (this.running) { this.now = this.simMs; this._motionBlur(this.radius, platBlurBack(this));
+        // curved post-bounce path → white trail on
+        const pts = []; const h = this.posHist || [];
+        for (const p of h) pts.push({ x: this.sx(p.x), y: this.sy(p.y), t: p.t });
+        this._whiteTrail(pts, this.simMs, HOUSE.trailFadeS * 1000);
+        this._disc(this.x, this.y, this.radius, HOUSE.mass, 1);
+      } else {
+        this._disc(this.pivX, this.yStart, this.radius, HOUSE.mass, 1);
+      }
+    }
+  }
+
+  // ============================================================================================
+  // FrictionRamp (data-sim="frictionramp") — Class M `sim-ramp`. A teethed block on the pin-jointed
+  // platform: tip it and static friction grows to hold the block, tip past atan(mu_s) and the teeth
+  // lift, the block slides, and the amber arrow SHRINKS to mu_k·|F_N|. Two live sliders, mu_s and
+  // mu_k. The baked prototype is the retired quarry's `animations/scripts/tilt-ramp.py`; the block
+  // anatomy (teeth buried while stuck, lifted by tooth_h once sliding) is OBJECTS.md's teethed
+  // friction block, and physanim draws exactly the same object with `velocity_lift`.
+  //
+  // FOUR THINGS THAT ARE LOAD-BEARING, all of them learned somewhere else in this engine first:
+  //
+  // 1. THE INTEGRATOR RE-READS THE SLIDERS EVERY SUBSTEP. mu_s/mu_k are read inside `step()`, never
+  //    captured at play(). This is the Class K drag trap verbatim (DESIGN.md "Quadratic drag"):
+  //    precomputing the motion froze it on a snapshot while render() kept reading the slider live,
+  //    so the arrow grew on a ball that visibly did not care. If a slider can change the force, the
+  //    integrator has to read that slider.
+  // 2. THE BLOCK IS PINNED TO THE SURFACE. Its state is (s, vs) — distance and speed ALONG the
+  //    platform — not a free (x,y). So yanking the angle can never launch it: the worst a fast drag
+  //    can do is change which way it slides. It becomes a free projectile at exactly one moment,
+  //    when |s| passes halfLen and it leaves the end. Daniel's ask, and also the only version that
+  //    survives a room watching someone scrub the slider.
+  // 3. STICK IS A STATE, NOT A SMALL VELOCITY. Coulomb friction integrated naively chatters around
+  //    v = 0 forever. Here `sliding` is an explicit flag: it goes true when |F_par| exceeds
+  //    mu_s·|F_N|, and false again when the block's velocity crosses zero AND the static condition
+  //    holds at that instant. That is also what makes the arrow honest — while stuck, friction is
+  //    drawn as exactly -F_par (whatever it has to be), and only while sliding is it mu_k·|F_N|.
+  // 4. IT RUNS ON MOUNT. Every other preset waits for Play, because every other preset is a launch.
+  //    This one is a tilt table: the whole slide is Daniel dragging the bar and narrating what the
+  //    arrows do, and a sim that needs Play first would swallow the first thing he shows. `running`
+  //    starts true and `everPlayed` starts true, so the deck's advance key advances instead of
+  //    arming. Play/Pause and Reset still do the obvious things.
+  // ============================================================================================
+  class FrictionRamp extends PlatformBounce {
+    constructor(canvas, opts = {}) {
+      super(canvas, opts);
+      this.g = opts.g ?? 5.0;
+      this.mus = opts.mus ?? 0.60;
+      this.muk = Math.min(opts.muk ?? 0.35, this.mus);   // a slide asking for mu_k > mu_s is a config
+      //   error, not an interaction; the RUNTIME invariant is held by the coupled sliders in the mount.
+      this.minAngle = 0;                    // no dead-zone: flat IS the interesting starting state here
+      this.angle0 = opts.angle ?? 0;        // what Reset returns the bar to
+      this.angle = this.angle0;
+      // Class H hangs its pivot low (pivY = -1.6) to leave the ball room to fall onto the bar. Nothing
+      // falls onto this one, so the bar sits at the middle of the frame where it is easiest to read
+      // from the back of the room — and the block still has four world units to fall through after it
+      // walks off the end, which is more than enough to leave frame.
+      this.pivY = 0;
+      this.bw = 1.05; this.bh = 0.58;       // block, in world units (the quarry's proportions)
+      this.nTeeth = 12; this.toothH = 0.09;
+      this.forceScale = 0.42;               // ONE scale for every arrow, so lengths compare directly
+      this.showReadout = false;
+      this.running = true; this.paused = false; this.everPlayed = true;
+      this.last = performance.now();
+      this._resetBody();
+    }
+    _resetBody() {
+      this.s = 0; this.vs = 0;              // along-platform position (from the pin) and velocity
+      this.sliding = false; this.airborne = false;
+      this.x = this.pivX; this.y = this.pivY; this.vx = 0; this.vy = 0;
+      this.simMs = 0; this.posHist = [];
+    }
+    _angleLocked() { return false; }        // the platform is ALWAYS draggable — that is the slide
+    play()  { this._resetBody(); this.running = true; this.paused = false; this.everPlayed = true; this.last = performance.now(); }
+    // Reset puts the BAR back too, not just the block. A reset that recentered the block on a ramp
+    // still tipped past the threshold just watched it slide off again, which is not a reset of
+    // anything. onAngleChange carries it to the slider, the same channel a pointer drag uses.
+    reset() {
+      this._resetBody();
+      this.angle = this.angle0;
+      if (this.onAngleChange) this.onAngleChange(this.angle);
+      this.running = true; this.paused = false; this.render();
+    }
+
+    // --- the physics, all per unit mass (m cancels out of every line, which is the lesson) --------
+    get _aPar()  { return -this.g * Math.sin(this.phi); }        // gravity along +tangent
+    get _normA() { return this.g * Math.cos(this.phi); }         // |F_N|/m = g cos(phi)
+    get _fricStatic()  { return -this._aPar; }                   // whatever it has to be
+    get _fricLimit()   { return this.mus * this._normA; }        // the ceiling
+    get _critAngle()   { return Math.atan(this.mus) / D2R; }     // tan(theta_c) = mu_s
+
+    // Block center, in world coords, lifted off the surface by half its height (plus the tooth lift).
+    _bodyCenter() {
+      const t = this._tangent(), n = this._normal();
+      const lift = this.bh / 2 + (this.sliding ? this.toothH : 0);
+      return { x: this.pivX + this.s * t.x + lift * n.x, y: this.pivY + this.s * t.y + lift * n.y };
+    }
+    step(now) {
+      if (this.running && !this.paused) {
+        let dt = Math.min((now - this.last) / 1000, 0.05) * (this.slomo ? this.slomoFactor : 1);
+        this.last = now;
+        const sub = 6, h = dt / sub;
+        for (let i = 0; i < sub; i++) {
+          this.simMs += h * 1000;
+          if (this.airborne) {                                   // off the end — a frictionless projectile
+            this.vy += -this.g * h; this.x += this.vx * h; this.y += this.vy * h;
+            continue;
+          }
+          const aPar = this._aPar, limit = this._fricLimit;      // both read LIVE — see note 1
+          if (!this.sliding) {
+            if (Math.abs(aPar) > limit) this.sliding = true;     // the ceiling has been crossed
+            else { this.vs = 0; }                                // still stuck: friction cancels the pull exactly
+          }
+          if (this.sliding) {
+            // mu_k stands alone here, and that is deliberate (Daniel, 2026-08-21). The physics never
+            // consults mu_s on this branch: mu_s decides WHETHER it slips, mu_k decides what happens
+            // once it has, and the sliding block cannot be changed by a control that is about the
+            // other branch. mu_k <= mu_s is maintained where it belongs — in the coupled sliders, at
+            // the mount — so this line never needs a guard and never silently disagrees with what the
+            // mu_k slider reads.
+            const dir = this.vs !== 0 ? Math.sign(this.vs) : Math.sign(aPar);
+            const a = aPar - this.muk * this._normA * dir;
+            const vNew = this.vs + a * h;
+            if (this.vs !== 0 && Math.sign(vNew) !== Math.sign(this.vs)) {
+              // friction took the speed to zero inside this substep. Never let it carry through to a
+              // reversal: kinetic friction stops a block, it does not push it back up the slope.
+              this.vs = 0;
+              if (Math.abs(aPar) <= limit) this.sliding = false;   // static can hold it → stick
+              // The else is a guard rather than a case: with mu_k <= mu_s held by the sliders, a block
+              // that is sliding because |F_par| > mu_s|F_N| cannot be stopped by mu_k|F_N|, so it does
+              // not reach here. It stays sliding and restarts down-slope on the next substep.
+            } else {
+              this.vs = vNew; this.s += this.vs * h;
+            }
+          }
+          if (!this.airborne && Math.abs(this.s) > this.halfLen) {   // walked off the end
+            const t = this._tangent(), c = this._bodyCenter();
+            this.airborne = true;
+            this.x = c.x; this.y = c.y; this.vx = this.vs * t.x; this.vy = this.vs * t.y;
+          }
+        }
+        const c = this.airborne ? { x: this.x, y: this.y } : this._bodyCenter();
+        this._recordPos(c.x, c.y, this.simMs, HOUSE.trailFadeS * 1000);
+        if (this.y < this.pivY - 5.5 || this.x < -2 || this.x > HOUSE.frameW + 2) this.reset();
+      } else { this.last = now; }
+      this.render();
+    }
+
+    // --- drawing -------------------------------------------------------------------------------
+    // The teethed block (OBJECTS.md 'Variants — teethed (friction) block'): a rectangle whose bottom
+    // edge is a triangle wave. While stuck the teeth are BURIED — we draw the block first and the
+    // platform bar over it, so the interlock reads as solid contact and only the tips show. Once
+    // sliding the whole block lifts by tooth_h and the voids between teeth become visible, which is
+    // the entire visual argument for why kinetic friction is the smaller number.
+    // One block polygon, drawn at a given world center in a given color — the real body, and each of
+    // its after-images, so a ghost can never drift out of shape from the thing it is a ghost of.
+    _drawBlockAt(c, color, alpha) {
+      const ctx = this.ctx, t = this._tangent(), n = this._normal();
+      const hw = this.bw / 2, hh = this.bh / 2;
+      const P = (a, b) => ({ x: this.sx(c.x + a * t.x + b * n.x), y: this.sy(c.y + a * t.y + b * n.y) });
+      ctx.save(); ctx.globalAlpha = alpha; ctx.fillStyle = color; ctx.beginPath();
+      let p = P(-hw, hh); ctx.moveTo(p.x, p.y);
+      p = P(hw, hh);  ctx.lineTo(p.x, p.y);
+      p = P(hw, -hh); ctx.lineTo(p.x, p.y);
+      const n2 = 2 * this.nTeeth;                                  // triangle wave right → left along the bottom
+      for (let i = 1; i <= n2; i++) {
+        const a = hw - (this.bw * i) / n2;
+        const b = -hh - (i % 2 ? this.toothH : 0);
+        p = P(a, b); ctx.lineTo(p.x, p.y);
+      }
+      ctx.closePath(); ctx.fill(); ctx.restore();
+    }
+    _drawBlock() {
+      this._drawBlockAt(this.airborne ? { x: this.x, y: this.y } : this._bodyCenter(), HOUSE.mass, 1);
+    }
+    // Velocity-blue after-images (STYLE.md: every moving body carries them; the smear length reads
+    // true speed). `SimBase._motionBlur` draws DISCS, which is right for a point mass and wrong for a
+    // block, so this is the same token recipe — `blur_frames` ghosts spaced `blur_dt_s` of physics
+    // time back, `blur_alpha0` fading by `blur_falloff` per step — applied to the block polygon. Same
+    // hand-application Class I's coaster makes for its three-car train.
+    //
+    // **This replaced a white trail** (Daniel, 2026-08-21). The white fading trajectory is for CURVED
+    // paths, where the shape of the path is itself information — a bounced ball, a coaster. A block
+    // sliding down a straight ramp traces a line that is already drawn on screen: the ramp. So the
+    // trail said nothing and cluttered the one thing the slide is about, which is the arrows.
+    _blockBlur() {
+      if (!this.sliding && !this.airborne) return;                 // a stuck block has no speed to read
+      this.now = this.simMs;                                       // _posAtBack measures back from here
+      for (let k = HOUSE.blurFrames; k >= 1; k--) {                // oldest (faintest) first
+        const back = k * HOUSE.blurDt * 1000;
+        if (this.simMs - back < 0) continue;                       // phantom frame from before the slide began
+        const p = this._posAtBack(back);
+        if (p) this._drawBlockAt(p, HOUSE.velocity, HOUSE.blurAlpha0 * Math.pow(HOUSE.blurFalloff, k - 1));
+      }
+    }
+    _forceArrow(c, ax, ay, color, alpha) {                          // an ACCELERATION (per unit mass), drawn at the one scale
+      this._arrow(c.x, c.y, ax * this.forceScale, ay * this.forceScale, color, alpha === undefined ? 1 : alpha);
+    }
+    _dashTo(c, ax, ay, bx, by) {                                    // dashed guide completing the right-angle box
+      const ctx = this.ctx, S = this.forceScale;
+      ctx.save(); ctx.strokeStyle = withAlpha(HOUSE.gravity, 0.45); ctx.setLineDash([4, 5]);
+      ctx.lineWidth = Math.max(this.scale * 0.014, 1.2);
+      ctx.beginPath();
+      ctx.moveTo(this.sx(c.x + ax * S), this.sy(c.y + ay * S));
+      ctx.lineTo(this.sx(c.x + bx * S), this.sy(c.y + by * S));
+      ctx.stroke(); ctx.restore();
+    }
+    _drawForces() {
+      if (this.airborne) {                                          // off the ramp: gravity alone
+        const c = { x: this.x, y: this.y };
+        this._forceArrow(c, 0, -this.g, HOUSE.gravity);
+        return;
+      }
+      const c = this._bodyCenter(), t = this._tangent(), n = this._normal();
+      const aPar = this._aPar, aPerp = -this.g * Math.cos(this.phi);   // gravity's two components
+      // gravity, and its two faded components with the dashed box
+      this._forceArrow(c, 0, -this.g, HOUSE.gravity);
+      this._forceArrow(c, aPar * t.x, aPar * t.y, HOUSE.gravity, 0.5);
+      this._forceArrow(c, aPerp * n.x, aPerp * n.y, HOUSE.gravity, 0.5);
+      this._dashTo(c, aPar * t.x, aPar * t.y, 0, -this.g);
+      this._dashTo(c, aPerp * n.x, aPerp * n.y, 0, -this.g);
+      // the normal force (purple) — always g cos(phi), always along +n
+      const N = this._normA;
+      this._forceArrow(c, N * n.x, N * n.y, HOUSE.normal);
+      // friction (amber): -F_par while stuck, mu_k·|F_N| opposing the slide once moving
+      let f;
+      if (this.sliding) {
+        const dir = this.vs !== 0 ? Math.sign(this.vs) : Math.sign(aPar);
+        f = -this.muk * N * dir;                    // mu_k alone — see the note in step()
+      } else {
+        f = this._fricStatic;
+      }
+      if (Math.abs(f) > 1e-6) this._forceArrow(c, f * t.x, f * t.y, HOUSE.friction);
+    }
+    _readout() {
+      const ctx = this.ctx, pad = Math.round(this.H * 0.028);
+      const fs = HOUSE.sizeCaption * this.H;
+      const stuck = !this.sliding && !this.airborne;
+      const lines = [
+        `angle  ${this.angle.toFixed(0)}°     tan = ${Math.abs(Math.tan(this.phi)).toFixed(2)}`,
+        `μs = ${this.mus.toFixed(2)}   →  slips past ${this._critAngle.toFixed(0)}°`,
+        `μk = ${this.muk.toFixed(2)}`,
+        this.airborne ? "OFF THE END — no contact, no friction"
+                      : (stuck ? "STUCK — friction = the pull, below its ceiling"
+                               : "SLIDING — friction = μk |F_N|, constant")
+      ];
+      ctx.save();
+      ctx.font = fs + "px " + HOUSE.fontMono; ctx.textBaseline = "top";
+      lines.forEach((L, i) => {
+        ctx.fillStyle = i === 3 ? (stuck ? HOUSE.spring : HOUSE.friction) : HOUSE.muted;
+        ctx.fillText(L, pad, pad + i * fs * 1.45);
+      });
+      ctx.restore();
+    }
+    render() {
+      const ctx = this.ctx; ctx.clearRect(0, 0, this.W, this.H);
+      this._blockBlur();          // after-images UNDER the body…
+      this._drawBlock();          // …then the block…
+      this._drawPlatform();       // …then the bar over both, so buried teeth read as solid contact
+      this._drawForces();
+      if (this.showReadout) this._readout();
+    }
+  }
+
+  // Shared shell + wiring for the platform family (mirrors mountProjectile's pattern: Play/Pause,
+  // Reset, 🐢 slo-mo, sliders paired with editable number boxes; the speaker-view copy is read-only).
+  function _platformShell(sliderHTML, withReadout) {
+    return `
+      <canvas class="simcanvas"></canvas>
+      ${withReadout ? '<button class="simbtn toggle-readout" title="show / hide numbers">123</button>' : ""}
+      <div class="simctrls">
+        <button class="simbtn play">▶ Play</button>
+        <button class="simbtn reset">↺ Reset</button>
+        <button class="simbtn slomo" title="Slow motion">🐢</button>
+        ${sliderHTML}
+      </div>`;
+  }
+  function _wirePlatformCommon(section, sim, sliderSels) {
+    const q = s => section.querySelector(s);
+    const readonly = window.self !== window.top;
+    const playBtn = q(".play");
+    const refresh = () => { playBtn.textContent = !sim.running ? "▶ Play" : (sim.paused ? "▶ Resume" : "⏸ Pause"); };
+    sim.refreshPlayBtn = refresh;
+    playBtn.addEventListener("click", () => { if (!sim.running) sim.play(); else if (sim.paused) sim.resume(); else sim.pause(); refresh(); });
+    q(".reset").addEventListener("click", () => { sim.reset(); refresh(); });
+    const slo = q(".slomo"); if (slo) { slo.classList.toggle("on", sim.slomo); slo.addEventListener("click", () => { sim.slomo = !sim.slomo; slo.classList.toggle("on", sim.slomo); }); }
+    const rt = q(".toggle-readout");
+    if (rt) rt.addEventListener("click", () => { sim.showReadout = !sim.showReadout; rt.classList.toggle("on", sim.showReadout); if (!sim.running) sim.render(); });
+    if (readonly) {
+      sim.c.style.pointerEvents = "none";
+      [playBtn, q(".reset"), slo, rt, ...sliderSels.flatMap(s => [q(s.rng), q(s.num)])].forEach(el => { if (el) el.disabled = true; });
+      const ctrls = q(".simctrls"); if (ctrls) ctrls.style.opacity = ".4";
+    }
+    let raf = null, prev = sim.running;
+    sim.start = () => { if (raf) return; const loop = (now) => { sim.step(now); if (sim.running !== prev) { prev = sim.running; refresh(); } raf = requestAnimationFrame(loop); }; sim.last = performance.now(); raf = requestAnimationFrame(loop); };
+    sim.stop = () => { if (raf) { cancelAnimationFrame(raf); raf = null; } };
+    window.addEventListener("resize", () => { sim.resize(); sim.render(); });
+    refresh();
+    return { q, refresh };
+  }
+  // One slider + its number box, kept in step, clamped to the slider's own range.
+  // `show(v)` moves BOTH controls without firing `set` — it is how one slider reports that it has
+  // moved another one (FrictionRamp's coupled mu pair), so the display can never disagree with the
+  // state while still leaving exactly one path that writes the state.
+  function _bindSlider(section, rngSel, numSel, get, set) {
+    const rng = section.querySelector(rngSel), num = section.querySelector(numSel);
+    const clamp = v => Math.max(+rng.min, Math.min(+rng.max, v));
+    rng.value = get(); num.value = get();
+    const apply = () => { set(+rng.value); num.value = rng.value; };
+    const show = (v) => { rng.value = clamp(v); num.value = rng.value; };
+    rng.addEventListener("input", apply);
+    num.addEventListener("input", () => { const v = parseFloat(num.value); if (isNaN(v)) return; rng.value = clamp(v); set(+rng.value); });
+    num.addEventListener("change", () => { const v = parseFloat(num.value); num.value = isNaN(v) ? get() : clamp(v); rng.value = num.value; apply(); });
+    return { rng, num, apply, show };
+  }
+
+  function mountPlatformBounce(section) {
+    if (!section.querySelector(".simcanvas")) section.insertAdjacentHTML("beforeend",
+      _platformShell(`<label><span class="var">angle:</span> <input type="range" class="s-ang" min="-60" max="60" step="1"><input type="number" class="n-ang" step="1"><span class="u">°</span></label>`, false));
+    const d = section.dataset;
+    const sim = new PlatformBounce(section.querySelector(".simcanvas"), { angle: d.angle !== undefined ? +d.angle : 22 });
+    const q = s => section.querySelector(s);
+    const rng = q(".s-ang"), num = q(".n-ang"); rng.value = sim.angle; num.value = sim.angle;
+    const apply = () => { sim.angle = sim._snapAngle(+rng.value); rng.value = sim.angle; num.value = sim.angle; if (!sim.running) sim.render(); };   // snap out of the near-flat dead-zone
+    sim.onAngleChange = (a) => { rng.value = Math.round(a); num.value = Math.round(a); };   // drag → slider (a is already snapped)
+    rng.addEventListener("input", apply);
+    num.addEventListener("change", () => { const v = parseFloat(num.value); rng.value = isNaN(v) ? sim.angle : sim._snapAngle(v); apply(); });
+    _wirePlatformCommon(section, sim, [{ rng: ".s-ang", num: ".n-ang" }]); apply();
+    return sim;
+  }
+
+  // Class M `sim-ramp`. Three controls: the platform angle (also draggable on the bar itself) and the
+  // two coefficients. The two coefficients are INDEPENDENT — neither slider clamps or reads the other.
+  // See the note in step() for why that matters more than keeping mu_k <= mu_s.
+  function mountFrictionRamp(section) {
+    if (!section.querySelector(".simcanvas")) section.insertAdjacentHTML("beforeend",
+      _platformShell(
+        `<label><span class="var">angle:</span> <input type="range" class="s-ang" min="-60" max="60" step="1"><input type="number" class="n-ang" step="1"><span class="u">°</span></label>
+         <label><span class="var"><i>μ</i><sub>s</sub>:</span> <input type="range" class="s-mus" min="0" max="1.2" step="0.05"><input type="number" class="n-mus" step="0.05"></label>
+         <label><span class="var"><i>μ</i><sub>k</sub>:</span> <input type="range" class="s-muk" min="0" max="1.2" step="0.05"><input type="number" class="n-muk" step="0.05"></label>`, true));
+    const d = section.dataset;
+    const sim = new FrictionRamp(section.querySelector(".simcanvas"), {
+      angle: d.angle !== undefined ? +d.angle : 0,
+      mus:   d.mus   !== undefined ? +d.mus   : 0.60,
+      muk:   d.muk   !== undefined ? +d.muk   : 0.35,
+      g:     d.g     !== undefined ? +d.g     : 5.0
+    });
+    const ang = _bindSlider(section, ".s-ang", ".n-ang", () => sim.angle,
+      v => { sim.angle = sim._snapAngle(v); if (!sim.running) sim.render(); });
+    sim.onAngleChange = (a) => { ang.rng.value = Math.round(a); ang.num.value = Math.round(a); };
+    // THE COUPLED PAIR. mu_k <= mu_s is maintained by the CONTROLS, not by the physics: push one past
+    // the other and the other one moves out of the way, visibly. Two earlier versions were worse.
+    // Clamping mu_k to mu_s inside the physics meant dragging mu_s to zero mid-slide silently killed
+    // the kinetic friction while its slider still read 0.35 — the state and the display disagreed, and
+    // the display was lying. Leaving them fully independent (the version after that) let a presenter
+    // set mu_k > mu_s, which is a surface that does not exist and which stick-slips on screen for
+    // reasons nobody in the room can be told. Coupling gets both: the physics reads mu_k alone and is
+    // never second-guessed, and no unphysical pair can be entered in the first place.
+    // The one consequence to know at the board: dragging mu_s BELOW mu_k while the block is sliding
+    // drags mu_k down with it, so the friction does shrink — but the mu_k slider moves while it
+    // happens, so what changed is on screen. Anywhere above mu_k, mu_s does nothing to a moving block,
+    // which is the behavior that matters.
+    let musB, mukB;
+    musB = _bindSlider(section, ".s-mus", ".n-mus", () => sim.mus, v => {
+      sim.mus = v;
+      if (sim.muk > sim.mus) { sim.muk = sim.mus; mukB.show(sim.muk); }
+      if (!sim.running) sim.render();
+    });
+    mukB = _bindSlider(section, ".s-muk", ".n-muk", () => sim.muk, v => {
+      sim.muk = v;
+      if (sim.mus < sim.muk) { sim.mus = sim.muk; musB.show(sim.mus); }
+      if (!sim.running) sim.render();
+    });
+    _wirePlatformCommon(section, sim, [{ rng: ".s-ang", num: ".n-ang" },
+                                       { rng: ".s-mus", num: ".n-mus" },
+                                       { rng: ".s-muk", num: ".n-muk" }]);
+    sim.render();
+    return sim;
+  }
+
   // Dispatcher: pick the preset from data-sim (default projectile).
+  // The closed vocabulary of data-sim values, so mount() can tell "no attribute" (fall back to the
+  // projectile, as it always has) from "an attribute nobody implemented" (say so). Keep in step with
+  // the branches below, and with DESIGN.md's sim catalog.
+  const SIM_KINDS = new Set([
+    "projectile", "elevator", "handlift", "normal", "handlift-energy", "handliftenergy",
+    "projectile2d", "2d", "deflect", "game", "circle", "circular", "oscillator", "spring",
+    "oscillator-game", "springgame", "attractor2d", "attractor", "launcher", "launchergame",
+    "platformbounce", "frictionramp"
+  ]);
+
   function mount(section) {
     const kind = (section.dataset.sim || "projectile").toLowerCase();
+    // An UNRECOGNISED data-sim used to fall through to the projectile at the bottom of this chain, so a
+    // slide asking for a preset that does not exist quietly showed different physics and looked fine —
+    // which is exactly how Class J's handlift-energy slide came to be running Class B's launch. A
+    // fallback is right for a MISSING attribute and wrong for a wrong one; say so, on the slide.
+    if (section.dataset.sim !== undefined && !SIM_KINDS.has(kind)) {
+      console.error("[interactive] unknown data-sim:", kind);
+      section.insertAdjacentHTML("beforeend",
+        '<div class="simerror" style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);' +
+        'font:600 calc(var(--size-body) * 720px)/1.4 var(--font-sans, Inter, sans-serif);' +
+        'color:var(--mma-red,#eb6235);text-align:center;">unknown <code>data-sim="' + kind + '"</code><br>' +
+        '<span style="font-size:.7em;color:var(--muted,#888)">no preset by that name in interactive.js</span></div>');
+      return null;
+    }
     if (kind === "elevator" || kind === "handlift" || kind === "normal") return mountHandLift(section);
-    if (kind === "projectile2d" || kind === "2d") return mountProjectile2D(section);
+    if (kind === "handlift-energy" || kind === "handliftenergy") return mountHandLiftEnergy(section);
+    if (kind === "projectile2d" || kind === "2d")
+      return section.dataset.drag !== undefined ? mountProjectile2DDrag(section) : mountProjectile2D(section);
     if (kind === "deflect" || kind === "game") return mountDeflect(section);
     if (kind === "circle" || kind === "circular") return mountCircle(section);
     if (kind === "oscillator" || kind === "spring") return mountOscillator(section);
     if (kind === "oscillator-game" || kind === "springgame") return mountSpringGame(section);
     if (kind === "attractor2d" || kind === "attractor") return mountAttractor2D(section);
     if (kind === "launcher" || kind === "launchergame") return mountLauncherGame(section);
+    if (kind === "platformbounce") return mountPlatformBounce(section);
+    if (kind === "frictionramp") return mountFrictionRamp(section);
     return mountProjectile(section);
   }
 
   function mountProjectile(section) {
+    const dragMode = section.dataset.drag !== undefined;          // Class K: swap in the C_d / A_perp sliders
+    if (dragMode) return mountProjectileDrag(section);
     if (!section.querySelector(".simcanvas")) section.insertAdjacentHTML("beforeend", CONTROLS_HTML);
     const d = section.dataset;
     const opts = {
@@ -2447,5 +3766,105 @@
     return sim;
   }
 
-  window.Interactive = { Projectile, Projectile2D, HandLift, DeflectGame, Circular, Oscillator, SpringGame, Attractor2D, LauncherGame, mount, HOUSE };
+  // ---- Class K mounts: the same two presets, with drag and the two-slider control bar --------------
+  // Factored out rather than branched inline so the drag-free mounts above are byte-for-byte untouched.
+  function _wireDragSliders(section, sim, apply, extraDisable) {
+    const q = s => section.querySelector(s);
+    const readonly = window.self !== window.top;
+    const rng = { cd: q(".s-cd"), area: q(".s-area") };
+    const num = { cd: q(".n-cd"), area: q(".n-area") };
+    const clamp = (el, v) => Math.max(+el.min, Math.min(+el.max, v));
+    Object.keys(rng).forEach(k => {
+      const s = rng[k], n = num[k]; n.value = s.value;
+      s.addEventListener("input", () => { n.value = s.value; apply(); });
+      n.addEventListener("input", () => { const v = parseFloat(n.value); if (isNaN(v)) return; s.value = clamp(s, v); apply(); });
+      n.addEventListener("change", () => { const v = parseFloat(n.value); n.value = isNaN(v) ? s.value : clamp(s, v); s.value = n.value; apply(); });
+    });
+    const playBtn = q(".play");
+    const refreshPlay = () => { playBtn.textContent = !sim.running ? "▶ Play" : (sim.paused ? "▶ Resume" : "⏸ Pause"); };
+    sim.refreshPlayBtn = refreshPlay;
+    playBtn.addEventListener("click", () => {
+      if (!sim.running) { apply(); sim.play(); } else if (sim.paused) sim.resume(); else sim.pause();
+      refreshPlay();
+    });
+    q(".reset").addEventListener("click", () => { sim.reset(); refreshPlay(); });
+    const slo = q(".slomo"); slo.classList.toggle("on", sim.slomo);
+    slo.addEventListener("click", () => { sim.slomo = !sim.slomo; slo.classList.toggle("on", sim.slomo); });
+    const rt = q(".toggle-readout");
+    if (rt) rt.addEventListener("click", () => { sim.showReadout = !sim.showReadout; rt.classList.toggle("on", sim.showReadout); if (!sim.running) sim.render(); });
+    apply();
+    if (readonly) {
+      sim.c.style.pointerEvents = "none";
+      [playBtn, q(".reset"), slo, rt, rng.cd, rng.area, num.cd, num.area].concat(extraDisable || [])
+        .forEach(el => { if (el) el.disabled = true; });
+      const ctrls = q(".simctrls"); if (ctrls) ctrls.style.opacity = ".4";
+    }
+    let raf = null, prevRunning = sim.running;
+    sim.start = () => { if (raf) return; const loop = (now) => {
+      sim.step(now);
+      if (sim.running !== prevRunning) { prevRunning = sim.running; refreshPlay(); }
+      raf = requestAnimationFrame(loop);
+    }; raf = requestAnimationFrame(loop); };
+    sim.stop = () => { if (raf) { cancelAnimationFrame(raf); raf = null; } };
+    window.addEventListener("resize", () => { sim.resize(); sim.render(); });
+    return { rng, num };
+  }
+
+  // 1-D free fall with drag (Class K `sim-freefall`). Opens with C_d = 0 — the Class B ball — so the
+  // first slider push is the moment drag enters the course.
+  function mountProjectileDrag(section) {
+    if (!section.querySelector(".simcanvas")) section.insertAdjacentHTML("beforeend", DRAG_CONTROLS_HTML);
+    const d = section.dataset;
+    const sim = new Projectile(section.querySelector(".simcanvas"), {
+      v0: d.v0 !== undefined ? +d.v0 : 0,
+      mass: d.mass !== undefined ? +d.mass : 1,
+      g: d.g !== undefined ? +d.g : 9.8,
+      y0: d.y0 !== undefined ? +d.y0 : 5,
+      focusY: d.focus !== undefined ? +d.focus : undefined,
+      dragMode: true,
+      slomo: d.slomo !== "false"
+    });
+    const q = s => section.querySelector(s);
+    q(".s-cd").value = d.cd !== undefined ? +d.cd : 0;
+    q(".s-area").value = d.area !== undefined ? +d.area : 0.4;
+    const apply = () => {
+      const cd = +q(".s-cd").value, area = +q(".s-area").value;
+      sim.beta = betaOf(cd, area);
+      sim.area = area;                     // the disc reads this — see Projectile.radius
+      if (!sim.running) sim.render();
+    };
+    _wireDragSliders(section, sim, apply);
+    return sim;
+  }
+
+  // 2-D projectile with drag (Class K `sim-2d`). Speed and angle are LOCKED at the Class D record
+  // throw (40 m/s @ 45°) so the only thing that changes on screen is the drag.
+  function mountProjectile2DDrag(section) {
+    if (!section.querySelector(".simcanvas")) section.insertAdjacentHTML("beforeend", DRAG_CONTROLS_2D_HTML);
+    const d = section.dataset;
+    const speed = d.speed !== undefined ? +d.speed : 40;
+    const theta = (d.theta !== undefined ? +d.theta : 45) * Math.PI / 180;
+    const sim = new Projectile2D(section.querySelector(".simcanvas"), {
+      g: d.g !== undefined ? +d.g : 9.8,
+      mass: d.mass !== undefined ? +d.mass : 0.145,
+      frameW: d.framew !== undefined ? +d.framew : undefined,
+      lockVec: d.lock !== undefined,
+      dragMode: true,
+      slomo: d.slomo !== "false"
+    });
+    sim.u0 = speed * Math.cos(theta); sim.v0 = speed * Math.sin(theta);
+    const q = s => section.querySelector(s);
+    q(".s-cd").value = d.cd !== undefined ? +d.cd : 0;
+    q(".s-area").value = d.area !== undefined ? +d.area : 42;    // cm² — a real baseball
+    const apply = () => {
+      const cd = +q(".s-cd").value, area = +q(".s-area").value * 1e-4;    // cm² → m²
+      sim.beta = betaOf(cd, area);
+      sim.area = area;                     // the disc reads this — see Projectile2D.radius
+      if (!sim.running) { sim.landed = false; sim.render(); }
+    };
+    _wireDragSliders(section, sim, apply);
+    return sim;
+  }
+
+  window.Interactive = { Projectile, Projectile2D, HandLift, HandLiftEnergy, DeflectGame, Circular, Oscillator, SpringGame, Attractor2D, LauncherGame, PlatformBounce, FrictionRamp, mount, HOUSE, betaOf, dragStep, dragAdvance, histAt };
 })();

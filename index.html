@@ -8,7 +8,9 @@
 *{box-sizing:border-box}
 body{margin:0;padding:8vh 6vw;background:var(--bg);color:var(--ink);
      font-family:Inter,-apple-system,Segoe UI,Helvetica,Arial,sans-serif;line-height:1.5}
-h1{font-weight:600;font-size:clamp(1.6rem,4vw,2.4rem);margin:0 0 1.6em;max-width:46rem}
+h1{font-weight:600;font-size:clamp(1.6rem,4vw,2.4rem);margin:0 0 1.6em;line-height:1.25}
+/* the <br> in the heading is deliberate — the two halves are a course and a thing, and letting
+   them wrap on their own put the break in a different place at every window width. */
 ul{list-style:none;padding:0;margin:0;max-width:46rem}
 li{border-top:1px solid #23232a}
 li:last-child{border-bottom:1px solid #23232a}
@@ -17,10 +19,38 @@ a:hover{background:#0e0e13}
 .k{color:var(--accent);font-weight:600;min-width:5.5rem}
 </style></head>
 <body>
-  <h1>MAE 2501 · Applied Physics I · Lecture Slides</h1>
-  <ul>
-    <li><a href="class-a/"><span class="k">Class A</span><span>Force = Mass × Acceleration</span></a></li>
-    <li><a href="class-b/"><span class="k">Class B</span><span>Constant Force</span></a></li>
-    <li><a href="class-c/"><span class="k">Class C</span><span>Normal Force</span></a></li>
+  <h1>MAE 2501 · Applied Physics I<br>Lecture Slides</h1>
+  <ul id="classes">
+
   </ul>
+<script id="pending" type="text/plain">W3sicyI6ICJjbGFzcy01N2E0MDVjNWZmMDkvP3Y9MjY0NTA0MjYiLCAiayI6ICJDbGFzcyBDIiwgInQiOiAiTm9ybWFsIEZvcmNlIiwgInIiOiAxNzg4MzY0ODAwMDAwfSwgeyJzIjogImNsYXNzLTU5MTE5ZmFjMmQ0My8/dj04MzhmZjY1NCIsICJrIjogIkNsYXNzIEYiLCAidCI6ICJIYXJtb25pYyBNb3Rpb24iLCAiciI6IDE3ODk0MDE2MDAwMDB9LCB7InMiOiAiY2xhc3MtODJmZWYzMWQ2NzQxLz92PWViMWI4ZDdjIiwgImsiOiAiQ2xhc3MgQiIsICJ0IjogIkNvbnN0YW50IEZvcmNlIiwgInIiOiAxNzg4MTkyMDAwMDAwfSwgeyJzIjogImNsYXNzLWE4OTY5ZTQ3NmU4NS8/dj0xMTFjMWQxMCIsICJrIjogIkNsYXNzIEEiLCAidCI6ICJGb3JjZSA9IE1hc3MgXHUwMGQ3IEFjY2VsZXJhdGlvbiIsICJyIjogMTc4Nzc2MDAwMDAwMH1d</script>
+<script>
+(function(){
+  var raw = document.getElementById('pending').textContent.trim();
+  if (!raw) return;
+  var bin = atob(raw), u8 = new Uint8Array(bin.length);
+  for (var i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+  var pending = JSON.parse(new TextDecoder('utf-8').decode(u8));
+  var ul = document.getElementById('classes');
+  function paint(){
+    var now = Date.now(), added = false;
+    pending = pending.filter(function(c){
+      if (c.r > now) return true;
+      var li = document.createElement('li'), a = document.createElement('a');
+      a.href = c.s;
+      var k = document.createElement('span'); k.className = 'k'; k.textContent = c.k;
+      var t = document.createElement('span'); t.textContent = c.t;
+      a.appendChild(k); a.appendChild(t); li.appendChild(a); ul.appendChild(li);
+      added = true; return false;
+    });
+    // Appended rows land at the end, which is wrong the moment one opens while the tab is already
+    // showing others. Sorting on the key text ("Class A", "Class B", …) puts it where it belongs.
+    if (added) Array.prototype.slice.call(ul.children).sort(function(a, b){
+      return a.textContent.localeCompare(b.textContent, undefined, {numeric:true});
+    }).forEach(function(li){ ul.appendChild(li); });
+  }
+  paint();
+  if (pending.length) setInterval(paint, 15000);
+})();
+</script>
 </body></html>
