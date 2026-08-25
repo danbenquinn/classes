@@ -93,13 +93,13 @@
   <use href="#av-Z" x="1181.0" y="108.0" width="34.0" height="34.0"/>
 </g>
 <g id="bands">
-  <g filter="url(#cm-glow)"><rect x="109.6" y="145.0" width="78.6" height="22" rx="5" fill="#8fb032" fill-opacity="0.30" stroke="#8fb032" stroke-opacity="0.70"/><text x="149.0" y="160.0" fill="#8fb032" font-size="11" font-weight="600" text-anchor="middle">W0</text></g>
-  <g><rect x="198.9" y="145.0" width="78.6" height="22" rx="5" fill="#5d9ec7" fill-opacity="0.22" stroke="#5d9ec7" stroke-opacity="0.70"/><text x="238.2" y="160.0" fill="#a8cde6" font-size="11" font-weight="600" text-anchor="middle">W1</text></g>
-  <g><rect x="288.2" y="145.0" width="78.6" height="22" rx="5" fill="#5d9ec7" fill-opacity="0.22" stroke="#5d9ec7" stroke-opacity="0.70"/><text x="327.5" y="160.0" fill="#a8cde6" font-size="11" font-weight="600" text-anchor="middle">W2</text></g>
-  <g><rect x="600.7" y="145.0" width="78.6" height="22" rx="5" fill="#5d9ec7" fill-opacity="0.22" stroke="#5d9ec7" stroke-opacity="0.70"/><text x="640.0" y="160.0" fill="#a8cde6" font-size="11" font-weight="600" text-anchor="middle">W3</text></g>
-  <g><rect x="690.0" y="145.0" width="34.0" height="22" rx="5" fill="#5d9ec7" fill-opacity="0.22" stroke="#5d9ec7" stroke-opacity="0.70"/><text x="707.0" y="160.0" fill="#a8cde6" font-size="11" font-weight="600" text-anchor="middle">W4</text></g>
-  <g><rect x="913.2" y="145.0" width="78.6" height="22" rx="5" fill="#5d9ec7" fill-opacity="0.22" stroke="#5d9ec7" stroke-opacity="0.70"/><text x="952.5" y="160.0" fill="#a8cde6" font-size="11" font-weight="600" text-anchor="middle">W5</text></g>
-  <g><rect x="1002.4" y="145.0" width="78.6" height="22" rx="5" fill="#5d9ec7" fill-opacity="0.22" stroke="#5d9ec7" stroke-opacity="0.70"/><text x="1041.8" y="160.0" fill="#a8cde6" font-size="11" font-weight="600" text-anchor="middle">W6</text></g>
+  <g filter="url(#cm-glow)"><rect x="154.3" y="145.0" width="78.6" height="22" rx="5" fill="#8fb032" fill-opacity="0.30" stroke="#8fb032" stroke-opacity="0.70"/><text x="193.6" y="160.0" fill="#8fb032" font-size="11" font-weight="600" text-anchor="middle">W0</text></g>
+  <g><rect x="243.6" y="145.0" width="78.6" height="22" rx="5" fill="#5d9ec7" fill-opacity="0.22" stroke="#5d9ec7" stroke-opacity="0.70"/><text x="282.9" y="160.0" fill="#a8cde6" font-size="11" font-weight="600" text-anchor="middle">W1</text></g>
+  <g><rect x="332.8" y="145.0" width="78.6" height="22" rx="5" fill="#5d9ec7" fill-opacity="0.22" stroke="#5d9ec7" stroke-opacity="0.70"/><text x="372.2" y="160.0" fill="#a8cde6" font-size="11" font-weight="600" text-anchor="middle">W2</text></g>
+  <g><rect x="466.8" y="145.0" width="78.6" height="22" rx="5" fill="#5d9ec7" fill-opacity="0.22" stroke="#5d9ec7" stroke-opacity="0.70"/><text x="506.1" y="160.0" fill="#a8cde6" font-size="11" font-weight="600" text-anchor="middle">W3</text></g>
+  <g><rect x="645.3" y="145.0" width="78.6" height="22" rx="5" fill="#5d9ec7" fill-opacity="0.22" stroke="#5d9ec7" stroke-opacity="0.70"/><text x="684.6" y="160.0" fill="#a8cde6" font-size="11" font-weight="600" text-anchor="middle">W4</text></g>
+  <g><rect x="779.2" y="145.0" width="78.6" height="22" rx="5" fill="#5d9ec7" fill-opacity="0.22" stroke="#5d9ec7" stroke-opacity="0.70"/><text x="818.6" y="160.0" fill="#a8cde6" font-size="11" font-weight="600" text-anchor="middle">W5</text></g>
+  <g><rect x="957.8" y="145.0" width="78.6" height="22" rx="5" fill="#5d9ec7" fill-opacity="0.22" stroke="#5d9ec7" stroke-opacity="0.70"/><text x="997.1" y="160.0" fill="#a8cde6" font-size="11" font-weight="600" text-anchor="middle">W6</text></g>
 </g>
 <g id="exams" fill="#a8cde6" stroke="#a8cde6">
   <g><text x="416.8" y="73.0" font-size="12" text-anchor="middle" stroke="none">Midterm I</text><path d="M416.8 78.0 L416.8 104.0" stroke-width="2" stroke-linecap="round"/><path d="M416.8 117.0 L411.8 104.0 L421.8 104.0 Z" stroke="none"/></g>
