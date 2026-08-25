@@ -25,7 +25,7 @@
   .reveal .slides section#remote-qr{ top:0 !important; height:100%; text-align:left; }
   .remoteqr{ height:100%; display:grid;
              grid-template-columns:auto minmax(0, 1fr);
-             grid-template-rows:auto auto auto auto;
+             grid-template-rows:auto auto auto auto auto;
              column-gap:1.15em; row-gap:.3em; align-content:center; }
   .remoteqr .rq-code  { grid-column:1; grid-row:1 / -1; align-self:center;
                         background:#fff; padding:14px; border-radius:14px; line-height:0; }
@@ -52,6 +52,31 @@
   .remoteqr .rq-status a{ color:var(--accent); }
   .remoteqr .rq-status ol{ margin:.4em 0 0; padding-left:1.2em; }
   .remoteqr .rq-status li{ margin:.2em 0; }
+
+  /* Leftover-vote census — the second line on this slide, and the one that answers "did I remember to
+     reset?". Green when the deck is clean; amber (never red) when it is not, because leftover votes are
+     an untidy state you can fix in one click, not a broken backend. Same max-height/overflow guarantee
+     as .rq-status: whatever it lists, it scrolls inside its own box rather than growing the slide. */
+  /* max-height in EM, not %. A percentage on a grid item resolves against its grid area, and these
+     rows are `auto` — so the box sized itself against a track that was sizing itself against the box,
+     and Chrome settled it by clipping the panel mid-button. Font-relative is unambiguous and still
+     caps the panel at roughly ten lines, which is the guarantee that matters. */
+  .remoteqr .rq-votes{ grid-column:2; grid-row:5; max-height:10.5em; overflow:auto;
+                       font-size:.4em; line-height:1.45; margin:.3em 0 0;
+                       padding:.55em .8em; border-radius:8px; border:1px solid transparent; }
+  .remoteqr .rq-votes:empty{ display:none; }
+  .remoteqr .rq-votes.checking{ color:var(--muted); padding-left:0; }
+  .remoteqr .rq-votes.ok{ color:var(--spring); padding-left:0; }
+  .remoteqr .rq-votes.warn{ color:#e8eaed; background:rgba(225,156,36,.14); border-color:var(--mma-amber); }
+  .remoteqr .rq-votes.warn b{ color:var(--mma-amber); }
+  /* Its own line: inline after the sentence it kept landing on the wrap and getting clipped. */
+  .remoteqr .rq-votes .rq-clear{ font:inherit; font-size:.95em; display:block; margin:.5em 0 0; cursor:pointer;
+                                 color:var(--ink); background:transparent; border:1px solid var(--muted);
+                                 border-radius:6px; padding:.15em .6em; }
+  .remoteqr .rq-votes .rq-clear:hover{ border-color:var(--ink); }
+  .remoteqr .rq-votes .rq-clear.armed{ color:var(--mma-red); border-color:var(--mma-red);
+                                       background:rgba(235,98,53,.14); }
+  .remoteqr .rq-votes .rq-clear:disabled{ opacity:.6; cursor:default; }
 
   .divider .num{ color:var(--accent); font-size:3.2em; font-weight:700; line-height:1; }
   .divider .lbl{ font-size:1.5em; color:var(--ink); margin-top:.15em; }
@@ -250,6 +275,17 @@
   .poll.sealed .choice.correct .bar{ background:var(--ok); }
   .poll.sealed .choice.correct .txt{ color:var(--ok); font-weight:650; }
   .poll.sealed .choice.correct .key{ border-color:var(--ok); color:var(--ok); }
+  /* HOUSE RULE (2026-08-25): in a comprehension check the three palette colours carry meaning, and the
+     same grammar runs on the phone — blue is neutral, GREEN is the right answer, RED is a wrong one.
+     Before this the wrong bars stayed the neutral blue, which read as "no verdict yet" on the one slide
+     where the verdict is the whole point.
+     BARS ONLY, deliberately. The correct option keeps the only coloured label and key, so on a
+     four-choice question — where three of the four bars are about to go red — the eye still lands on
+     green first instead of on the tallest red thing in the room.
+     Survey polls are excluded: they carry data-answer="-1" because there is no right answer, so
+     :not(.correct) would be every choice and the slide would tell a room that voted honestly that all
+     of them were wrong. */
+  .poll.sealed:not([data-survey]) .choice:not(.correct) .bar{ background:var(--mma-red); }
   .pollmode{ position:absolute; left:3%; top:3%; z-index:8; font-size:.5em; letter-spacing:.12em;
              text-transform:uppercase; font-weight:650; display:flex; align-items:center; gap:.5em;
              color:var(--muted); padding:.35em .7em; border-radius:999px; background:rgba(255,255,255,.06);

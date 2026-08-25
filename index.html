@@ -20,10 +20,10 @@ a:hover{background:#0e0e13}
 </style></head>
 <body>
   <h1>MAE 2501 · Applied Physics I<br>Lecture Slides</h1>
-  <ul id="classes">
+  <ul id="items">
 
   </ul>
-<script id="pending" type="text/plain">W3sicyI6ICJjbGFzcy01N2E0MDVjNWZmMDkvP3Y9MjY0NTA0MjYiLCAiayI6ICJDbGFzcyBDIiwgInQiOiAiTm9ybWFsIEZvcmNlIiwgInIiOiAxNzg4MzY0ODAwMDAwfSwgeyJzIjogImNsYXNzLTU5MTE5ZmFjMmQ0My8/dj04MzhmZjY1NCIsICJrIjogIkNsYXNzIEYiLCAidCI6ICJIYXJtb25pYyBNb3Rpb24iLCAiciI6IDE3ODk0MDE2MDAwMDB9LCB7InMiOiAiY2xhc3MtODJmZWYzMWQ2NzQxLz92PWViMWI4ZDdjIiwgImsiOiAiQ2xhc3MgQiIsICJ0IjogIkNvbnN0YW50IEZvcmNlIiwgInIiOiAxNzg4MTkyMDAwMDAwfSwgeyJzIjogImNsYXNzLWE4OTY5ZTQ3NmU4NS8/dj0xMTFjMWQxMCIsICJrIjogIkNsYXNzIEEiLCAidCI6ICJGb3JjZSA9IE1hc3MgXHUwMGQ3IEFjY2VsZXJhdGlvbiIsICJyIjogMTc4Nzc2MDAwMDAwMH1d</script>
+<script id="pending" type="text/plain">W3sicyI6ICJjbGFzcy01N2E0MDVjNWZmMDkvP3Y9MjY0NTA0MjYiLCAiayI6ICJDbGFzcyBDIiwgInQiOiAiTm9ybWFsIEZvcmNlIiwgInIiOiAxNzg4MzY0ODAwMDAwfSwgeyJzIjogImNsYXNzLTU5MTE5ZmFjMmQ0My8/dj04MzhmZjY1NCIsICJrIjogIkNsYXNzIEYiLCAidCI6ICJIYXJtb25pYyBNb3Rpb24iLCAiciI6IDE3ODkxNDI0MDAwMDB9LCB7InMiOiAiY2xhc3MtODJmZWYzMWQ2NzQxLz92PWViMWI4ZDdjIiwgImsiOiAiQ2xhc3MgQiIsICJ0IjogIkNvbnN0YW50IEZvcmNlIiwgInIiOiAxNzg3OTMyODAwMDAwfSwgeyJzIjogImNsYXNzLWE4OTY5ZTQ3NmU4NS8/dj03YTZmY2RkNiIsICJrIjogIkNsYXNzIEEiLCAidCI6ICJGb3JjZSA9IE1hc3MgXHUwMGQ3IEFjY2VsZXJhdGlvbiIsICJyIjogMTc4Nzc2MDAwMDAwMH1d</script>
 <script>
 (function(){
   var raw = document.getElementById('pending').textContent.trim();
@@ -31,7 +31,7 @@ a:hover{background:#0e0e13}
   var bin = atob(raw), u8 = new Uint8Array(bin.length);
   for (var i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
   var pending = JSON.parse(new TextDecoder('utf-8').decode(u8));
-  var ul = document.getElementById('classes');
+  var ul = document.getElementById('items');
   function paint(){
     var now = Date.now(), added = false;
     pending = pending.filter(function(c){

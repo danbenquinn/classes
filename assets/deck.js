@@ -767,6 +767,25 @@
     document.querySelectorAll('[data-loopseq]').forEach(s => { s._seqIdx = 0; });   // re-arm the sequence at cut 0
   }
 
+  // ---------- Slide queries must be SCOPED (2026-08-25) ----------
+  // reveal.js builds a parallel `.backgrounds` tree and copies each section's ENTIRE class list onto its
+  // background div. So `document.querySelectorAll('.poll')` returns SIX elements for a three-poll deck,
+  // and the three impostors are divs carrying no data- attributes at all.
+  //
+  // This is not cosmetic — it is what emptied the prize wheel. `loadWinners` built its id list from
+  // `.poll:not([data-survey])`, which matched the background clones too, so it sent
+  // `['classC-q1','classC-q2', null, null, null]` to get_winners. That function ANDs across the list;
+  // nobody can be correct on a null, so the pool came back empty every single time, for everybody.
+  // (Restricting the wheel to `.sealed` polls hid this for a while, because reveal stamps a background's
+  // className when it CREATES it and `sealed` is added later — an accident, and one `Reveal.sync()`
+  // would have undone.) The census added the same day hit the same rocks more loudly, asking PostgREST
+  // for `get_tally` with no parameters at all.
+  //
+  // Scoping to `.slides` excludes the backgrounds by construction, which beats adding `[data-poll]` at
+  // each call site and trusting the next call site to remember.
+  const slidesRoot = () => document.querySelector('.reveal .slides');
+  function slideAll(sel){ const r = slidesRoot(); return r ? [...r.querySelectorAll(sel)] : []; }
+
   // ---------- Comprehension-check poll ----------
   // Live votes come from Supabase when configured; otherwise the deck falls back to SIMULATED
   // votes so it still demos. Paste the SAME values you put in poll/vote.html:
@@ -811,9 +830,20 @@
     const scan = sec.querySelector('.scan');
     if(scan) scan.textContent = 'Voting closed · ' + total + ' response' + (total===1?'':'s');
   }
+  // The index the PHONES are allowed to know, and only once the question is sealed. Survey polls
+  // (data-survey, data-answer="-1") have no right answer, so they publish null and no phone lights up.
+  // Deliberately stricter than the `|| '0'` fallback renderBars uses: a slide that forgot data-answer
+  // should colour nothing on 400 phones, not colour choice A.
+  function publishedAnswer(sec){
+    if(sec.hasAttribute('data-survey')) return null;
+    const n = parseInt(sec.dataset.answer ?? '', 10);
+    return Number.isInteger(n) && n >= 0 ? n : null;
+  }
+
   async function sealPoll(sec){
     if(sec.classList.contains('sealing') || sec.classList.contains('sealed')) return;
     sec.classList.add('sealing');
+    stopLiveCount();                     // the label is renderBars' from here on
     const choices = [...sec.querySelectorAll('.choice')];
     const correct = parseInt(sec.dataset.answer || '0', 10);
     let counts = Array(choices.length).fill(0);
@@ -828,10 +858,15 @@
     }
     renderBars(sec, choices, counts, correct);
     sec.classList.remove('sealing'); sec.classList.add('sealed');
-    if(POLL_LIVE) supaClient.rpc('set_state', { p_class:CLASS_ID, p_poll:sec.dataset.poll, p_open:false, p_secret:DECK_SECRET }).catch(()=>{});
+    // Sealing is the reveal: the bars appear here and the answer goes out in the same breath, so the
+    // phone lights up its owner's choice at the moment the projector names the winner. Through the same
+    // queue as announcePoll — this write and a slide change are the two that used to race each other,
+    // and a seal that lands after the next slide's announce closes voting on the wrong question.
+    if(POLL_LIVE) pushState(() => ({ p_class:CLASS_ID, p_poll:sec.dataset.poll, p_open:false,
+                                     p_answer:publishedAnswer(sec), p_secret:DECK_SECRET }));
   }
   Reveal.on('ready', () => {
-    try { if(window.QRCode) document.querySelectorAll('.poll').forEach(p =>
+    try { if(window.QRCode) slideAll('section.poll').forEach(p =>
       new QRCode(p.querySelector('.qrimg'), { text:p.dataset.url, width:300, height:300, correctLevel:QRCode.CorrectLevel.M })); }
     catch(e){ console.warn('QR render failed', e); }
     try { const el = document.querySelector('#remote-qr .rq-code');   // presenter-remote QR
@@ -857,6 +892,28 @@
     if(!el){ el = document.createElement('div'); el.className = 'rq-status'; host.appendChild(el); }
     return el;
   }
+  // The health check probes `get_state`, which is granted to anon and needs no secret — but that makes
+  // it blind to exactly one failure, and it is the one 2026-08-25 introduced: a project still running the
+  // PREVIOUS schema answers get_state perfectly (that function's arguments never moved) while the deck's
+  // five-argument `set_state` resolves to nothing. Green banner, working votes, phones that never light
+  // up. So `announcePoll` reports that case itself, and this flag makes its verdict STICKY — the probe
+  // and the announce both fire on 'ready' and resolve in whichever order the network decides, so without
+  // it a slow green would paint over the red about half the time.
+  let schemaStale = false;
+  function reportSchemaStale(detail){
+    schemaStale = true;
+    const el = rqStatus();
+    if(!el) return;
+    el.className = 'rq-status fail';
+    el.innerHTML = '<b>The database is running the older schema.</b> Votes and the phone remote work, but' +
+      ' the phones will not colour anyone\'s answer at the reveal.' +
+      '<ol><li>Open the <a href="' + DASHBOARD + '" target="_blank" rel="noopener">Supabase dashboard</a>' +
+      ' → <b>SQL Editor</b> and re-run <b>poll/supabase-setup.sql</b> in full.</li>' +
+      '<li>Reload this deck — the check runs again on open.</li></ol>' +
+      '<div style="opacity:.65;margin-top:.35em">' + detail + '</div>';
+    console.warn('poll backend SCHEMA STALE —', detail);
+  }
+
   function checkBackend(){
     const el = rqStatus();
     if(!el) return;
@@ -908,6 +965,7 @@
       .then(({ error }) => {
         if(settled) return; settled = true; clearTimeout(t);
         if(!error){
+          if(schemaStale) return;              // announcePoll already found the real problem — leave it up
           el.className = 'rq-status ok';
           el.innerHTML = 'Poll backend reachable · live polls and phone remote should work.';
           return;
@@ -928,6 +986,74 @@
         fail('paused', 'The poll backend is unreachable.',
              'Most likely the project has auto-paused. (' + (e.message || e.name) + ')'); });
   }
+  // ---------- Leftover-vote census, reported ON THE QR SLIDE ----------
+  // The problem this solves is a scheduling one, not a technical one. Votes survive between runs of a
+  // deck (deliberately — a mid-class reload must not lose the room's answers), and start_session only
+  // wipes them after a two-hour gap. So a deck rehearsed an hour before class walks in carrying its own
+  // test votes, which land in the bars and in the prize-wheel pool. There was no way to check without
+  // visiting each poll slide, and you cannot walk to a later poll without sealing the earlier ones on
+  // the way — checking the thing destroyed the thing. This says it on the slide you already look at.
+  function rqVotes(){
+    const host = document.querySelector('#remote-qr .remoteqr');
+    if(!host) return null;
+    let el = host.querySelector('.rq-votes');
+    if(!el){ el = document.createElement('div'); el.className = 'rq-votes'; host.appendChild(el); }
+    return el;
+  }
+  let censusBusy = false;
+  async function voteCensus(){
+    const el = rqVotes();
+    if(!el || !POLL_LIVE || censusBusy) return;
+    const polls = slideAll('section.poll')                       // surveys included: a stray vote is a stray vote
+                    .filter(p => { if(p.dataset.poll) return true;
+                                   console.warn('WHEEL/CENSUS: poll slide with no data-poll —', p.id); return false; });
+    if(!polls.length){ el.textContent = ''; el.className = 'rq-votes'; return; }
+    censusBusy = true;
+    el.className = 'rq-votes checking'; el.textContent = 'Checking for leftover votes…';
+    try{
+      await initSession();                                       // never count what the auto-reset is deleting
+      const rs = await Promise.all(polls.map(p => supaClient.rpc('get_tally', { p_poll: p.dataset.poll })));
+      const dirty = [];
+      rs.forEach((r, i) => {
+        if(r.error) throw r.error;
+        const n = (r.data || []).reduce((a, b) => a + Number(b.votes), 0);
+        if(n) dirty.push({ sec: polls[i], pid: polls[i].dataset.poll, n });
+      });
+      if(!dirty.length){
+        el.className = 'rq-votes ok';
+        el.textContent = 'No votes on file — all ' + polls.length + ' question' +
+                         (polls.length === 1 ? '' : 's') + ' in this deck start clean.';
+      } else {
+        el.className = 'rq-votes warn';
+        el.innerHTML = '<b>Leftover votes from an earlier run:</b> ' +
+          dirty.map(d => d.pid + ' (' + d.n + ')').join(', ') +
+          '. They will show in the bars and count toward the prize wheel.' +
+          ' <button class="rq-clear">Clear them</button>';
+        // Clearing from HERE is the point: reaching those slides by hand means advancing through them,
+        // and advancing through a poll seals it. Two-click, same as the on-slide reset.
+        const btn = el.querySelector('.rq-clear');
+        let armed = false, t = null;
+        btn.addEventListener('click', async () => {
+          if(!armed){ armed = true; btn.classList.add('armed'); btn.textContent = 'Wipes all — click again';
+                      t = setTimeout(() => { armed = false; btn.classList.remove('armed'); btn.textContent = 'Clear them'; }, 3000); return; }
+          clearTimeout(t); btn.disabled = true; btn.textContent = 'Clearing…';
+          // resetQuestion also re-arms the slide itself (drops .sealed, zeroes the bars), so a deck you
+          // rehearsed on comes back to a genuinely fresh state and not just an empty database.
+          for(const d of dirty) await resetQuestion(d.sec);
+          await announcePoll();          // reset_question left poll_state pointing at the last one wiped
+          censusBusy = false; voteCensus();
+        });
+      }
+    }catch(e){
+      el.className = 'rq-votes warn';
+      el.textContent = 'Could not check for leftover votes — ' + (e.message || e);
+    }
+    censusBusy = false;
+  }
+  // On open, and again every time you come back to this slide, so the check reflects what you just did.
+  Reveal.on('ready', voteCensus);
+  Reveal.on('slidechanged', () => { if(Reveal.getCurrentSlide()?.id === 'remote-qr') voteCensus(); });
+
   // ONE Live/demo badge, MOVED into whichever poll/wheel slide is current. A DOM node can only be in
   // one place, so there's never a duplicate; living in the slide content, it migrates as you resize.
   const modeBadge = document.createElement('div');
@@ -953,7 +1079,50 @@
     sec.querySelectorAll('.choice').forEach(c => { c.classList.remove('correct');
       c.querySelector('.bar').style.height = '0'; c.querySelector('.pct').textContent = ''; });
     const scan = sec.querySelector('.scan'); if(scan) scan.textContent = 'Scan to vote';
+    startLiveCount();                    // question is open again — resume the running count
   }
+
+  // ---------- Live vote count on the QR card ----------
+  // The gauge for the only question you actually ask yourself on a poll slide: has the room finished?
+  // Until now the count appeared only in renderBars — i.e. AFTER sealing — which is exactly one moment
+  // too late to inform the decision to seal. So while a poll is open and on screen, the deck tallies it
+  // every 3 s and writes the number beside "Scan to vote".
+  //
+  // One request per 3 s from ONE laptop, and only while a poll slide is up: next to 400 phones polling
+  // get_state every 2.5 s this is not a load consideration. It is also read-only — get_tally returns
+  // counts and never computing ids, so nothing here can see who voted for what.
+  let liveCountTimer = null, liveCountFor = null;
+  function stopLiveCount(){
+    if(liveCountTimer){ clearInterval(liveCountTimer); liveCountTimer = null; }
+    liveCountFor = null;
+  }
+  async function tickLiveCount(){
+    const sec = Reveal.getCurrentSlide();
+    if(!sec || !sec.classList.contains('poll') || sec.classList.contains('sealed')){ stopLiveCount(); return; }
+    const scan = sec.querySelector('.scan');
+    if(!scan || !sec.dataset.poll) return;
+    try{
+      const { data, error } = await supaClient.rpc('get_tally', { p_poll: sec.dataset.poll });
+      if(error) throw error;
+      const n = (data || []).reduce((a, b) => a + Number(b.votes), 0);
+      // Re-check: a request in flight when you press → would otherwise land on top of the sealed label
+      // and quietly change "Voting closed · 24 responses" back into an invitation to vote.
+      if(sec.classList.contains('sealed') || sec.classList.contains('sealing')) return;
+      scan.innerHTML = 'Scan to vote · <b>' + n + '</b> voted';
+    }catch(e){ /* leave the label as it stands; a blip should not blank the QR caption */ }
+  }
+  function startLiveCount(){
+    if(!POLL_LIVE) return;
+    const sec = Reveal.getCurrentSlide();
+    if(!sec || !sec.classList.contains('poll') || sec.classList.contains('sealed')){ stopLiveCount(); return; }
+    if(liveCountTimer && liveCountFor === sec.dataset.poll) return;      // already counting this one
+    stopLiveCount();
+    liveCountFor = sec.dataset.poll;
+    tickLiveCount();
+    liveCountTimer = setInterval(tickLiveCount, 3000);
+  }
+  Reveal.on('ready', startLiveCount);
+  Reveal.on('slidechanged', startLiveCount);
   // ONE Reset-votes button (live only), MOVED into the current poll slide — same single-node trick as the
   // badge. One-per-section leaked the adjacent poll's button onto the current slide; a single node can't.
   let resetBtn = null, resetArmed = false, resetTimer = null;
@@ -1178,50 +1347,109 @@
   // ---------- Single-QR follow-along: tell the student pages which question is live ----------
   // Fresh-start check: wipes this class's votes only if it's been idle a while (a new session),
   // so reopening the deck mid-class keeps votes. Runs once, before the first set_state.
-  let sessionStarted = false;
-  async function initSession(){
-    if(sessionStarted) return; sessionStarted = true;
+  // Memoized PROMISE, not a boolean. A second caller has to wait for the wipe to actually finish, not
+  // just observe that somebody started one: the leftover-vote census below runs on the same 'ready' tick
+  // and would otherwise count votes that start_session is in the middle of deleting, and report a dirty
+  // deck every single time the two-hour auto-reset fires.
+  let sessionPromise = null;
+  function initSession(){
+    if(sessionPromise) return sessionPromise;
     // try/catch, not just the error field: when the project is unreachable the RPC *rejects* rather
     // than resolving with an error, and an unhandled rejection here buries the QR slide's diagnosis
     // under a stack trace — right when that diagnosis is the thing you need to read.
-    try{
-      const { data, error } = await supaClient.rpc('start_session', { p_class:CLASS_ID, p_secret:DECK_SECRET });
-      if(error) console.warn('POLL start_session failed →', error.message || error, '(re-run supabase-setup.sql?)');
-      else if(data) console.log('POLL new session — votes reset for', CLASS_ID);
-    }catch(e){ console.warn('POLL start_session unreachable →', e.message || e); }
+    sessionPromise = (async () => {
+      try{
+        const { data, error } = await supaClient.rpc('start_session', { p_class:CLASS_ID, p_secret:DECK_SECRET });
+        if(error) console.warn('POLL start_session failed →', error.message || error, '(re-run supabase-setup.sql?)');
+        else if(data) console.log('POLL new session — votes reset for', CLASS_ID);
+      }catch(e){ console.warn('POLL start_session unreachable →', e.message || e); }
+    })();
+    return sessionPromise;
   }
+  // WHY THIS QUEUE EXISTS (2026-08-25). `set_state` is written from two places — sealing a poll and
+  // landing on a slide — and both used to fire straight at the network with no ordering. Two writes in
+  // flight at once can land in either order, so a fast → → or a seal-then-advance could leave
+  // poll_state describing the slide you just LEFT. Nothing errors; the deck is on the right slide and
+  // the room's phones are one question behind, until some later write happens to land last and they
+  // all snap forward at once. That is exactly the "press prev then next and it catches up" symptom:
+  // prev/next is not pinging the phones, it is issuing more writes until one of them lands last.
+  //
+  // So: one chain, never concurrent, and a sequence number so a write that was superseded while it sat
+  // in the queue is dropped instead of sent. The newest intent is the only one that was ever true.
+  let stateSeq = 0, stateChain = Promise.resolve();
+  function pushState(build){
+    const mine = ++stateSeq;
+    stateChain = stateChain.then(async () => {
+      if(mine !== stateSeq) return;          // a newer slide/seal already superseded this one
+      try{
+        const { error } = await supaClient.rpc('set_state', build());
+        if(error && (error.code || '') === 'PGRST202')
+          reportSchemaStale('set_state(p_class, p_poll, p_open, p_answer, p_secret) not found — the ' +
+                            'four-argument version is still installed. ' + (error.message || ''));
+        else if(error) console.warn('POLL set_state failed →', error.message || error, '(re-run supabase-setup.sql?)');
+      }catch(e){ console.warn('POLL set_state unreachable →', e.message || e); }
+    });
+    return stateChain;
+  }
+
   async function announcePoll(){
     if(!POLL_LIVE) return;
     await initSession();
     const cur = Reveal.getCurrentSlide();
     const onPoll = cur && cur.classList.contains('poll');
     try{
-      const { error } = await supaClient.rpc('set_state', {
+      // p_answer is null unless this slide is ALREADY sealed — walking back onto a revealed question
+      // re-lights the phones, and walking onto a fresh one clears them. Null while open is what keeps
+      // the key off the wire before it is Daniel's to give away.
+      const sealed = onPoll && cur.classList.contains('sealed');
+      if(onPoll) console.log('POLL announcing', cur.dataset.poll, 'open=' + !sealed,
+                             sealed ? 'answer=' + publishedAnswer(cur) : '');
+      await pushState(() => ({
         p_class: CLASS_ID,
         p_poll:  onPoll ? cur.dataset.poll : null,
-        p_open:  onPoll ? !cur.classList.contains('sealed') : false,
+        p_open:  onPoll ? !sealed : false,
+        p_answer: sealed ? publishedAnswer(cur) : null,
         p_secret: DECK_SECRET
-      });
-      if(error) console.warn('POLL set_state failed →', error.message || error, '(re-run supabase-setup.sql?)');
-      else if(onPoll) console.log('POLL announced', cur.dataset.poll, 'open=' + !cur.classList.contains('sealed'));
-    }catch(e){ console.warn('POLL set_state unreachable →', e.message || e); }
+      }));
+    }catch(e){ console.warn('POLL announce failed →', e.message || e); }
   }
   Reveal.on('ready', announcePoll);
   Reveal.on('slidechanged', announcePoll);
 
   // ---------- Prize wheel (perfect scorers) ----------
+  // `.poll.sealed`, not `.poll` — and this is the bug that ate a two-phone test on 2026-08-25.
+  // get_winners is an AND across every id you hand it: a student has to be right on all of them.
+  // Handing it every poll in the DECK means a poll you have not reached yet, or skipped, or reset,
+  // is an id with no matching vote for anybody — so the AND can never be satisfied and the pool comes
+  // back empty for the whole room, however well they did on the questions you actually asked. The
+  // setup doc always described this as "everyone correct on every question SO FAR"; `sealed` is what
+  // "so far" actually means, since a poll is sealed exactly when you close it and reveal the answer.
+  // It also makes a mid-deck wheel (Class C's sits at slide 12, with a survey still to come) legitimate
+  // rather than accidentally unwinnable.
+  //
+  // Returns {ids, asked} so the caller can tell the three empty-pool states apart — nothing sealed yet,
+  // the backend refused, and nobody ran the table — which for a year all printed the same sentence.
   async function loadWinners(){
-    const polls = [...document.querySelectorAll('.poll:not([data-survey])')];   // survey polls have no right answer
+    const polls = slideAll('section.poll.sealed:not([data-survey])')   // survey polls have no right answer
+                    .filter(p => p.dataset.poll && Number.isInteger(+p.dataset.answer));
     const ids = polls.map(p => p.dataset.poll), correct = polls.map(p => +p.dataset.answer);
-    if(POLL_LIVE){
-      try{
-        const { data, error } = await supaClient.rpc('get_winners',
-          { p_class:CLASS_ID, p_polls:ids, p_correct:correct, p_secret:DECK_SECRET });
-        if(error) throw error;
-        return (data || []).map(r => r.computing_id);
-      }catch(e){ console.warn('get_winners failed', e); return []; }
-    }
-    return ["abc1de","kml7py","qrs9tt","zub4xq","dhw2ne","tpv6la","enq8rk"];  // demo pool
+    if(!POLL_LIVE)
+      return { ids:["abc1de","kml7py","qrs9tt","zub4xq","dhw2ne","tpv6la","enq8rk"], asked:ids.length };  // demo pool
+    if(!ids.length) return { ids:[], asked:0 };
+    try{
+      const { data, error } = await supaClient.rpc('get_winners',
+        { p_class:CLASS_ID, p_polls:ids, p_correct:correct, p_secret:DECK_SECRET });
+      if(error) throw error;
+      const won = (data || []).map(r => r.computing_id);
+      // An empty pool is legitimate, but it is also what every wiring fault looks like. When it happens,
+      // print the per-question tallies — get_tally is anon and cheap — so the console says whether the
+      // votes are even there. Chasing this by hand is what cost an evening.
+      if(!won.length) Promise.all(ids.map(id => supaClient.rpc('get_tally', { p_poll:id })))
+        .then(rs => console.log('WHEEL empty pool · sealed polls and their tallies:',
+          ids.map((id,i) => ({ poll:id, correct:correct[i], votes:(rs[i].data||[]) }))))
+        .catch(()=>{});
+      return { ids:won, asked:ids.length };
+    }catch(e){ console.warn('get_winners failed', e); return { ids:[], asked:ids.length, error:e }; }
   }
 
   // TWO reels, one Spin. Left = who won (perfect scorers); right = what they win. The prize reel is
@@ -1309,9 +1537,15 @@
     async function load(){
       winnerEl.innerHTML = '&nbsp;'; countEl.textContent = 'loading…'; spinBtn.disabled = true;
       buildPrizeStrip();
-      ids = await loadWinners();
+      const res = await loadWinners();
+      ids = res.ids;
       strip.innerHTML = '';
-      if(!ids.length){ countEl.textContent = 'no perfect scores yet'; return; }
+      if(!ids.length){
+        countEl.textContent = res.error ? 'backend error — see console'
+                            : !res.asked ? 'no questions sealed yet'
+                                         : 'no perfect scores yet';
+        return;
+      }
       // Deliberately silent on a normal load — the pool size is instructor bookkeeping, not something
       // the room needs on the projector. The slot is kept for the two states that DO need explaining:
       // "loading…", and "no perfect scores yet" (which is why Spin is greyed out).
@@ -1373,15 +1607,22 @@
     }
     loadBtn.addEventListener('click', load);
     spinBtn.addEventListener('click', spin);
+    section._wheelReload = load;      // re-entering the slide refreshes the pool; see mountWheelIfCurrent
     load();
   }
   // 'ready' as well as 'slidechanged': hash:true means a reload can land straight ON the wheel slide,
   // which fires no slidechanged — without this the reels never mount and the slide sits empty.
   Reveal.on('ready', mountWheelIfCurrent);
   Reveal.on('slidechanged', mountWheelIfCurrent);
+  // Mount once, but RELOAD every time you come back. The reels only need building once; the pool does
+  // not, and the mount-once guard used to cover both — so a wheel you glanced at before the polls kept
+  // showing that first, empty answer for the rest of the class no matter who voted afterwards, and the
+  // only way out was the ↻ Reload button you had no reason to think you needed.
   function mountWheelIfCurrent(){
     const cur = Reveal.getCurrentSlide();
-    if(cur && cur.classList.contains('wheel') && !cur._wheel){ cur._wheel = true; mountWheel(cur); }
+    if(!cur || !cur.classList.contains('wheel')) return;
+    if(!cur._wheel){ cur._wheel = true; mountWheel(cur); }
+    else if(cur._wheelReload) cur._wheelReload();
   }
 
   // ---------- Esc-overview thumbnails (local, no hosting) ----------
