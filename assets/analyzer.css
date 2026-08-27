@@ -44,6 +44,10 @@
   #barslot:empty{display:none;}
   select,input[type=number]{font:inherit;font-size:var(--fs-ui);padding:4px 7px;border:1px solid var(--line);border-radius:6px;background:var(--raised);color:var(--ink);}
   input[type=number]{width:66px;}
+  /* a step with `requireAxis:` locks the Signal select (see applyAxisLock). Reads as settled rather
+     than broken: dimmed text, no cursor change, border unchanged — the browser's default disabled
+     grey on a dark panel looks like a bug. */
+  select:disabled{color:var(--muted);opacity:1;cursor:default;}
   .tools{display:flex;border:1px solid var(--line);border-radius:7px;overflow:hidden;}
   .tools button{font:inherit;font-size:var(--fs-ui);padding:6px 13px;border:0;border-right:1px solid var(--line);background:var(--raised);color:var(--ink);cursor:pointer;}
   .tools button:last-child{border-right:0;}

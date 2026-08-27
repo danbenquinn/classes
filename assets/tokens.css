@@ -89,4 +89,7 @@
   --stack-graph-h: 0.26;
   --stack-bottom-pct: 6.0;
   --stack-gap-pct: 1.4;
+  --tint-spread: 0.62;
+  --tint-wide: 0.88;
+  --tint-to: #101015;
 }

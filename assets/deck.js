@@ -222,8 +222,24 @@
     //               Size an overlay to all four and its own coordinates become video coordinates.
     const padPx = Math.max(8, Math.round(mrect.w*0.025));
     const root = document.documentElement;
-    layer.style.setProperty('--mrect-l', (mrect.x + padPx) + 'px');
-    root.style.setProperty('--mrect-l', (mrect.x + padPx) + 'px');
+    // `--mrect-l` EXISTS TO LINE AN OVERLAY UP WITH THE @handle BADGE — that is the whole argument for
+    // measuring off the media instead of off the screen (DESIGN.md, "Exit-quiz finale"). So where the
+    // slide carries NO badge there is nothing to line up with, and the exit-quiz notice takes the
+    // screen margin like any other corner element.
+    //
+    // Without this it lands wherever the picture happens to start, which for a CENTERED `data-native`
+    // image is a long way in from the edge. Class B's asteroid finale is the case that surfaced it and
+    // the only native finale in the course — 15 classes, and the other 14 are full-frame clips whose
+    // media rect starts at x≈0, so the bug was invisible in every one of them. Daniel: "the exit quiz
+    // title got off somehow; it's supposed to be on the far left like others."
+    //
+    // `placeCover` already reasons this way from the other direction — it pins mrect to the screen
+    // because "the media IS the screen". Same principle: match the badge when there is one, match the
+    // frame when there is not.
+    const hasBadge = attrib && attrib.style.display !== 'none';
+    const mrectL = hasBadge ? (mrect.x + padPx) : Math.round(layer.clientWidth * 0.03);
+    layer.style.setProperty('--mrect-l', mrectL + 'px');
+    root.style.setProperty('--mrect-l', mrectL + 'px');
     root.style.setProperty('--mrect-t', mrect.y + 'px');
     try{
       const sc = (Reveal.getScale && Reveal.getScale()) || 1;
@@ -249,7 +265,13 @@
       startCamera();
       return;
     }
-    if(!cur.classList.contains('vid')){ layer.style.display='none'; player.pause(); activeVideo = false; hideAttrib(); return; }
+    // A slide with no media of its own is the best possible moment to decode the next slide's clip:
+    // the buffer is certainly free and nothing is competing for it. Without this line the staging only
+    // ever happened while a video was already up, so the FIRST video after a board or a title still
+    // mounted the old way and still flashed black — the fix would have covered a run of clips and
+    // missed every entry into one.
+    if(!cur.classList.contains('vid')){ layer.style.display='none'; player.pause(); activeVideo = false;
+      hideAttrib(); stageNextClip(cur); return; }
     layer.style.display = 'block';
     const d = cur.dataset;
     if(d.stack){ configureStack(cur); return; }     // synced/tiled video stack — its own path
@@ -312,30 +334,67 @@
     } else if(frameMatch && crossFadeTo(media, d, matchAt, cur)){  // handled by the cross-fade path
       return;                                         // crossFadeTo owns the swap AND re-stages the buffer
     } else {                                          // video clip
-      activeVideo = true; still.style.display = 'none'; player.style.display = 'block';
-      // Hard-reset the buffer. A cross-fade leaves its outgoing element visible (display:block,
-      // z-index 1, opacity animating) and only hides it on a FADE_MS+60 timeout. Advance off the last
-      // frame-matched slide faster than that and the timeout is still pending when the next clip
-      // mounts — so the old element is still stacked over the new one, showing a frozen frame from the
-      // previous animation. Only reached when we are NOT cross-fading, so the buffer is free.
-      playerB.pause(); playerB.style.display = 'none';
-      playerB.style.opacity = 1; playerB.style.zIndex = ''; playerB.style.transition = '';
-      if(resolveSrc(media) !== player.src){
-        player.style.visibility = 'hidden';           // hide until contain() places it — kills the first-load phantom flash
-        player.src = media; player.load();
-        // SELF-CLEARING on purpose. A handler left attached here is a live grenade: this element can
-        // later become the hidden buffer, and preloadInto()'s load() would fire this stale closure,
-        // which calls startPlayback() -> currentTime = 0 on whatever is playing NOW. That is what made
-        // a frame-matched clip restart abruptly a beat after its cross-fade finished.
-        player.onloadeddata = function(){ this.onloadeddata = null; layoutActive(); startPlayback(this); };
-      } else { startPlayback(player); layoutActive(); }
+      activeVideo = true; still.style.display = 'none';
+      // ---- THE BUFFER FIRST: no cut to black between two video slides (2026-08-26) --------------
+      // Advancing from one video slide to the next used to be: hide the visible element, point it at
+      // the new file, load(), and wait for `loadeddata` to make it visible again. The element is
+      // hidden for the whole of that wait, and what the room sees behind it is the black media layer.
+      // Daniel: "a small black blip between videos ... a little jarring." Class B's juggling run is
+      // three clips in a row so it happens three times in ten seconds, but nothing about it was
+      // specific to Class B — every video->video advance in every deck did it.
+      //
+      // The machinery to avoid it was already here, pointed at two special cases only:
+      // `showPlaylistClip` swaps in a pre-decoded buffer for the next cut WITHIN a slide, and the
+      // frame-match staging decoded the next slide's clip when that slide asked for a cross-fade. So
+      // the fix is to stage the next slide's clip ALWAYS (`stageNextClip`) and to take the same swap
+      // here: playerB is already holding frame 0 of this exact file, so making it the visible element
+      // is one assignment, with nothing to wait for and no gap to show black through.
+      //
+      // Deliberately a HARD CUT, not a fade. `data-framematch` is this deck's fade and it means
+      // something specific — same scene, one more element drawn. A fade on every advance would blur
+      // that distinction and slow a run of unrelated clips down. What was asked for was the black
+      // taken out, not a transition put in.
+      const staged = resolveSrc(playerB.src) === resolveSrc(media) && playerB.readyState >= 2
+                     && resolveSrc(media) !== player.src;
+      if(staged){
+        swapPlayers();                        // playerB (decoded, at frame 0) becomes the visible player
+        // The per-clip wiring above was applied to the element that WAS `player`. Re-apply it to the
+        // one that is now, or a muted warm-up hands its volume to the wrong <video>.
+        player.loop = d.loop !== undefined;
+        player.volume = vol; player.muted = (d.mute !== undefined) || vol === 0;
+        player._swapped = false;
+        player.style.opacity = 1; player.style.zIndex = ''; player.style.transition = '';
+        playerB.style.opacity = 1; playerB.style.zIndex = ''; playerB.style.transition = '';
+        layoutActive();                       // sizes the new player AND sets it visible
+        startPlayback(player);
+      } else {
+        player.style.display = 'block';
+        // Hard-reset the buffer. A cross-fade leaves its outgoing element visible (display:block,
+        // z-index 1, opacity animating) and only hides it on a FADE_MS+60 timeout. Advance off the
+        // last frame-matched slide faster than that and the timeout is still pending when the next
+        // clip mounts — so the old element is still stacked over the new one, showing a frozen frame
+        // from the previous animation. Only reached when we are NOT cross-fading, so the buffer is free.
+        playerB.pause(); playerB.style.display = 'none';
+        playerB.style.opacity = 1; playerB.style.zIndex = ''; playerB.style.transition = '';
+        if(resolveSrc(media) !== player.src){
+          player.style.visibility = 'hidden';         // hide until contain() places it — kills the first-load phantom flash
+          player.src = media; player.load();
+          // SELF-CLEARING on purpose. A handler left attached here is a live grenade: this element can
+          // later become the hidden buffer, and preloadInto()'s load() would fire this stale closure,
+          // which calls startPlayback() -> currentTime = 0 on whatever is playing NOW. That is what made
+          // a frame-matched clip restart abruptly a beat after its cross-fade finished.
+          player.onloadeddata = function(){ this.onloadeddata = null; layoutActive(); startPlayback(this); };
+        } else { startPlayback(player); layoutActive(); }
+      }
     }
     if(d.playlist && cur._pl && cur._pl.list.length > 1) preloadInto(playerB, cur._pl.list[1], d);   // stage the 2nd cut for a flash-free advance
-    stageFrameMatch(cur);                            // decode the NEXT clip now if it wants a frame-matched fade
+    else stageNextClip(cur);                         // …otherwise decode the NEXT SLIDE's clip into the
+                                                     // buffer. `else`, because there is one buffer and
+                                                     // the cut inside this slide is reached first
   }
 
   // ---- Frame-matched cross-fade (data-framematch) ------------------------------------------------
-  // The buffer element playerB is decoded ahead of time by stageFrameMatch(), seeked to the outgoing
+  // The buffer element playerB is decoded ahead of time by stageNextClip(), seeked to the outgoing
   // clip's timestamp, started, and faded up while the outgoing clip fades down. Returns false if the
   // buffer isn't ready, in which case the caller falls back to the ordinary load (which still lands on
   // the matched frame — a hard cut rather than a fade, which is a survivable degradation).
@@ -346,12 +405,21 @@
   // backstop, not a budget, and the value has to cover the slowest clip on the slowest machine, not
   // the fastest one measured. Short enough that a missing event can never hang the transition.
   const SEEK_GRACE_MS = 300;
-  function stageFrameMatch(cur){
+  // Decode the NEXT SLIDE's clip into the hidden buffer, so advancing onto it is a swap rather than a
+  // load. Widened 2026-08-26 — it was `stageFrameMatch` and it staged only when the next slide asked
+  // for a cross-fade, but a plain advance needs the decoded frame just as much: without it the visible
+  // element goes hidden for the length of the load and the room sees the black layer behind it.
+  //
+  // Skips a clip identical to the one on screen (the mount is a no-op anyway — Class B's warm-up and
+  // its closing juggling clip are one file), stills, and stacks, which own their own elements.
+  function stageNextClip(cur){
     const all = Array.from(document.querySelectorAll('.reveal .slides > section'));
     const nxt = all[all.indexOf(cur) + 1];
-    if(!nxt || nxt.dataset.framematch === undefined || !nxt.dataset.media) return;
-    if(isStill(nxt.dataset.media)) return;
-    preloadInto(playerB, nxt.dataset.media, nxt.dataset);
+    if(!nxt || !nxt.classList.contains('vid') || nxt.dataset.stack) return;
+    const nd = nxt.dataset;
+    const src = nd.playlist ? nd.playlist.split(',').map(x => x.trim()).filter(Boolean)[0] : nd.media;
+    if(!src || isStill(src) || resolveSrc(src) === player.src) return;
+    preloadInto(playerB, src, nd);
   }
   function crossFadeTo(media, d, atTime, cur){
     if(resolveSrc(playerB.src) !== resolveSrc(media) || playerB.readyState < 2) return false;
@@ -417,7 +485,7 @@
         outgoing.pause(); outgoing.style.display = 'none';
         outgoing.style.transition = ''; outgoing.style.opacity = 1; outgoing.style.zIndex = '';
         incoming.style.transition = ''; incoming.style.zIndex = '';
-        stageFrameMatch(cur);      // only now is the buffer free to decode the next clip
+        stageNextClip(cur);        // only now is the buffer free to decode the next clip
       }, FADE_MS + 60);
     };
     if(incoming.requestVideoFrameCallback) incoming.requestVideoFrameCallback(() => beginFade());
@@ -840,6 +908,29 @@
     return Number.isInteger(n) && n >= 0 ? n : null;
   }
 
+  // Voting is CLOSED in two different states and they are not the same thing. `sealed` is the ordinary
+  // one — closed, tallied, key revealed, all in the same breath. `sealed-quiet` is the deferred-reveal
+  // poll (`data-reveal-at`): closed, nothing drawn, key withheld until a later slide reveals it.
+  // EVERYTHING that asks "is this question still taking votes" must ask this rather than `.sealed`,
+  // and that is the whole footgun of this feature: announcePoll and the live counter both key off
+  // "not sealed", so a quiet-sealed poll you walk back onto would have re-OPENED the vote and started
+  // counting again, which is the one thing a locked question must never do.
+  const isClosed = sec => sec.classList.contains('sealed') || sec.classList.contains('sealed-quiet');
+
+  // Half one of the deferred-reveal poll. Lock the vote, draw nothing, publish no key.
+  // Deliberately its own short function rather than a flag threaded through sealPoll: the two share
+  // nothing but the pushState, and the POINT of this state is that it does not fetch a tally and does
+  // not touch a bar. A branch inside sealPoll would have to skip most of sealPoll.
+  function quietSeal(sec){
+    if(sec.classList.contains('sealing') || isClosed(sec)) return;
+    stopLiveCount();
+    sec.classList.add('sealed-quiet');
+    const scan = sec.querySelector('.scan');
+    if(scan) scan.textContent = 'Voting closed · answer coming up';
+    if(POLL_LIVE) pushState(() => ({ p_class:CLASS_ID, p_poll:sec.dataset.poll, p_open:false,
+                                     p_answer:null, p_secret:DECK_SECRET }));
+  }
+
   async function sealPoll(sec){
     if(sec.classList.contains('sealing') || sec.classList.contains('sealed')) return;
     sec.classList.add('sealing');
@@ -866,8 +957,11 @@
                                      p_answer:publishedAnswer(sec), p_secret:DECK_SECRET }));
   }
   Reveal.on('ready', () => {
-    try { if(window.QRCode) slideAll('section.poll').forEach(p =>
-      new QRCode(p.querySelector('.qrimg'), { text:p.dataset.url, width:300, height:300, correctLevel:QRCode.CorrectLevel.M })); }
+    // A reveal slide (`data-reveal-of`) carries no QR card — it is showing an answer, not asking for
+    // votes. Guarded here rather than at the selector because ONE missing element used to throw out of
+    // the whole forEach and take every later poll's QR down with it.
+    try { if(window.QRCode) slideAll('section.poll').forEach(p => { const el = p.querySelector('.qrimg');
+      if(el) new QRCode(el, { text:p.dataset.url, width:300, height:300, correctLevel:QRCode.CorrectLevel.M }); }); }
     catch(e){ console.warn('QR render failed', e); }
     try { const el = document.querySelector('#remote-qr .rq-code');   // presenter-remote QR
       if(window.QRCode && el && !el.childElementCount) new QRCode(el, { text:REMOTE_URL, width:300, height:300, correctLevel:QRCode.CorrectLevel.M }); }
@@ -1075,7 +1169,7 @@
       if(error){ console.warn('reset_question failed →', error.message || error, '(re-run supabase-setup.sql?)'); return; }
       console.log('POLL reset + re-opened', pid);
     }
-    sec.classList.remove('sealed','sealing');
+    sec.classList.remove('sealed','sealing','sealed-quiet');
     sec.querySelectorAll('.choice').forEach(c => { c.classList.remove('correct');
       c.querySelector('.bar').style.height = '0'; c.querySelector('.pct').textContent = ''; });
     const scan = sec.querySelector('.scan'); if(scan) scan.textContent = 'Scan to vote';
@@ -1098,7 +1192,7 @@
   }
   async function tickLiveCount(){
     const sec = Reveal.getCurrentSlide();
-    if(!sec || !sec.classList.contains('poll') || sec.classList.contains('sealed')){ stopLiveCount(); return; }
+    if(!sec || !sec.classList.contains('poll') || isClosed(sec)){ stopLiveCount(); return; }
     const scan = sec.querySelector('.scan');
     if(!scan || !sec.dataset.poll) return;
     try{
@@ -1107,14 +1201,14 @@
       const n = (data || []).reduce((a, b) => a + Number(b.votes), 0);
       // Re-check: a request in flight when you press → would otherwise land on top of the sealed label
       // and quietly change "Voting closed · 24 responses" back into an invitation to vote.
-      if(sec.classList.contains('sealed') || sec.classList.contains('sealing')) return;
+      if(isClosed(sec) || sec.classList.contains('sealing')) return;
       scan.innerHTML = 'Scan to vote · <b>' + n + '</b> voted';
     }catch(e){ /* leave the label as it stands; a blip should not blank the QR caption */ }
   }
   function startLiveCount(){
     if(!POLL_LIVE) return;
     const sec = Reveal.getCurrentSlide();
-    if(!sec || !sec.classList.contains('poll') || sec.classList.contains('sealed')){ stopLiveCount(); return; }
+    if(!sec || !sec.classList.contains('poll') || isClosed(sec)){ stopLiveCount(); return; }
     if(liveCountTimer && liveCountFor === sec.dataset.poll) return;      // already counting this one
     stopLiveCount();
     liveCountFor = sec.dataset.poll;
@@ -1180,7 +1274,12 @@
       if(activeVideo && cur.dataset.autoplay === undefined && player.paused && player.currentTime < 0.05 && !player.ended){ player.play().catch(()=>{}); return; }
       showQuad(cur); cur._quadShown = true; return;
     }
-    if(cur && cur.classList.contains('poll') && !cur.classList.contains('sealed')){ sealPoll(cur); return; }
+    // A deferred-reveal poll (`data-reveal-at`) locks the vote AND advances on the same press, because
+    // the next slide is the entire point of deferring — a press that only locked would leave a dead
+    // question on the projector with the room waiting. An ordinary poll still consumes the first press:
+    // for that one the seal IS the reveal, and there is something to look at afterwards.
+    if(cur && cur.classList.contains('poll') && cur.dataset.revealAt !== undefined && !isClosed(cur)) quietSeal(cur);
+    else if(cur && cur.classList.contains('poll') && !isClosed(cur)){ sealPoll(cur); return; }
     // Synced video stack. Loop mode (data-loop): it's already looping; first → freezes on the last frame, next → advances.
     // Play-once mode: first → plays it together, next → advances.
     if(cur && cur.dataset.stack && cur.dataset.sync !== undefined){
@@ -1353,6 +1452,7 @@
   // deck every single time the two-hour auto-reset fires.
   let sessionPromise = null;
   function initSession(){
+    if(!inTopWindow) return Promise.resolve();   // speaker-view mirror: never drive the session
     if(sessionPromise) return sessionPromise;
     // try/catch, not just the error field: when the project is unreachable the RPC *rejects* rather
     // than resolving with an error, and an unhandled rejection here buries the QR slide's diagnosis
@@ -1376,9 +1476,26 @@
   //
   // So: one chain, never concurrent, and a sequence number so a write that was superseded while it sat
   // in the queue is dropped instead of sent. The newest intent is the only one that was ever true.
+  //
+  // AND THE MIRRORS MUST NOT WRITE AT ALL (2026-08-26, Class A). Ordering was only half of it. Press S
+  // and reveal.js opens a speaker window holding TWO IFRAMES that each load this whole deck — one
+  // showing the current slide, one showing the UPCOMING one — and each of those iframes ran this file,
+  // fired 'ready' and 'slidechanged' like any deck, and wrote its own idea of "the live question" to
+  // poll_state. The upcoming mirror is by construction one slide ahead, and it lands after the main
+  // window on every navigation, so the room's phones showed the NEXT comprehension question while the
+  // projector showed this one. Nothing looked broken anywhere: the deck was on the right slide, the
+  // health check was green, the remote worked, and prev/next only re-ran the same three writers in the
+  // same losing order. It also quietly re-OPENED a question the main window had just sealed, because
+  // the mirror's copy of that slide carries no `.sealed` class.
+  // The presenter remote already had this guard, for exactly this reason and one day earlier — it is
+  // the same bug wearing the other hat (there it made the phone oscillate between slide N and N+1).
+  // `inTopWindow` is the whole fix: the projector window is the only thing allowed to say what is live.
   let stateSeq = 0, stateChain = Promise.resolve();
+  let statePending = 0;                      // writes queued or in flight — the verifier waits them out
   function pushState(build){
+    if(!inTopWindow) return Promise.resolve();   // speaker-view mirror — see above
     const mine = ++stateSeq;
+    statePending++;
     stateChain = stateChain.then(async () => {
       if(mine !== stateSeq) return;          // a newer slide/seal already superseded this one
       try{
@@ -1388,12 +1505,83 @@
                             'four-argument version is still installed. ' + (error.message || ''));
         else if(error) console.warn('POLL set_state failed →', error.message || error, '(re-run supabase-setup.sql?)');
       }catch(e){ console.warn('POLL set_state unreachable →', e.message || e); }
+      finally{ statePending--; }
     });
     return stateChain;
   }
 
+  // ---------- Did the phones actually get what this deck asked for? (2026-08-26) ----------
+  // Every other check in here verifies the deck's own reasoning, which is the one thing a single
+  // window can never be wrong about in a way it could detect. This one asks a different question, and
+  // it is the answerable one: WRITE, THEN READ BACK. The slide knows what it wanted the room to see —
+  // this question, open or sealed, with or without the answer revealed — so a few seconds later it
+  // asks the database what is actually there and complains if the two disagree.
+  //
+  // What makes that worth doing is that it is agnostic about the cause. It caught nothing on the day
+  // it was written because the bug it was written for had just been fixed — but the same read-back
+  // would have caught the speaker-view mirrors overwriting the row (Class A, 2026-08-26) within about
+  // six seconds, and it equally catches a seal whose write never landed, a schema that silently
+  // no-ops, a second deck window someone left open, a laptop that dropped off the wifi mid-question,
+  // and whatever the next one turns out to be. The deck does not need to know why. It only needs to
+  // notice that what it asked for is not what is there — which, on the day it matters, is the whole
+  // difference between "the room tells you something is wrong" and "you tell the room".
+  //
+  // Two strikes before it speaks, and never while a write is in flight: a false alarm on a poll slide
+  // in front of a class is worse than a slow one, and the failures worth catching all persist.
+  let desyncStrikes = 0, verifyTimer = null;
+  function expectedState(sec){
+    const sealed = sec.classList.contains('sealed');
+    return { poll: sec.dataset.poll, open: !sealed, answer: sealed ? publishedAnswer(sec) : null };
+  }
+  function showDesync(msg){
+    modeBadge.classList.add('desync');
+    modeBadge.innerHTML = '<span class="lamp"></span>' + msg;
+  }
+  function clearDesync(){
+    if(!modeBadge.classList.contains('desync')) return;
+    desyncStrikes = 0;
+    modeBadge.classList.remove('desync');
+    modeBadge.innerHTML = '<span class="lamp"></span>' + (POLL_LIVE ? 'Live' : 'Demo · sample data');
+  }
+  async function verifyState(){
+    const sec = Reveal.getCurrentSlide();
+    if(!sec || !sec.classList.contains('poll')) return;
+    if(statePending) return;                      // our own write is still on its way — nothing to compare yet
+    let row;
+    try{
+      const { data, error } = await supaClient.rpc('get_state', { p_class: CLASS_ID });
+      if(error) throw error;
+      row = (data && data[0]) || {};
+    }catch(e){ return; }                          // a blip is not a desync; say nothing
+    if(Reveal.getCurrentSlide() !== sec || statePending) return;   // moved on while we were asking
+    const want = expectedState(sec);
+    const got  = { poll: row.current_poll || null, open: !!row.is_open,
+                   answer: (row.answer === null || row.answer === undefined) ? null : Number(row.answer) };
+    if(got.poll === want.poll && got.open === want.open && got.answer === want.answer){ clearDesync(); return; }
+    if(++desyncStrikes < 2) return;
+    console.warn('POLL DESYNC · this deck asked for', want, '· the phones are being served', got,
+                 '— another deck window (speaker view?), a lost write, or a stale schema.');
+    if(got.poll !== want.poll)
+      showDesync(got.poll ? 'Phones show ' + got.poll : 'Phones show nothing');
+    else if(got.open !== want.open)
+      showDesync(want.open ? 'Phones: voting CLOSED' : 'Phones: voting still OPEN');
+    else
+      showDesync('Phones: answer not revealed');
+  }
+  function startVerify(){
+    if(!POLL_LIVE || !inTopWindow) return;
+    const sec = Reveal.getCurrentSlide();
+    if(verifyTimer){ clearInterval(verifyTimer); verifyTimer = null; }
+    clearDesync();
+    if(!sec || !sec.classList.contains('poll')) return;
+    verifyTimer = setInterval(verifyState, 3000);
+  }
+  Reveal.on('ready', startVerify);
+  Reveal.on('slidechanged', startVerify);
+
   async function announcePoll(){
-    if(!POLL_LIVE) return;
+    if(!POLL_LIVE || !inTopWindow) return;   // mirrors are one slide ahead; see pushState
+
     await initSession();
     const cur = Reveal.getCurrentSlide();
     const onPoll = cur && cur.classList.contains('poll');
@@ -1401,20 +1589,43 @@
       // p_answer is null unless this slide is ALREADY sealed — walking back onto a revealed question
       // re-lights the phones, and walking onto a fresh one clears them. Null while open is what keeps
       // the key off the wire before it is Daniel's to give away.
-      const sealed = onPoll && cur.classList.contains('sealed');
-      if(onPoll) console.log('POLL announcing', cur.dataset.poll, 'open=' + !sealed,
-                             sealed ? 'answer=' + publishedAnswer(cur) : '');
+      // THREE states, not two. Open; closed with no key (`sealed-quiet`, the deferred poll); and closed
+      // with a key. A reveal slide counts as the third from the MOMENT you land on it rather than when
+      // sealPoll's own push lands — announcing it here is what stops the phones re-opening the question
+      // for the half second the tally is in flight, which at 400 phones on a 2.5 s poll is not
+      // hypothetical.
+      const closed  = onPoll && (isClosed(cur) || cur.dataset.revealOf !== undefined);
+      const reveals = onPoll && (cur.classList.contains('sealed') || cur.dataset.revealOf !== undefined);
+      if(onPoll) console.log('POLL announcing', cur.dataset.poll, 'open=' + !closed,
+                             reveals ? 'answer=' + publishedAnswer(cur) : '');
       await pushState(() => ({
         p_class: CLASS_ID,
         p_poll:  onPoll ? cur.dataset.poll : null,
-        p_open:  onPoll ? !sealed : false,
-        p_answer: sealed ? publishedAnswer(cur) : null,
+        p_open:  onPoll ? !closed : false,
+        p_answer: reveals ? publishedAnswer(cur) : null,
         p_secret: DECK_SECRET
       }));
     }catch(e){ console.warn('POLL announce failed →', e.message || e); }
   }
   Reveal.on('ready', announcePoll);
   Reveal.on('slidechanged', announcePoll);
+
+  // Half two of the deferred-reveal poll. Landing on a `[data-reveal-of]` slide IS the reveal, so the
+  // slide seals itself: the same sealPoll, the same tally, the same bars, the same key going out to the
+  // phones. No second implementation — the reveal path is the existing path, which is why this feature
+  // is a few dozen lines rather than a parallel poll engine, and why nothing about bars, demo counts,
+  // survey handling or the queue had to be thought about twice.
+  //
+  // The reveal slide carries the SAME `data-poll` as the question it reveals. That is deliberate (it is
+  // the same question, and get_tally must return the same votes) and it is also why `loadWinners`
+  // excludes `[data-reveal-of]` — otherwise the pair would be handed to get_winners as two ids and a
+  // student would have to have answered one question twice.
+  function autoRevealPoll(){
+    const cur = Reveal.getCurrentSlide();
+    if(cur && cur.dataset.revealOf !== undefined && !cur.classList.contains('sealed')) sealPoll(cur);
+  }
+  Reveal.on('ready', autoRevealPoll);
+  Reveal.on('slidechanged', autoRevealPoll);
 
   // ---------- Prize wheel (perfect scorers) ----------
   // `.poll.sealed`, not `.poll` — and this is the bug that ate a two-phone test on 2026-08-25.
@@ -1430,7 +1641,7 @@
   // Returns {ids, asked} so the caller can tell the three empty-pool states apart — nothing sealed yet,
   // the backend refused, and nobody ran the table — which for a year all printed the same sentence.
   async function loadWinners(){
-    const polls = slideAll('section.poll.sealed:not([data-survey])')   // survey polls have no right answer
+    const polls = slideAll('section.poll.sealed:not([data-survey]):not([data-reveal-of])')   // surveys have no right answer; a reveal slide is its question's second copy
                     .filter(p => p.dataset.poll && Number.isInteger(+p.dataset.answer));
     const ids = polls.map(p => p.dataset.poll), correct = polls.map(p => +p.dataset.answer);
     if(!POLL_LIVE)

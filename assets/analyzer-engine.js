@@ -251,6 +251,7 @@ function ingestParsed(parsed,P){
                          : (nums.find(h=>/absolute/i.test(h)) || nums[0]);
   if(S.reqAxis){ const want=nums.find(h=>new RegExp("acceleration\\s*"+S.reqAxis+"\\b","i").test(h)); if(want) pick=want; }
   P.sigH = pick; sel.value=P.sigH;
+  applyAxisLock();                          // a fresh upload rebuilds the options; re-apply the step's lock
   P.point=null; P.sel=null; P.integ=null; P.crop=null; P._bias=null; P._biasFor=null;
   updateCtx(); resize(); setReadout();
   // A `gate:"data"` step completes the moment a file lands, with no button involved — so this is one
@@ -397,6 +398,21 @@ function preferAxis(){
     if(want && want!==P.sigH){ P.sigH=want; if(P.selEl) P.selEl.value=want; }
   });
 }
+// ...and LOCK the dropdown while that step is up. Default-selecting was only half the job: on the
+// challenge, scoring is gated on the x-axis, so the only thing an open dropdown can still do is
+// silently stop a run from counting — a control whose remaining uses are all mistakes. Locked only
+// when the loaded file actually HAS the required column, so a student who exported the wrong
+// experiment can still look at what they collected instead of facing a frozen control.
+function applyAxisLock(){
+  (S.panels||[]).forEach(P=>{
+    const sel=P.selEl; if(!sel) return;
+    const has = !!(S.reqAxis && P.ds && P.ds.headers.some(h=>h!==P.ds.timeH &&
+                   new RegExp("acceleration\\s*"+S.reqAxis+"\\b","i").test(h)));
+    sel.disabled = has;
+    sel.title = has ? "locked to the "+S.reqAxis+"-axis for this step"
+                    : "what to plot (time is always the horizontal axis)";
+  });
+}
 function doFitSine(s,P){
   P=P||active();
   const r=selRange(s,P); if(!r || r[1]-r[0]<3){ P.fit=null; return; }
@@ -487,7 +503,7 @@ function updatePlotReadout(P){
     const axisWarn = (S.challenge && !axisOK())
       ? '<span class="ro-hint"> — switch <b>Signal</b> to the '+S.reqAxis+'-axis to score</span>' : '';
     show('<span class="formula"><i>a</i> = '+P.fit.amp.toFixed(2)+'·sin(2π·'+P.fit.freq.toFixed(2)+'·<i>t</i> + '+ph.toFixed(2)+')</span>'
-      +'<span class="r2" tabindex="0"><i>R</i>² = '+P.fit.r2.toFixed(2)
+      +'<span class="r2" tabindex="0"><i>R</i>² = '+P.fit.r2.toFixed(3)
       +'<span class="r2pop">Fraction of the variance in your selection the fit explains — 1 = perfect, 0 = no better than a flat line, &lt;0 = worse than a flat line</span></span>'+axisWarn);
   } else if(S.tool==="point"){
     if(P.point==null){ show('<span class="ro-hint">click or drag along the trace</span>'); return; }
@@ -515,7 +531,7 @@ function updateHighscore(){                       // move the high-score arrow o
   const ar=$("hsarrow"), v=$("hsval"); if(!ar) return;
   const b=S.hs.best, pct=Math.max(0,Math.min(1,Number.isFinite(b)?b:0));   // gradient has 15px top/bottom insets
   ar.style.bottom="calc(15px + "+pct+" * (100% - 30px) - 7px)";
-  if(v) v.textContent=Number.isFinite(b)?b.toFixed(4):"—";   // 4 dp here for tiebreakers (readout stays 2 dp)
+  if(v) v.textContent=Number.isFinite(b)?b.toFixed(4):"—";   // 4 dp here for tiebreakers (readout stays 3 dp)
 }
 /* ============================ plot ============================ */
 // `cv`/`ctx`/`G` are the CURRENT panel's canvas, context and geometry. They are reassigned at the top of
@@ -920,8 +936,12 @@ function _statIssue(st, vals, meanAns, stdAns, label){
    dragging a selection, and it seeded the challenge high score, so the one competitive thing in the
    workshop was the one thing nobody had to earn.
 
+   No workshop declares `verify:` as of 2026-08-27 — Workshop 0's fit-two-ways step dropped the gate
+   (it was misfiring) and the two R² boxes are back on trust. The mechanism below stays for the next
+   workshop that wants it.
+
    `verify: r2` on a step says: every number entered here must match what the tool is showing, to the
-   two decimals the readout displays, AT THE MOMENT IT IS TYPED. That last part is what makes it work
+   three decimals the readout displays, AT THE MOMENT IT IS TYPED. That last part is what makes it work
    across the two-fit step — the free fit and the locked fit cannot both be on screen at once, so
    checking on Next could only ever validate whichever was last. Instead each entry is witnessed as it
    lands, and the witness sticks: do the free fit, type its R²; lock the target, type that one; both
@@ -941,7 +961,7 @@ function witness(st, key, v){
   if(!st.verify) return;
   const live = verifyLive(st);
   const ok = live!=null && Number.isFinite(v) &&
-             (Math.abs(v-live) <= 0.006 || v.toFixed(2) === live.toFixed(2));
+             (Math.abs(v-live) <= 0.0006 || v.toFixed(3) === live.toFixed(3));
   if(ok) S.answers["seen_"+key] = live; else delete S.answers["seen_"+key];
 }
 // one place for all input validation; returns a gentle message if something's off, else null.
@@ -962,7 +982,7 @@ function inputIssue(st){
       // showing when no selection has been dragged; an empty token there rendered as a bare "()".
       return fbText(st,"verify",
         "That doesn't match what the tool is showing ({live}). Read the value off the plot and enter that.",
-        {source:st.verify, live: live==null ? "nothing yet" : live.toFixed(2), label:f.label});
+        {source:st.verify, live: live==null ? "nothing yet" : live.toFixed(3), label:f.label});
     }
     if(f.range){
       const V={label:f.label, unit:f.unit||"", low:f.range[0], high:f.range[1]};
@@ -1225,8 +1245,9 @@ function renderStep(){
   const st=NARR[S.step], body=$("stepbody"); body.innerHTML="";
   setSlots(st);                                     // which data slots this step shows (default: the first)
   setTop(st);
-  S.reqAxis = st.requireAxis || null;               // a step may require a signal axis (default-select + gate scoring)
+  S.reqAxis = st.requireAxis || null;               // a step may require a signal axis (default-select, lock, gate scoring)
   if(S.reqAxis) preferAxis();
+  applyAxisLock();
   // Fit Sine step config: pin the tool, and optionally lock amp/freq to a target (the challenge)
   if(st.tool==="fitsine"){
     S.tool="fitsine";
@@ -1240,6 +1261,9 @@ function renderStep(){
   // Seed the challenge's best from the target fit — but ONLY the witnessed value, never the typed one.
   // Seeding from `S.answers.r2target` was the actual leak: the arrow started wherever the student said
   // it did. `seen_r2target` is what the tool computed when they typed, so the bar starts at a real fit.
+  // 2026-08-27: Workshop 0 dropped `verify: r2`, so nothing witnesses r2target any more and the bar
+  // simply starts at "—" until the student's first challenge fit. Left in place: it costs nothing and
+  // is right again the moment a workshop verifies that step.
   if(S.challenge && S.hs.best==null){ const v=S.answers.seen_r2target; if(Number.isFinite(v)) S.hs.best=v; }
   const main=document.createElement("div"); main.className="deck-main";
   // lead may be static (`lead`) or computed from prior answers at render time (`leadFn(answers)`),

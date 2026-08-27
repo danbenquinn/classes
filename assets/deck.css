@@ -293,6 +293,17 @@
   .pollmode .lamp{ width:.8em; height:.8em; border-radius:50%; background:var(--muted); }
   .pollmode.live{ color:var(--ok); border-color:rgba(143,176,50,.55); } .pollmode.live .lamp{ background:var(--ok); box-shadow:0 0 8px var(--ok); }
   .pollmode.demo{ color:var(--mma-amber); border-color:rgba(225,156,36,.55); } .pollmode.demo .lamp{ background:var(--mma-amber); }
+  /* DESYNC — the Live badge turns into an alarm when the read-back says the phones are being served
+     something other than what this slide asked for (deck.js · verifyState). It reuses the badge on
+     purpose: it is already the thing your eye goes to for poll health, it is already positioned clear
+     of the prompt and the QR, and it is normally a calm green word — so red, pulsing, and no longer
+     uppercased reads as "something is wrong" from the back of the room without adding any furniture
+     to a slide that is being projected. Silent when everything agrees, which is nearly always. */
+  .pollmode.desync{ color:#f0a9a7; border-color:var(--mma-red); background:rgba(192,80,77,.20);
+                    text-transform:none; letter-spacing:.02em; font-size:.56em;
+                    animation:desyncpulse 1.1s ease-in-out infinite; }
+  .pollmode.desync .lamp{ background:var(--mma-red); box-shadow:0 0 8px var(--mma-red); }
+  @keyframes desyncpulse{ 0%,100%{ opacity:1; } 50%{ opacity:.55; } }
   .poll-reset{ position:absolute; left:15%; top:3%; z-index:8; font:inherit; font-size:.42em; letter-spacing:.04em;
                color:var(--muted); background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.15);
                border-radius:999px; padding:.45em .85em; cursor:pointer; }

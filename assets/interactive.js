@@ -122,6 +122,24 @@
   // anchored, screen-space), so sx()/sy() are overridable; the drawing cores work in whatever screen
   // coords sx/sy produce. Defaults below are the Centered viewplane (Projectile + HandLift); the other
   // sims override sx/sy/resize. discMinPx is each sim's minimum on-screen disc radius.
+  // The house per-body tint ramp, mirroring energygraph.tints() so a LIVE sim and a BAKED clip give
+  // the same body the same shade. Blends the role color toward `tint_to` (a near-black, NOT white — the
+  // ramp gets darker, which is the direction that surprised this engine once already). n < 4 is the
+  // brightest-first branch; body 0 keeps the pure role color and each later body is a step darker.
+  // Used for BOTH the mass discs and their kinetic-energy bands, so mass and band track each other.
+  function tints(hex, n) {
+    const to = cvar("--tint-to", "#101015"), spread = cnum("--tint-spread", 0.62);
+    const rgb = h => { const v = h.replace("#", ""); return [0, 2, 4].map(i => parseInt(v.substr(i, 2), 16)); };
+    const c0 = rgb(hex), c1 = rgb(to);
+    const maxF = n > 2 ? spread * (n - 2) / (n - 1) : spread;
+    const out = [];
+    for (let i = 0; i < n; i++) {
+      const f = n === 1 ? 0 : maxF * i / (n - 1);
+      out.push("#" + c0.map((c, j) => Math.round(c * (1 - f) + c1[j] * f).toString(16).padStart(2, "0")).join(""));
+    }
+    return out;
+  }
+
   class SimBase {
     constructor(canvas) {
       this.c = canvas; this.ctx = canvas.getContext("2d");
@@ -3028,7 +3046,12 @@
 
       const h = this.hist; if (h.length < 2) { timeAxis(); return; }
       const t1 = this.simT, t0 = t1 - this.gTail;
-      const yOf = v => gy + gh - Math.min(1, v / this.eMax) * gh;
+      // NO CEILING. The axis is still frozen at eMax — a band's height means the same joules all the
+      // way through — but a stack taller than eMax is drawn where it actually lands, climbing out of
+      // the strip and up over the masses as resonance runs away. Clipping it at the top read as the
+      // graph politely declining to answer; letting it swallow the animation is the honest picture,
+      // and on this slide it is also the lesson (Daniel, 2026-08-26).
+      const yOf = v => gy + gh - (v / this.eMax) * gh;
       const xOf = t => x0 + (Math.max(t0, Math.min(t1, t)) - t0) / this.gTail * (x1 - x0);
       const cum = h.map(p => ({ t: p.t, brk: p.brk, v: [p.ke, p.ke + p.gpe, p.ke + p.gpe + p.spe] }));
       const cols = [HOUSE.velocity, HOUSE.gravity, HOUSE.spring];
@@ -3660,6 +3683,659 @@
     return sim;
   }
 
+  // ============================================================================================
+  // CoupledMass (data-sim="coupledmass") — Class N. The board derivation, made live.
+  //
+  // Two masses in deep space joined by one spring. m1 is driven by a fixed sinusoidal shaker
+  // (light-blue, the applied role); the spring pushes BOTH bodies with equal and opposite green
+  // arrows, which is the whole point of the slide — the third law, drawn, in a system where the two
+  // members act on different bodies and therefore never cancel. Three sliders: m1, m2, k. The drive
+  // amplitude and frequency are FIXED, because only the ratio m2*wd^2/k matters and every regime is
+  // reachable without a fourth control.
+  //
+  // THE k SLIDER WALKS THE WHOLE CLASS, in narrative order, on one drag downward from the default:
+  //     k = 12  default          both masses moving, in phase, m2 further than m1
+  //     k =  9  THE NODE         k = m2*wd^2 -> x1 = 0: the DRIVEN mass stands still. Tuned mass damper.
+  //     k =  6  RESONANCE        k = m12*wd^2: amplitudes run away until the masses touch
+  //     k =  2  ISOLATION        m2*wd^2 >> k -> x2/x1 small AND NEGATIVE: m2 barely moves, out of phase.
+  //                              This is the swan, and it is the last thing on board-4.
+  //
+  // SWEEPING THROUGH RESONANCE IS SUPPOSED TO SURVIVE, and it does, for free, because the integrator
+  // is honest: resonance is a growth RATE (about 1/(zeta*omega) to build), not a wall. Cross it in
+  // half a second and the pair wobbles and sails through to the isolation regime; sit in it and the
+  // amplitude climbs until they collide and the sim resets itself. The reset is a safety net for
+  // DWELLING, not the expected cost of crossing — which is why a jet engine is spun up fast through
+  // its critical speed, and why the homework says the drone's camera thrashes for one second on every
+  // spin-up and is steady the rest of the flight.
+  //
+  // DAMPING — it damps the WOBBLE, not the ANSWER, and the distinction is the whole reason this
+  // slide is usable. A plain dashpot forces a trade with no winner: heavy enough to settle in a couple
+  // of cycles and it flattens resonance and blurs the node; light enough to keep those and every
+  // slider move leaves five or six drive periods of beating, so you change something and then wait.
+  // Instead the strong damping acts on the relative velocity MINUS the relative velocity the board's
+  // undamped solution has at that instant — the free vibration, and nothing else. At steady state that
+  // term is exactly zero, so what is on screen is the board's formula uncorrected: x1 = 0 is a TRUE
+  // zero at the node, the ratio is exactly k/(k - m2*wd^2), and it still settles in about two cycles.
+  // On resonance the board's answer is infinite and the split is meaningless, so a light ordinary
+  // dashpot fades in there instead and the peak climbs until the masses touch. See _coupling().
+  //
+  // SEEDING HAPPENS ON LOAD AND RESET ONLY — NEVER ON A SLIDER CHANGE, and this is the single
+  // easiest way to get this preset subtly wrong. Re-seeding whenever a slider moved would TELEPORT
+  // the system to the analytic steady state for the new parameters, so a fast drag through resonance
+  // would snap to the resonant amplitude and collide: the exact opposite of what really happens and
+  // of what the slide teaches. The sliders feed the integrator and nothing else. If a slider JUMP (a
+  // click on the track) ever reads as messy, slew the value to its target over ~0.15 s so a click
+  // becomes a fast drag; do NOT re-seed, and do NOT raise zeta, which is the knob that costs the
+  // resonance.
+  //
+  // The energy strip underneath is the LauncherGame pattern (Class I) on the same graph.stack_*
+  // tokens a baked energy clip uses, so live and baked sit in the same place and read as one object.
+  // Two kinetic bands (one per mass, velocity-blue tints, m1 darker) over one shared spring-PE band.
+  // NO heat band: the damping is a numerical convenience rather than physics being taught, and
+  // banding it would advertise the fudge on a graph whose job is to show the drive pumping the
+  // system. The consequence is the good part — the top edge of the stack is K + U, which is NOT
+  // conserved here, so THE LID MOVES. First moving lid since Class I, and it climbs near resonance.
+  // ============================================================================================
+  const COUPLED_CONTROLS_HTML = `
+      <canvas class="simcanvas"></canvas>
+      <button class="simbtn toggle-readout" title="show / hide numbers">123</button>
+      <div class="simctrls">
+        <button class="simbtn play">⏸ Pause</button>
+        <button class="simbtn reset">↺ Reset</button>
+        <button class="simbtn slomo" title="Slow motion">🐢</button>
+        <label><span class="var"><i>k</i>:</span> <input type="range" class="s-k" min="2" max="30" step="0.5"><input type="number" class="n-k" step="0.5"><span class="u">N/m</span></label>
+      </div>`;
+
+  class CoupledMass extends SimBase {
+    constructor(canvas, opts = {}) {
+      super(canvas);
+      this.m1 = opts.m1 ?? CoupledMass.M1_DEF;
+      this.m2 = opts.m2 ?? CoupledMass.M2_DEF;
+      this.k = opts.k ?? CoupledMass.K_DEF;
+      // A slider or a preset button sets the TARGET; the live value eases onto it (see _slew).
+      this.m1T = this.m1; this.m2T = this.m2; this.kT = this.k;
+      this.wd = opts.wd ?? CoupledMass.WD;
+      this.F0 = opts.F0 ?? CoupledMass.F0;
+      this.slomo = opts.slomo ?? false;
+      // The numbers start OFF behind the `123` toggle, as in HandLiftEnergy. The energy strip is
+      // ALWAYS drawn — it is part of the object, not an option (Daniel, 2026-08-25).
+      this.showReadout = false;
+      // Per-body shades off the house ramp: body 0 keeps the pure colour, body 1 is a step darker, and
+      // the SAME index drives the mass disc and its kinetic band, so the little dark mass and the dark
+      // blue band are visibly the same body.
+      // Indices 0 and 2, NOT 0 and 1: adjacent steps on the ramp (#f0f0f5 vs #cdcdd2) are a difference
+      // you can measure and not one you can see from the back of a lecture hall, which was the whole
+      // point (Daniel, 2026-08-26). Skipping the middle gives #f0f0f5 / #ababb0 for the discs and
+      // #5d80b4 / #455c82 for the bands — obvious at projector size, and still the same ramp.
+      const mR = tints(HOUSE.mass, 3), vR = tints(HOUSE.velocity, 3);
+      this.massCol = [mR[0], mR[2]];
+      this.keCol = [vR[0], vR[2]];
+      this.paused = false;
+      this.everPlayed = true;            // auto-runs; -> always advances the deck
+      this.focusY = 0;
+      this.simT = 0;
+      this.hist = [];
+      this.gTail = 6.0;                  // seconds of energy history on screen
+      this.crash = null;                 // {phase, t} while the collision cut is running
+      this.resize();
+      this.reset(true);
+    }
+
+    // ---- derived quantities ------------------------------------------------------------------
+    get m12() { return this.m1 * this.m2 / (this.m1 + this.m2); }
+    get omega() { return Math.sqrt(this.k / this.m12); }         // free-free natural frequency
+    /** How far the drive sits from resonance, 0 (on it) to 1 (comfortably off it). Smoothstepped, so
+     *  the damping model below changes character continuously rather than switching. */
+    get offResonance() {
+      const wd2 = this.wd * this.wd, w2 = this.omega * this.omega;
+      const r = Math.abs(w2 - wd2) / w2 / CoupledMass.RES_BAND;
+      const u = Math.max(0, Math.min(1, r));
+      return u * u * (3 - 2 * u);
+    }
+    /** The damping that survives into the STEADY state. Off resonance this is zero by construction —
+     *  see _coupling() — so what you watch there is the board's undamped answer, exactly. */
+    get alphaSteady() { return 2 * CoupledMass.ZETA_RES * this.omega * this.m12 * (1 - this.offResonance); }
+    /** The damping that acts only on the WOBBLE. Large, because it costs nothing at steady state. */
+    get alphaDev() { return 2 * CoupledMass.ZETA_DEV * this.omega * this.m12 * this.offResonance; }
+
+    /** The relative velocity the UNDAMPED board solution has right now. The deviation from this is the
+     *  free vibration — the wobble — and it is the only thing the strong damping is allowed to see.
+     *  Relative amplitude falls out of the board's two lines as A2 - A1 = -F0/(m1*(omega^2 - wd^2)). */
+    _relVelStar() {
+      const wd2 = this.wd * this.wd, w2 = this.omega * this.omega;
+      const den = this.m1 * (w2 - wd2);
+      if (Math.abs(den) < 1e-9) return 0;
+      const Arel = -this.F0 / den;
+      return -Arel * this.wd * Math.sin(this.wd * this.simT);
+    }
+    get r1() { return HOUSE.baseRadius * Math.cbrt(this.m1); }
+    get r2() { return HOUSE.baseRadius * Math.cbrt(this.m2); }
+    get rSum() { return this.r1 + this.r2; }
+    /** x2/x1 = k/(k - m2*wd^2) — the board's amplitude ratio, and the whole bird half of the class. */
+    get ratio() {
+      const den = this.k - this.m2 * this.wd * this.wd;
+      return Math.abs(den) < 1e-9 ? Infinity : this.k / den;
+    }
+    get running() { return !this.paused; }
+
+    /** The EXACT steady state of the DAMPED pair, as complex amplitudes, so a seed leaves literally no
+     *  transient rather than a small one to be damped away. The board's formula is the alpha -> 0 limit
+     *  of this and the two agree to a few percent off resonance; seeding on the undamped one left a ~4%
+     *  wobble that took several seconds to settle, which is exactly what the seed exists to avoid.
+     *
+     *      [ k - m1*wd^2 + i*a*wd      -(k + i*a*wd)      ] [X1]   [F0]
+     *      [   -(k + i*a*wd)         k - m2*wd^2 + i*a*wd ] [X2] = [ 0]
+     *
+     *  with a = alpha. Then x_j(0) = Re(X_j) and v_j(0) = -wd*Im(X_j), since x_j(t) = Re(X_j e^{i wd t}).
+     *  Near resonance the determinant is small but never zero (that is what the damping buys), so no
+     *  clamp is needed for the solve — only the SEED_CAP below, which keeps a seed at resonance from
+     *  opening the slide mid-collision. */
+    _steady() {
+      const wd = this.wd, wd2 = wd * wd, a = this.alphaSteady, k = this.k;
+      const mul = (p, q) => [p[0] * q[0] - p[1] * q[1], p[0] * q[1] + p[1] * q[0]];
+      const sub = (p, q) => [p[0] - q[0], p[1] - q[1]];
+      const div = (p, q) => { const d = q[0] * q[0] + q[1] * q[1];
+                              return [(p[0] * q[0] + p[1] * q[1]) / d, (p[1] * q[0] - p[0] * q[1]) / d]; };
+      const A00 = [k - this.m1 * wd2, a * wd];
+      const A11 = [k - this.m2 * wd2, a * wd];
+      const Aoff = [-k, -a * wd];                       // the off-diagonal coupling, = -(k + i a wd)
+      const det = sub(mul(A00, A11), mul(Aoff, Aoff));
+      const X1 = div(mul([this.F0, 0], A11), det);
+      const X2 = div(mul([-this.F0, 0], Aoff), det);
+      return { A1: X1[0], A2: X2[0], V1: -wd * X1[1], V2: -wd * X2[1] };
+    }
+
+    /** Seed the state ON the analytic steady state, so the sim opens with no transient at all rather
+     *  than damping one away. Called on load and on reset. NEVER on a slider change — see the header. */
+    reset(hard) {
+      const { A1, A2, V1, V2 } = this._steady();
+      const cap = CoupledMass.SEED_CAP;
+      const s = Math.min(1, cap / Math.max(Math.abs(A1), Math.abs(A2), 1e-9));
+      this.x1 = CoupledMass.X1EQ + A1 * s;
+      this.x2 = CoupledMass.X1EQ + CoupledMass.L0 + A2 * s;
+      this.v1 = V1 * s; this.v2 = V2 * s;
+      if (hard) { this.simT = 0; this.hist = []; this.paused = false; }
+      this._freezeScale();
+      this.last = performance.now();
+    }
+
+    /** The energy axis, and it is FIXED — one number, set once, never touched again.
+     *
+     *  It used to be recomputed whenever a slider moved, which is defensible on paper (within a run a
+     *  band's height meant one thing) and was wrong in the room: every parameter change rescaled the
+     *  graph under you, so you could not tell whether a band grew because the physics changed or
+     *  because the axis did. That confusion cost more than the scaling bought.
+     *
+     *  24 J is chosen to hold the whole usable slider space without clipping: the steady-state peak
+     *  runs about 2 J in the stiffest corner and about 23 J just outside the resonance band, so
+     *  nothing clips except right next to resonance itself. The default sits near a quarter height,
+     *  which is deliberately modest — the strip is for comparing now against ten seconds ago, and a
+     *  band that fills the frame at rest has nowhere to go when the drive starts pumping it.
+     *
+     *  Clipping near resonance is not a loss: the stack visibly slams into the ceiling as the
+     *  amplitude runs away, which is the honest picture of a quantity going somewhere you cannot
+     *  follow. */
+    _freezeScale() { this.eMax = CoupledMass.EMAX; }
+
+    // ---- physics -----------------------------------------------------------------------------
+    _energies() {
+      const d = (this.x2 - this.x1) - CoupledMass.L0;
+      return { ke1: 0.5 * this.m1 * this.v1 * this.v1,
+               ke2: 0.5 * this.m2 * this.v2 * this.v2,
+               spe: 0.5 * this.k * d * d };
+    }
+    /** Spring + dashpot force along +x ON m1 (toward m2 when stretched). Its negative acts on m2 —
+     *  one number, two bodies, opposite signs. That IS the third law, and it is why the two green
+     *  arrows can never disagree by a pixel: they are drawn from the same scalar. */
+    /** DAMP THE WOBBLE, NOT THE ANSWER.
+     *
+     *  A plain dashpot forces a three-way trade nobody wins: heavy enough to settle in a couple of
+     *  cycles (zeta ~ 0.11) and it flattens resonance and blurs the node; light enough to keep those
+     *  (zeta ~ 0.045) and every slider move leaves five or six drive periods of beating before the
+     *  picture means anything. That beating is what made the sim feel unusable — you change something
+     *  and then wait, and the room waits with you.
+     *
+     *  The way out is that a driven LINEAR system splits exactly in two: the particular solution (the
+     *  board's answer, at the drive frequency) plus a free vibration at the natural frequency (the
+     *  wobble). Only the second one should decay. So the strong damping acts on the RELATIVE VELOCITY
+     *  MINUS the relative velocity the board's undamped solution has at this instant — which is zero
+     *  once the wobble is gone. At steady state the strong term therefore contributes NOTHING, and
+     *  what is on screen is the board's formula with no damping correction at all: the node is a true
+     *  zero, the ratio is exactly k/(k - m2*wd^2), and it still settles in about two cycles.
+     *
+     *  ON RESONANCE the board's answer is infinite and this split is meaningless, so `offResonance`
+     *  fades the strong term out and a light ordinary dashpot in — which is what we want there anyway:
+     *  a tall peak that keeps climbing until the masses touch. The two never both act at full strength.
+     *
+     *  It is a modelling choice rather than a mechanism, and so was the plain dashpot — you cannot run
+     *  a driven oscillator from an arbitrary state in real time without choosing how the transient
+     *  goes away. This choice is the one that makes the slide show the board. Say "there is a little
+     *  damping" to the room; say this to whoever asks the good question. */
+    _coupling() {
+      const d = (this.x2 - this.x1) - CoupledMass.L0;
+      const vrel = this.v2 - this.v1;
+      return this.k * d
+           + this.alphaDev * (vrel - this._relVelStar())     // kills the wobble
+           + this.alphaSteady * vrel;                        // holds resonance to something finite
+    }
+    _drive(t) { return this.F0 * Math.cos(this.wd * t); }
+
+    /** Hold the system's NET MOMENTUM to what the drive alone can account for, and no more.
+     *
+     *  The only external force here is the shaker, so p(t) = integral F dt = (F0/wd)*sin(wd*t) plus a
+     *  constant, and that constant is supposed to be ZERO: the pair floats, the drive averages to
+     *  nothing over a cycle, and the center of mass should rock in place rather than travel. The exact
+     *  seed satisfies that automatically (adding the two board equations gives m1*X1 + m2*X2 = -F0/wd^2,
+     *  which is REAL, so the seeded momentum is zero to machine precision).
+     *
+     *  A SLIDER BREAKS IT, and this is the bug Daniel found. Dragging m1 from 2 to 5 mid-motion keeps
+     *  v1 and changes the mass, so m1*v1 jumps — injecting net momentum out of nowhere. Nothing damps
+     *  the center-of-mass mode (deliberately: the dashpot is internal, between the masses), so that
+     *  injected momentum never decays and the whole system slides off the frame. Measured before this
+     *  fix: raising m1 to 5 threw the momentum from 4.66 to 6.94 and walked the center of mass 4.25
+     *  world units in twelve seconds.
+     *
+     *  Changing a body's mass mid-flight is not a physical operation at all, so what happens next is a
+     *  modelling choice rather than a result. The honest choice is to keep the momentum the drive
+     *  accounts for and discard the rest: subtract the excess from BOTH velocities equally, which
+     *  leaves the RELATIVE velocity — the internal mode, the entire subject of the slide — untouched
+     *  to the last bit, and removes only the spurious drift. Applied every step, so integrator creep
+     *  in the center-of-mass mode cannot accumulate either. */
+    _holdMomentum() {
+      const want = (this.F0 / this.wd) * Math.sin(this.wd * this.simT);
+      const have = this.m1 * this.v1 + this.m2 * this.v2;
+      const dv = (have - want) / (this.m1 + this.m2);
+      this.v1 -= dv; this.v2 -= dv;
+    }
+
+    /** Semi-implicit Euler, re-reading m1/m2/k/alpha EVERY substep. Precomputing at play() is the
+     *  trap DESIGN.md records from Class K's drag — it freezes the motion on a snapshot while the
+     *  render keeps reading the sliders live — and here it would also destroy the fast-sweep
+     *  behaviour, which is the best thing on the slide. Integrate, do not solve. */
+    _advance(dt) {
+      const n = CoupledMass.SUBSTEPS, h = dt / n;
+      for (let i = 0; i < n; i++) {
+        const Fs = this._coupling();
+        const a1 = (Fs + this._drive(this.simT)) / this.m1;
+        const a2 = (-Fs) / this.m2;
+        this.v1 += a1 * h; this.v2 += a2 * h;
+        this.x1 += this.v1 * h; this.x2 += this.v2 * h;
+        this.simT += h;
+        if (this.x2 - this.x1 <= this.rSum) { this._beginReset(); return; }
+      }
+    }
+
+    /** THE MASSES TOUCHED, AND IT IS A CRASH.
+     *
+     *  The first version eased everything home over six-tenths of a second with the sliders walking back, which read
+     *  as the sim quietly tidying up after itself: the force arrows reappeared, the masses drifted
+     *  back to where they started, and nothing about it said "that just broke" (Daniel, 2026-08-26).
+     *  It broke. Resonance ran the amplitude up until two bodies hit each other, and the honest
+     *  punctuation for that is a cut, not a dissolve.
+     *
+     *  So: everything on the canvas — masses, arrows, coil, energy strip — fades to black in about a
+     *  sixth of a second, holds black for half a second, and then the slide fades back up on a fresh,
+     *  stable system at the default stiffness. The half-second of nothing is doing the work; it is
+     *  long enough to register as an event and short enough not to feel like a hang. The energy
+     *  history is dropped rather than punctuated, because after a cut the graph should start again,
+     *  not carry the wreckage across.
+     *
+     *  The state is FROZEN where it was at contact for the fade-out, so what fades is the collision
+     *  itself. Nothing integrates again until the system comes back. */
+    _beginReset() {
+      this.crash = { phase: "out", t: 0 };
+    }
+
+    /** 1 normally; ramps to 0 through the crash fade-out, sits at 0 through the beat, ramps back on
+     *  the way in. Applied as a global alpha over the whole canvas, and the stage behind is black. */
+    get crashAlpha() {
+      const c = this.crash; if (!c) return 1;
+      const C = CoupledMass;
+      if (c.phase === "out") return Math.max(0, 1 - c.t / C.CRASH_OUT_S);
+      if (c.phase === "hold") return 0;
+      return Math.min(1, c.t / C.CRASH_IN_S);
+    }
+
+    /** Drive the crash state machine. Returns true while the scene must NOT integrate. */
+    _crashStep(dt) {
+      const c = this.crash; if (!c) return false;
+      const C = CoupledMass;
+      c.t += dt;
+      if (c.phase === "out") {
+        if (c.t >= C.CRASH_OUT_S) { c.phase = "hold"; c.t = 0; }
+        return true;
+      }
+      if (c.phase === "hold") {
+        if (c.t < C.CRASH_HOLD_S) return true;
+        // The beat is over. Come back as a fresh system at the default stiffness, with the slider
+        // walked home so the panel never disagrees with the physics, and no history behind it.
+        this.k = this.kT = CoupledMass.K_DEF;
+        if (this.onParams) this.onParams(this.m1, this.m2, this.k);
+        this.bhist = null;
+        this.reset(true);
+        c.phase = "in"; c.t = 0;
+        return false;                       // it runs while it fades up, so it arrives already moving
+      }
+      if (c.t >= C.CRASH_IN_S) this.crash = null;
+      return false;
+    }
+
+    /** Ease the live parameters onto whatever the controls are asking for, over ~0.3 s.
+     *
+     *  A slider DRAG already arrives as a stream of small changes and needs none of this. A CLICK on
+     *  the slider track, or a preset button, arrives as one discontinuous jump — and k appears inside
+     *  the spring energy, so the energy strip took a visible KINK at that instant: half a joule of
+     *  spring PE materialising between two frames because ½k·delta² changed while delta did not. The
+     *  kink is real given an instantaneous k, and an instantaneous k is the unphysical part. Easing it
+     *  turns every click into a fast drag, which the sim already handles, and the strip stays smooth.
+     *  Deliberately quick: slow enough to be continuous, fast enough that "jump to resonance" still
+     *  reads as a jump rather than a journey. */
+    _slew(dt) {
+      const f = 1 - Math.exp(-dt / CoupledMass.SLEW_TAU);
+      this.m1 += (this.m1T - this.m1) * f;
+      this.m2 += (this.m2T - this.m2) * f;
+      this.k += (this.kT - this.k) * f;
+    }
+
+    step(now) {
+      if (this.paused) { this.last = now; return; }
+      const wall = Math.min((now - this.last) / 1000, 0.05);
+      this.last = now;
+      const dt = wall * (this.slomo ? CoupledMass.SLOMO_K : 1);
+      if (this._crashStep(dt)) { this.render(); return; }   // frozen mid-crash: fade only
+      this._slew(dt);
+      this._advance(dt);
+      this._holdMomentum();
+      this._blurHist();
+      this._pushHistory();
+      this.render();
+    }
+
+    /** House motion blur: velocity-blue after-images behind each disc, drawn through the SHARED
+     *  SimBase._motionBlur so a live body smears exactly like a baked one. Straight-line motion here,
+     *  so blur ONLY and no white trail — the trail is for curved paths (tokens.json, "motion"). Needs
+     *  a short position history because the state is integrated rather than analytic. */
+    _blurHist() {
+      const h = (this.bhist || (this.bhist = []));
+      h.push({ t: this.simT, x1: this.x1, x2: this.x2 });
+      const keep = HOUSE.blurFrames * HOUSE.blurDt * 1.2;
+      while (h.length > 1 && this.simT - h[0].t > keep) h.shift();
+    }
+    _backAt(tBack, key) {
+      const h = this.bhist; if (!h || !h.length) return null;
+      if (tBack <= h[0].t) return { x: h[0][key], y: 0 };
+      for (let i = h.length - 1; i >= 0; i--) {
+        if (h[i].t <= tBack) {
+          const a = h[i], b = h[i + 1] || a, f = (b.t === a.t) ? 0 : (tBack - a.t) / (b.t - a.t);
+          return { x: a[key] + (b[key] - a[key]) * f, y: 0 };
+        }
+      }
+      return { x: h[0][key], y: 0 };
+    }
+
+    _pushHistory() {
+      const e = this._energies();
+      this.hist.push({ t: this.simT, ke1: e.ke1, ke2: e.ke2, spe: e.spe, brk: !!this._gapPending });
+      this._gapPending = false;
+      while (this.hist.length > 2 && this.simT - this.hist[0].t > this.gTail * 1.1) this.hist.shift();
+    }
+
+    // ---- framing: play area on top, energy strip beneath, on the HOUSE stack tokens -------------
+    resize() {
+      const dpr = window.devicePixelRatio || 1, w = this.c.clientWidth || this.c.width, h = this.c.clientHeight || this.c.height;
+      this.c.width = Math.round(w * dpr); this.c.height = Math.round(h * dpr);
+      this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      this.W = w; this.H = h;
+      // Band height is the house graph.stack_* geometry, so a live strip and a baked one are the same
+      // object. The BOTTOM is not: a baked clip has nothing under it, and this sim has a live control
+      // bar. The house 6% bottom margin put the strip straight through the slider (Daniel,
+      // 2026-08-26), so the strip is lifted clear of the bar's MEASURED height — measured, because the
+      // bar wraps at narrow widths and a hard-coded reserve would be wrong exactly when it wraps.
+      // Same rule HandLiftEnergy uses (DESIGN, "Layout, top to bottom: hand, energy strip, control bar").
+      this.gh = h * HOUSE.stackGraphH;
+      const bar = this.c.parentElement && this.c.parentElement.querySelector(".simctrls");
+      const barH = bar ? bar.getBoundingClientRect().height : h * 0.11;
+      this.gy = h - barH - h * (HOUSE.stackBottomPct / 100) - this.gh;
+      this.playH = this.gy - h * (HOUSE.stackGapPct / 100);
+      this.scale = Math.min(w / HOUSE.frameW, this.playH / CoupledMass.PLAY_WORLD_H);
+      this.ox = (w - HOUSE.frameW * this.scale) / 2;
+    }
+    /** The masses ride ABOVE the middle of the play area, not on it. The energy stack is allowed to
+     *  overshoot its own ceiling and climb into this space near resonance (see _graph), so the scene
+     *  gets out of its way — and the picture of the graph swallowing the animation is the point. */
+    sy(y) { return this.playH * CoupledMass.PLAY_CY - (y - this.focusY) * this.scale; }
+
+    // ---- drawing -----------------------------------------------------------------------------
+    /** The house zigzag between the two masses, in scenery gray. NEVER green: the coil is structure,
+     *  the FORCE is the role color (style/OBJECTS.md, "Springs & elastic"). */
+    _coil() {
+      const ctx = this.ctx;
+      const ax = this.sx(this.x1 + this.r1), ay = this.sy(0);
+      const bx = this.sx(this.x2 - this.r2), by = this.sy(0);
+      const L = Math.max(bx - ax, 1);
+      const width = HOUSE.springWidth * this.scale, lead = HOUSE.springLead * this.scale;
+      // Coil count nudges with stiffness as a GRAPHICAL cue only, clamped to the token band — it is
+      // never a physical coil count (tokens.json, "spring").
+      const frac = (this.k - 2) / 38;
+      const coils = Math.round(Math.max(HOUSE.springCoilsMin,
+                    Math.min(HOUSE.springCoilsMax, HOUSE.springCoilsMin + frac * (HOUSE.springCoilsMax - HOUSE.springCoilsMin))));
+      const s0 = lead * 0.5, s1 = L - lead * 0.5, span = s1 - s0;
+      ctx.save(); ctx.strokeStyle = HOUSE.boundary; ctx.lineCap = "round"; ctx.lineJoin = "round";
+      ctx.lineWidth = Math.max(this.scale * 0.045, 3);
+      ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(ax + s0, ay);
+      if (span > 0) for (let i = 1; i < 2 * coils; i++) {
+        ctx.lineTo(ax + s0 + span * i / (2 * coils), ay + (i % 2 === 1 ? -width / 2 : width / 2));
+      }
+      ctx.lineTo(ax + s1, ay); ctx.lineTo(bx, by); ctx.stroke(); ctx.restore();
+    }
+
+    /** A quiet pearl label under a disc. Muted, caption tier — a name, not a readout. */
+    _name(ctx, x, r, txt) {
+      ctx.save(); ctx.fillStyle = HOUSE.muted; ctx.textAlign = "center"; ctx.textBaseline = "top";
+      ctx.font = (HOUSE.sizeCaption * this.H * 0.9) + "px " + HOUSE.fontSans;
+      ctx.fillText(txt, this.sx(x), this.sy(0) + r * this.scale + this.H * 0.012);
+      ctx.restore();
+    }
+
+    /** The numbers, TOP RIGHT under the `123` toggle that hides them, right-aligned — the corner every
+     *  other sim in the suite puts its readout in. No verdict line: a sim that announces "NODE — the
+     *  driven mass stops" is narrating for Daniel, and the narration is his (Daniel, 2026-08-25). The
+     *  numbers say where you are; whether that is interesting is the room's business. */
+    /** Two numbers, both frequencies, both with units. x2/x1 used to be the third line and is gone
+     *  (Daniel, 2026-08-26): the ratio is what the SCENE shows — one mass barely moving while the
+     *  other swings — and printing it invites the room to read the number instead of the picture.
+     *  What the picture cannot show is where the drive sits relative to the natural frequency, which
+     *  is exactly what these two lines are for. */
+    _readout(ctx) {
+      const padR = this.W * 0.02, top = this.H * 0.09, fs = HOUSE.sizeCaption * this.H;
+      ctx.save(); ctx.textAlign = "right"; ctx.textBaseline = "top";
+      ctx.font = fs + "px " + HOUSE.fontMono; ctx.fillStyle = HOUSE.muted;
+      [ "ω_d = " + this.wd.toFixed(2) + " rad/s",
+        "ω = √(k/m₁₂) = " + this.omega.toFixed(2) + " rad/s",
+      ].forEach((t, i) => ctx.fillText(t, this.W - padR, top + i * fs * 1.35));
+      ctx.restore();
+    }
+
+    _graph(ctx) {
+      // Scrolling stacked bands, "now" pinned to the right edge, history flowing left, on the frozen
+      // eMax. Same geometry and painter's order as LauncherGame, so the live strip and a baked one
+      // are the same object.
+      const axisX = this.W * 0.062, x0 = axisX, x1 = this.W * 0.985, gy = this.gy, gh = this.gh;
+      const ax = axisX, ay = gy + gh;
+      const timeAxis = () => {
+        ctx.save(); ctx.strokeStyle = HOUSE.ink; ctx.lineWidth = 2; ctx.lineCap = "butt";
+        ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(x1, ay); ctx.stroke(); ctx.restore();
+      };
+      ctx.save(); ctx.strokeStyle = HOUSE.ink; ctx.fillStyle = HOUSE.ink;
+      ctx.lineWidth = 2; ctx.lineCap = "butt";
+      ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(ax, ay - gh * 0.45); ctx.stroke();
+      ctx.font = (HOUSE.sizeCaption * this.H * 0.85) + "px " + HOUSE.fontSans;
+      ctx.textAlign = "center"; ctx.textBaseline = "top"; ctx.fillText("time", ax + this.W * 0.022, ay + 4);
+      ctx.save(); ctx.translate(ax - 6, ay - gh * 0.225); ctx.rotate(-Math.PI / 2);
+      ctx.textBaseline = "bottom"; ctx.fillText("energy", 0, 0); ctx.restore();
+      ctx.restore();
+
+      const h = this.hist; if (h.length < 2) { timeAxis(); return; }
+      const t1 = this.simT, t0 = t1 - this.gTail;
+      // NO CEILING. The axis is still frozen at eMax — a band's height means the same joules all the
+      // way through — but a stack taller than eMax is drawn where it actually lands, climbing out of
+      // the strip and up over the masses as resonance runs away. Clipping it at the top read as the
+      // graph politely declining to answer; letting it swallow the animation is the honest picture,
+      // and on this slide it is also the lesson (Daniel, 2026-08-26).
+      const yOf = v => gy + gh - (v / this.eMax) * gh;
+      const xOf = t => x0 + (Math.max(t0, Math.min(t1, t)) - t0) / this.gTail * (x1 - x0);
+      const cum = h.map(p => ({ t: p.t, brk: p.brk, v: [p.ke1, p.ke1 + p.ke2, p.ke1 + p.ke2 + p.spe] }));
+      const cols = [this.keCol[0], this.keCol[1], HOUSE.spring];
+      const runs = []; let run = null;
+      for (const c of cum) { if (!run || c.brk) { run = []; runs.push(run); } run.push(c); }
+      for (let bi = cols.length - 1; bi >= 0; bi--) {      // painter's order, lowest band LAST: no seams
+        ctx.save(); ctx.fillStyle = cols[bi];
+        for (const rn of runs) {
+          if (rn.length < 2) continue;
+          ctx.beginPath(); ctx.moveTo(xOf(rn[0].t), gy + gh);
+          for (const c of rn) ctx.lineTo(xOf(c.t), yOf(c.v[bi]));
+          ctx.lineTo(xOf(rn[rn.length - 1].t), gy + gh); ctx.closePath(); ctx.fill();
+        }
+        ctx.restore();
+      }
+      timeAxis();
+    }
+
+    render() {
+      const ctx = this.ctx; ctx.clearRect(0, 0, this.W, this.H);
+      const a = this.crashAlpha;
+      if (a <= 0) return;                       // the beat: nothing on screen at all
+      ctx.save(); ctx.globalAlpha = a;
+      const s = CoupledMass.FORCE_SCALE;
+      this._coil();
+      // The third-law pair, from ONE scalar so the two can never disagree.
+      const Fs = this._coupling();
+      this._arrow(this.x1, 0, +Fs * s, 0, HOUSE.spring, 1);      // on m1, toward m2 when stretched
+      this._arrow(this.x2, 0, -Fs * s, 0, HOUSE.spring, 1);      // on m2, the equal and opposite partner
+      // The shaker, on m1 only. Light-blue = applied (roles.applied), never the velocity blue.
+      this._arrow(this.x1, 0, this._drive(this.simT) * s, 0, HOUSE.applied, 1);
+      // Blur first, so the after-images sit UNDER the body (house order).
+      this._motionBlur(this.r1, k => this._backAt(this.simT - k * HOUSE.blurDt, "x1"));
+      this._motionBlur(this.r2, k => this._backAt(this.simT - k * HOUSE.blurDt, "x2"));
+      this._disc(this.x1, 0, this.r1, this.massCol[0], 1);
+      this._disc(this.x2, 0, this.r2, this.massCol[1], 1);
+      this._name(ctx, this.x1, this.r1, "m₁");     // first-year class: say which mass is which
+      this._name(ctx, this.x2, this.r2, "m₂");
+      if (this.showReadout) this._readout(ctx);
+      this._graph(ctx);
+      ctx.restore();
+    }
+  }
+  // THE MASSES ARE FIXED (Daniel, 2026-08-25). Three sliders made this read as a dynamics-course
+  // instrument rather than an intro-physics slide, and the mass dependence — real, and interesting —
+  // is not what this class is for. A heavy body with a light one hanging off it also simply READS as a
+  // neck, which is where the class is going. 5:1 puts the two radii at 1.7:1 on screen.
+  CoupledMass.M1_DEF = 5.0;      // kg — the body. FIXED.
+  CoupledMass.M2_DEF = 1.0;      // kg — the head. FIXED.
+  CoupledMass.K_DEF = 14.0;      // N/m — ABOVE the node (9), so one downward drag walks
+                                 // node (9) -> resonance (7.5) -> isolation, in board-4's order
+  CoupledMass.WD = 3.0;          // rad/s — fixed drive; period ~2.1 s reads clearly from the back of the room
+  CoupledMass.F0 = 20.0;         // N — sized against the COLLISION HEADROOM, not just against how big the
+                               // default looks. The relative amplitude is F0/(m1*(wd^2 - omega^2)), which
+                               // grows as k falls toward resonance, so F0 sets which k values can survive
+                               // at all: at F0 = 16 with L0 = 3.4 the steady state at k = 4 already sat
+                               // within 12% of the masses touching, and EVERY sweep collided no matter how
+                               // fast — which reads as "the sim is fragile" rather than "resonance is".
+  CoupledMass.ZETA_DEV = 0.30;   // damping on the WOBBLE only — free to be large, it vanishes at steady state
+  CoupledMass.ZETA_RES = 0.030;  // the ordinary dashpot, which only has authority ON resonance
+  CoupledMass.RES_BAND = 0.15;   // |omega^2 - wd^2|/omega^2 over which the two damping models blend.
+                                 // Must stay BELOW the node's own distance from resonance (0.167 for
+                                 // the fixed 5:1 pair) or the node falls inside the blend and the
+                                 // ordinary dashpot spoils its zero — at 0.30 the node read 1.1% of
+                                 // x2 instead of 0.01%. It must also stay ABOVE the collision band
+                                 // (r < 0.09), so 0.15 is the widest value that clears both.
+  CoupledMass.SLEW_TAU = 0.22;   // s — a click on a slider track becomes a ~0.7 s drag, which drops the
+                                 // energy strip's kink at that instant from 39x the ordinary
+                                 // frame-to-frame variation to under 4x. Longer buys little (0.30 s
+                                 // only reaches 3x) and starts to read as a journey rather than a jump.
+  CoupledMass.EMAX = 24.0;       // FIXED energy-axis ceiling (joules, world units) — see _freezeScale
+  CoupledMass.L0 = 5.0;          // world m — spring natural length, i.e. the collision headroom is
+                               // L0 - (r1 + r2) ~ 3.6. Chosen so the k in [5, 7] resonance neighbourhood
+                               // collides and everything outside it survives, which is the behaviour the
+                               // slide is about.
+  CoupledMass.X1EQ = HOUSE.frameW * 0.30;  // m1 sits left of centre; m2 is L0 to its right, and the pair
+                                 // then has symmetric room to swing before either leaves the frame
+  CoupledMass.PLAY_WORLD_H = 4.2;
+  CoupledMass.PLAY_CY = 0.40;    // the masses' centre line, as a fraction of the play area's height —
+                                 // above the middle, leaving room beneath for the energy stack to climb
+                                 // into as it overshoots near resonance
+  CoupledMass.SUBSTEPS = 16;
+  CoupledMass.SLOMO_K = 0.3;
+  CoupledMass.CRASH_OUT_S = 0.16;   // s — fade the whole canvas down at contact. Short: this is a cut.
+  CoupledMass.CRASH_HOLD_S = 0.50;  // s — the beat. Long enough to register as an event, short enough
+                                    // not to read as a hang. The half second is doing all the work.
+  CoupledMass.CRASH_IN_S = 0.35;    // s — fade back up on the fresh system, which is already running
+  CoupledMass.SEED_CAP = 1.6;    // world m — a seed near resonance would open mid-collision
+  CoupledMass.FORCE_SCALE = 0.09;
+  CoupledMass.HEADROOM = 3.0;    // energy-axis headroom over the steady-state peak — see _freezeScale
+
+  function mountCoupledMass(section) {
+    if (!section.querySelector(".simcanvas")) section.insertAdjacentHTML("beforeend", COUPLED_CONTROLS_HTML);
+    const d = section.dataset;
+    const canvas = section.querySelector(".simcanvas");
+    const sim = new CoupledMass(canvas, {
+      m1: d.m1 !== undefined ? +d.m1 : undefined,
+      m2: d.m2 !== undefined ? +d.m2 : undefined,
+      k: d.k !== undefined ? +d.k : undefined,
+      wd: d.wd !== undefined ? +d.wd : undefined,
+      slomo: d.slomo === "true"
+    });
+    const q = s => section.querySelector(s);
+    const readonly = window.self !== window.top;              // speaker-view copy: read-only
+    // ONE SLIDER. The masses are FIXED — see the header for why; a slide that wants different ones
+    // sets data-m1 / data-m2, but nobody moves them live.
+    const rng = { k: q(".s-k") };
+    const num = { k: q(".n-k") };
+    const clamp = (el, v) => Math.max(+el.min, Math.min(+el.max, v));
+    // The slider feeds the integrator. It does NOT re-seed — see the header.
+    const apply = () => {
+      sim.kT = +rng.k.value;
+      if (sim.paused) { sim.k = sim.kT; sim.render(); }
+    };
+    rng.k.value = sim.k;
+    Object.keys(rng).forEach(key => {
+      const s = rng[key], n = num[key]; n.value = s.value;
+      s.addEventListener("input", () => { n.value = s.value; apply(); });
+      n.addEventListener("input", () => { const v = parseFloat(n.value); if (isNaN(v)) return; s.value = clamp(s, v); apply(); });
+      n.addEventListener("change", () => { const v = parseFloat(n.value); n.value = isNaN(v) ? s.value : clamp(s, v); s.value = n.value; apply(); });
+    });
+    // The collision reset walks the controls home too, so the panel never disagrees with the physics.
+    sim.onParams = (m1, m2, k) => { rng.k.value = k; num.k.value = k; };
+    const playBtn = q(".play");
+    const refreshPlay = () => { playBtn.textContent = sim.paused ? "▶ Play" : "⏸ Pause"; };
+    sim.refreshPlayBtn = refreshPlay;
+    playBtn.addEventListener("click", () => { sim.paused = !sim.paused; if (!sim.paused) sim.last = performance.now(); refreshPlay(); });
+    q(".reset").addEventListener("click", () => {
+      sim.k = sim.kT = CoupledMass.K_DEF;
+      sim.onParams(sim.m1, sim.m2, sim.k);
+      sim.crash = null;                       // cancel a collision cut in flight, or Reset does nothing
+      sim.bhist = null;
+      sim.reset(true); refreshPlay(); sim.render();
+    });
+    const slo = q(".slomo");
+    if (slo) { slo.classList.toggle("on", sim.slomo); slo.addEventListener("click", () => { sim.slomo = !sim.slomo; slo.classList.toggle("on", sim.slomo); }); }
+    const rt = q(".toggle-readout");
+    if (rt) { rt.classList.toggle("on", sim.showReadout);
+              rt.addEventListener("click", () => { sim.showReadout = !sim.showReadout; rt.classList.toggle("on", sim.showReadout); sim.render(); }); }
+    apply();
+    if (readonly) {
+      canvas.style.pointerEvents = "none";
+      [playBtn, q(".reset"), slo, rt, rng.k, num.k].forEach(el => { if (el) el.disabled = true; });
+      const c = q(".simctrls"); if (c) c.style.opacity = ".4";
+    }
+    let raf = null;
+    sim.start = () => { sim.everPlayed = true; if (raf) return; const loop = (now) => { sim.step(now); raf = requestAnimationFrame(loop); }; sim.last = performance.now(); raf = requestAnimationFrame(loop); };
+    sim.stop = () => { if (raf) { cancelAnimationFrame(raf); raf = null; } };
+    window.addEventListener("resize", () => { sim.resize(); sim.render(); });
+    sim.render();
+    return sim;
+  }
+
   // Dispatcher: pick the preset from data-sim (default projectile).
   // The closed vocabulary of data-sim values, so mount() can tell "no attribute" (fall back to the
   // projectile, as it always has) from "an attribute nobody implemented" (say so). Keep in step with
@@ -3668,7 +4344,7 @@
     "projectile", "elevator", "handlift", "normal", "handlift-energy", "handliftenergy",
     "projectile2d", "2d", "deflect", "game", "circle", "circular", "oscillator", "spring",
     "oscillator-game", "springgame", "attractor2d", "attractor", "launcher", "launchergame",
-    "platformbounce", "frictionramp"
+    "platformbounce", "frictionramp", "coupledmass"
   ]);
 
   function mount(section) {
@@ -3698,6 +4374,7 @@
     if (kind === "launcher" || kind === "launchergame") return mountLauncherGame(section);
     if (kind === "platformbounce") return mountPlatformBounce(section);
     if (kind === "frictionramp") return mountFrictionRamp(section);
+    if (kind === "coupledmass") return mountCoupledMass(section);
     return mountProjectile(section);
   }
 
@@ -3866,5 +4543,5 @@
     return sim;
   }
 
-  window.Interactive = { Projectile, Projectile2D, HandLift, HandLiftEnergy, DeflectGame, Circular, Oscillator, SpringGame, Attractor2D, LauncherGame, PlatformBounce, FrictionRamp, mount, HOUSE, betaOf, dragStep, dragAdvance, histAt };
+  window.Interactive = { Projectile, Projectile2D, HandLift, HandLiftEnergy, DeflectGame, Circular, Oscillator, SpringGame, Attractor2D, LauncherGame, PlatformBounce, FrictionRamp, CoupledMass, mount, HOUSE, betaOf, dragStep, dragAdvance, histAt };
 })();
