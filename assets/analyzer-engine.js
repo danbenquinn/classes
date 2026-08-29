@@ -829,6 +829,9 @@ document.querySelectorAll("#tools button").forEach(b=>b.addEventListener("click"
 /*  NARRATIVE DECK — Get Air (first-pass script; content is Daniel's to rewrite)  */
 /* ============================================================== */
 const LOCK_S = 60;   // seconds a wrong MC answer locks the choices, to force discussion (easy to tune)
+// A step may override it with `lockSeconds:` — the pause is there to buy a discussion, so a question
+// with nothing to discuss (Workshop 0's octopus, a pure trivia demo of the mechanic) should not cost
+// a full minute. Set it per step in the manifest heading; omit it and the house 60 s applies.
 // House-standard title-slide teaser: a full-screen reminder. (Workshop 0 overrides it with the download-phyphox
 // prompt; only the first workshop tells students to install the app — later ones just remind them to go full-screen.)
 const TEASER_FULLSCREEN = "<div style='text-align:left'>For the best experience, go <b>full-screen</b>:<br>press <b>F11</b> (<b>⌃⌘F</b> on a Mac).</div>";
@@ -1333,7 +1336,7 @@ function renderStep(){
           d.classList.add("wrong");
           choiceEls.forEach(x=>{ x.dataset.locked="1"; x.classList.add("locked"); });
           d.classList.remove("locked");                              // keep the wrong pick readable in red
-          let rem=LOCK_S;
+          let rem=Number.isFinite(st.lockSeconds)?st.lockSeconds:LOCK_S;
           const wrongMsg=fbText(st,"wrong","<b>Discuss for a minute</b>, then try again.");
           const paint=()=>setFb(wrongMsg+"<br><span style='color:var(--muted)'>"+rem+"s</span>");
           paint();

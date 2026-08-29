@@ -89,12 +89,41 @@ const NARR = [
     feedback:"That is your hand's period, measured. Compare it to the <b>2 s</b> you were aiming for." },
 
   // 6 — octopus (multiple-correct demo)
-  { id:"octopus", check:"Sometimes workshops will have embedded concept questions that you must answer before moving on. How many hearts does an octopus have?",
+  { id:"octopus", lockSeconds:15, check:"Sometimes workshops will have embedded concept questions that you must answer before moving on. How many hearts does an octopus have?",
     choices:["0","1","3","6 $\\div$ 2","∞","No idea"], answer:[2,3,5],
-    feedbackWhen:{ wrong:"<b>Discuss for a minute</b>, then try again. Hint: the answer is 3." },
+    feedbackWhen:{ wrong:"Not quite. If you get a question wrong, you'll be asked to pause and try again. <i>Hint: the answer is 3</i>." },
     feedback:"Octopuses have three hearts: two gill hearts and one systemic. Some questions in these decks "
        +"have more than one right answer, and the tool lights up <b>all</b> of them. Wrong answers will prompt "
        +"you to rethink the question for a minute, then try again." },
+
+  // 6a — vector vs. component (the peaks step asked for a number; a vector needs a direction too)
+  { id:"vector-answer", check:"Suppose you had been asked for the acceleration <b>vector</b> at that instant instead. What is the best answer?",
+    lead:"<p>You entered a <b>number</b> for $\\ddot{x}_1$ before — the acceleration at $t_1$, along $x$.</p>",
+    choices:["$\\dot{x}_1$","$x_1$","$\\ddot{x}_1\\,\\hat{\\underline y}$","$-\\ddot{x}_1$","$\\ddot{x}_1\\,\\hat{\\underline x}$","$|\\ddot{x}_1|$"],
+    answer:4,
+    feedbackWhen:{ wrong:"<b>Discuss for a minute</b>, then try again. Hint: what does a vector have that a bare number does not?" },
+    feedback:"A vector carries a <b>size and a direction</b>. $\\ddot{x}_1$ is only the size; hanging the unit vector $\\hat{\\underline x}$ on it says which way the phone was accelerating." },
+
+  // 6b — the other two axes are small because the STUDENT made them small, not because the phone did
+  { id:"other-axes", check:"Both are almost certainly much smaller than $\\ddot{x}$. Why?",
+    lead:"<p>Your phone measured all three components the whole time. In the <b>Signal</b> dropdown, click through to <b>Acceleration $\\ddot{y}$</b> and <b>Acceleration $\\ddot{z}$</b> and look at them.</p>",
+    choices:[
+      "A phone's $y$ and $z$ accelerometers are less sensitive than its $x$ one.",
+      "phyphox keeps the axis with the biggest signal and filters the other two out.",
+      "Gravity cancels the $y$ and $z$ accelerations out.",
+      "Nearly the whole acceleration vector lay along $x$; $\\ddot{y}$ and $\\ddot{z}$ caught only wobble in your hand."],
+    answer:3,
+    feedback:"Right. The $\\ddot{y}$ and $\\ddot{z}$ signals are small because you were focused on moving along the $x$ axis only; any $\\ddot{y}$ and $\\ddot{z}$ signal is just your hand drifting, tilting and bobbing." },
+
+  // 6c — components are independent: the target constrained x and nothing else
+  { id:"axes-independent", check:"To produce the target sinusoid in $\\ddot{x}$, could $\\ddot{y}$ and $\\ddot{z}$ theoretically have been just as large or larger than $\\ddot{x}$?",
+    choices:[
+      "No — the acceleration has a fixed size, so a larger $\\ddot{y}$ would have to shrink $\\ddot{x}$.",
+      "Yes — the three components are independent. Theoretically you could have bounced up and down as you waved left and right, causing $\\ddot{y}$ to surge and leaving $\\ddot{x}$ as it was.",
+      "No — a phone can only accelerate along one axis at a time.",
+      "Only if you tilted the phone as you waved."],
+    answer:1,
+    feedback:"Yes. You held $\\ddot{y}$ and $\\ddot{z}$ near zero because waving in a straight line is the easy way to do it, not because a sinusoidal $\\ddot{x}$ requires it." },
 
   // 7 — QR passcode (get used to the flow; the QR leads to a video repeating the passcode "cornbread")
   { id:"qr", code:{ hash:6685508795628660, label:"Passcode",
@@ -103,21 +132,50 @@ const NARR = [
 
   // 8 — Fit Sine, two ways (auto-selects the Fit Sine tool)
   { id:"fit-two-ways", tool:"fitsine",
-    lead:"<p>Switch to <b>Fit Sine</b> and <b>drag to select 4 full cycles</b> of your wave.</p><p><b>1.</b> Leave <b>fit</b> checked next to <b>Amp</b> and <b>Freq</b>. Leaving it checked will tweak both amplitude and frequency to get the best fit. Read the <b>$R^2$</b> and enter it as <b>$R^2$ (free fit)</b> below.</p><p><b>2.</b> Now <b>type the target values</b>: Amp <b>4.93</b> ($\\pi^2/2$) and Freq <b>0.5</b> ($f=1/\\tau$ with $\\tau = 2$ s). Typing a value locks it. Now only phase offset remains fitted. Read the new <b>$R^2$</b> and enter it as <b>$R^2$ (target fit)</b>.</p><p class=\"aside\">Hover the <b>$R^2$</b> label on the plot to see its definition.</p>",
+    lead:"<p>Be sure you've switched the <b>Signal</b> back to <b>Acceleration $\\ddot{x}$</b>. Switch to <b>Fit Sine</b> and <b>drag to select 4 full cycles</b> of your wave.</p><p><b>1.</b> Leave <b>fit</b> checked next to <b>Amp</b> and <b>Freq</b>. Leaving it checked will tweak both amplitude and frequency to get the best fit. Read the <b>$R^2$</b> and enter it as <b>$R^2$ (free fit)</b> below.</p><p><b>2.</b> Now <b>type the target values</b>: Amp <b>4.93</b> ($\\pi^2/2$) and Freq <b>0.5</b> ($f=1/\\tau$ with $\\tau = 2$ s). Typing a value locks it. Now only phase offset remains fitted. Read the new <b>$R^2$</b> and enter it as <b>$R^2$ (target fit)</b>.</p><p class=\"aside\">Hover the <b>$R^2$</b> label on the plot to see its definition.</p>",
     inputs:[ {label:"$R^2$ (free fit)",   key:"r2free",   unit:"", range:[-10,1]},
              {label:"$R^2$ (target fit)", key:"r2target", unit:"", range:[-10,1]} ] },
 
   // 9 — why did $R^2$ drop? (single-correct)
   { id:"why-r2-drops", check:"Your free-fit $R^2$ is probably higher than your target-fit $R^2$. Why?",
     choices:[
-      "The free fit finds the best possible sine for the motion you actually made; forcing the ideal target values fits your real, imperfect motion worse.",
       "Locking the values introduced a bug in the tool.",
       "The target motion is physically impossible.",
+      "The free fit finds the best possible sine for the motion you actually made; forcing the ideal target values fits your real, imperfect motion worse.",
       "$R^2$ always drops when you enter numbers by hand."],
-    answer:0,
+    answer:2,
     feedback:"Right. A free fit can only do <b>better or equal</b> — it's allowed to pick whatever sine fits. The moment "
        +"you pin it to the <i>ideal</i> 0.5 Hz, $\\pi^2/2$ wave, any way your hand strayed from that ideal shows up as a lower "
        +"$R^2$." },
+
+  // 9a — integrate the ideal wave once
+  { id:"perfect-vel", check:"What would $\\dot{x}$ look like?",
+    lead:"<p>Set your own data aside for a moment. Suppose you had produced a <b>perfect</b> sine wave for acceleration, $\\ddot{x}(t) = \\frac{\\pi^2}{2}\\sin(\\pi t)$, starting from $\\ddot{x} = 0$ at $t = 0$, and never drifting.</p>",
+    choices:["A perfect cosine wave","A perfect <b>negative</b> cosine wave","A perfect sine wave","A straight line, ramping up"],
+    answer:1,
+    feedback:"Right: Integrate once and get $\\dot{x} = -\\frac{\\pi}{2}\\cos(\\pi t)$." },
+
+  // 9b — and now UP the tower instead (Class A: position, velocity, acceleration, jerk, ...)
+  { id:"perfect-jerk", check:"What would the jerk look like?",
+    lead:"<p>Same perfect sine for acceleration, $\\ddot{x}(t) = \\frac{\\pi^2}{2}\\sin(\\pi t)$, but now consider the <b>other</b> way.</p>",
+    choices:["A perfect negative cosine wave","A perfect sine wave","A perfect cosine wave","Zero — a sinusoid has no jerk"],
+    answer:2,
+    feedback:"Right: $\\dddot{x} = \\frac{\\pi^3}{2}\\cos(\\pi t)$. Note the chain rule bringing out another $\\pi$." },
+
+  // 9c — pop, the SIXTH derivative: four derivatives past acceleration lands back on the same sine
+  { id:"perfect-pop", check:"What would the pop, the sixth derivative of position, look like?",
+    lead:"<p>Same perfect sine for acceleration, $\\ddot{x}(t) = \\frac{\\pi^2}{2}\\sin(\\pi t)$. After jerk comes <b>snap</b>, then <b>crackle</b>, then <b>pop</b>.</p>",
+    choices:["A perfect sine wave","A perfect negative sine wave","A perfect cosine wave","A perfect negative cosine wave"],
+    answer:0,
+    feedback:"Exactly: back to a positive sine wave. Each derivative walks sine to cosine to negative sine to negative cosine and around again, so four of them land you back on the shape you started with for $\\ddot{x}$, but with an amplitude $\\pi^4 \\approx 97$ times bigger." },
+
+  // 9d — six derivatives, six factors of omega: doubling f costs 2^6. The 16 distractor is the
+  //      one a student gets by counting only acceleration -> pop and forgetting acceleration moved too.
+  { id:"double-pop", check:"Roughly how much would the peak pop grow compared to what it is at $f =$ 0.5 Hz?",
+    lead:"<p>You waved your phone 1 m back-and-forth at 0.5 Hz. Suppose instead you had waved your phone <b>twice as fast</b> — 1 Hz, <i>i.e.</i> a full cycle every 1 s instead of every 2 s.</p>",
+    choices:["Not at all — the travel is the same","4 times","16 times","64 times"],
+    answer:3,
+    feedback:"Pop is <b>six</b> derivatives of position and each one brings down another factor of $\\omega$, so doubling the frequency multiplies it by $2^6 = 64$." },
 
   // 10 — the challenge (Fit Sine LOCKED to target; x-axis only; high-score colorbar; terminal step)
   { id:"challenge", tool:"fitsine", lock:{amp:Math.PI*Math.PI/2, freq:0.5}, challenge:true, requireAxis:"x",
