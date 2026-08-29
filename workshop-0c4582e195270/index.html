@@ -57,7 +57,7 @@ const NARR = [
   // 1 — EQUATION: position from acceleration (gate on 1 m peak-to-peak, 0.5 Hz)
   { id:"solve-wave", top:"html", checkKind:"posfromacc",
     html:"<div class='bigeq'>$\\displaystyle \\ddot{x}(t) = \\frac{\\pi^2}{2}\\sin(\\pi t)$<span class='units'>m/s²</span></div>",
-    lead:"<p>This ODE is the <b>acceleration</b> along $x$ of the wave you'll try to make with your phone. Solve it for the <b>position</b> $x(t)$: give the <b>peak-to-peak amplitude</b> (how far it travels end to end, in meters) and the <b>period</b> (s)</p>",
+    lead:"<p>The expression above is the <b>$x$ acceleration</b> of the motion you'll try to make with your phone. To start, solve for the <b>$x$ position</b>, $x(t)$, and determine the <b>peak-to-peak amplitude</b> (how far your phone should travel end to end, in meters) and the <b>period</b> (s)</p>",
     inputs:[ {label:"peak-to-peak amplitude", key:"pp", unit:"m", range:[0,10]},
              {label:"period $\\tau$", key:"tau_pos", unit:"s", range:[0,20]} ],
     feedback:"Right — integrating $\\ddot{x} = \\tfrac{\\pi^2}{2}\\sin(\\pi t)$ twice gives $x(t) = -\\tfrac{1}{2}\\sin(\\pi t)$: <b>0.5 m</b> either side of center, so <b>1 m</b> peak to peak, with a <b>period of 2 s</b> — one full back-and-forth every two seconds." },
@@ -69,7 +69,7 @@ const NARR = [
   // 3 — load (gate: data)
   { id:"load", gate:"data",
     feedbackWhen:{ any:"Nothing loaded yet — the file picker is at the top left. Upload the <code>.zip</code> phyphox emailed you; you don't need to unzip it." },
-    lead:"<p><b>Get your file onto this laptop and load it.</b> Email or AirDrop the exported <code>.zip</code> to yourself, then open it with the Choose File button (top-left). Your data should appear above.</p><p class=\"aside\">In the <b>Signal</b> dropdown, ensure that Acceleration $\\ddot{x}$ (m/s$^2$) is selected.</p>" },
+    lead:"<p><b>Get your file onto this computer and load it.</b> Email or AirDrop the exported <code>.zip</code> to yourself, then open it with the Choose File button (top-left). Your data should appear above.</p><p class=\"aside\">In the <b>Signal</b> dropdown, ensure that Acceleration $\\ddot{x}$ (m/s$^2$) is selected.</p>" },
 
   // 4 — three peaks (figure + six inputs)
   { id:"peaks", figure:"media/peaks-diagram.svg", checkKind:"peaks",
