@@ -23,12 +23,14 @@
 
    Passcodes are stored HASHED (cyrb53 of the lowercased, trimmed code) so view-source
    shows only a number. Regenerate with:  node -e 'const c=(s)=>{...cyrb53...};console.log(c("code"))'
-   (the cyrb53 body is in analyzer-engine.js). Codes here: access="password123", QR="cornbread".
+   (the cyrb53 body is in analyzer-engine.js). Codes here: access="password123", QR="bandages".
 
    RENDER-TIME PUNCH LIST (QR element present):
-     • Make a printable QR from ../../lab-suite/resources/qr-poster-template.svg pointing to Daniel's
-       hosted page URL (a video repeating the passcode "cornbread" over and over).
-     • Daniel uploads that mobile page to his GitHub and gives the URL to encode.
+     • Make a printable QR from ../../lab-suite/resources/qr-poster-template.svg pointing to
+       https://danbenquinn.github.io/classes/firstaid/ — the page that sets the first-aid-kit task
+       whose answer is the passcode "bandages".
+     • That page is ours: -github-site/firstaid/index.html. It must be PUSHED before the QR resolves.
+     • Hang the sheet beside the room's first aid kit, not just anywhere on the wall.
 ============================================================================ -->
 <script>
 const CONFIG = { title: "Workshop 0 · Hello World", tools: ["point","fitsine"] };
@@ -88,14 +90,6 @@ const NARR = [
     inputs:[ {label:"period $\\tau$", key:"tau", unit:"s", range:[0.1,60]} ],
     feedback:"That is your hand's period, measured. Compare it to the <b>2 s</b> you were aiming for." },
 
-  // 6 — octopus (multiple-correct demo)
-  { id:"octopus", lockSeconds:15, check:"Sometimes workshops will have embedded concept questions that you must answer before moving on. How many hearts does an octopus have?",
-    choices:["0","1","3","6 $\\div$ 2","∞","No idea"], answer:[2,3,5],
-    feedbackWhen:{ wrong:"Not quite. If you get a question wrong, you'll be asked to pause and try again. <i>Hint: the answer is 3</i>." },
-    feedback:"Octopuses have three hearts: two gill hearts and one systemic. Some questions in these decks "
-       +"have more than one right answer, and the tool lights up <b>all</b> of them. Wrong answers will prompt "
-       +"you to rethink the question for a minute, then try again." },
-
   // 6a — vector vs. component (the peaks step asked for a number; a vector needs a direction too)
   { id:"vector-answer", check:"Suppose you had been asked for the acceleration <b>vector</b> at that instant instead. What is the best answer?",
     lead:"<p>You entered a <b>number</b> for $\\ddot{x}_1$ before — the acceleration at $t_1$, along $x$.</p>",
@@ -125,10 +119,10 @@ const NARR = [
     answer:1,
     feedback:"Yes. You held $\\ddot{y}$ and $\\ddot{z}$ near zero because waving in a straight line is the easy way to do it, not because a sinusoidal $\\ddot{x}$ requires it." },
 
-  // 7 — QR passcode (get used to the flow; the QR leads to a video repeating the passcode "cornbread")
-  { id:"qr", code:{ hash:6685508795628660, label:"Passcode",
-           wrong:"That's not it — scan the QR code on the wall; the passcode is repeated over and over in the video." },
-    lead:"<p>Sometimes workshops will involve changing location. The new location will have a passcode, or a clue for getting a passcode, that will advance you to the next slide. As a demonstration, somewhere in this room there's a <b>QR code</b> on the wall. It leads to a video that is repeating a <b>passcode</b> over and over— type it in to unlock <b>Next</b>.</p><p class=\"aside\">This is just to get you used to the flow; later workshops may send you further afield.</p>" },
+  // 7 — QR passcode (get used to the flow; the QR by the first aid kit leads to a page whose task yields "bandages")
+  { id:"qr", code:{ hash:5113980015895461, label:"Passcode",
+           wrong:"That's not it — scan the QR code on the wall and follow the instructions on the page it opens." },
+    lead:"<p>Sometimes workshops will involve changing location. The new location will have a passcode, or a clue for getting a passcode, that will advance you to the next slide. Today, there's a <b>QR code</b> on the wall somewhere in this room. Scan it, follow the instructions to get a passcode, then enter it here.</p>" },
 
   // 8 — Fit Sine, two ways (auto-selects the Fit Sine tool)
   { id:"fit-two-ways", tool:"fitsine",
