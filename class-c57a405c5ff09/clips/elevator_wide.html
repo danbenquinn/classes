@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Waiting</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000000; overflow: hidden; }   /* D2: one black */
+  #stage { display: flex; align-items: center; justify-content: center; height: 100%; }
+  /* fill the window; 16:9 content, cropped rather than letterboxed if the
+     window isn't exactly 16:9 */
+  svg { width: 100%; height: 100%; display: block; }
+  .seg    { fill: #3a2f1c; }
+  .seg.on { fill: #ffb547; }
+</style>
+</head>
+<body>
+<div id="stage">
+
+<svg viewBox="-361 0 1422 800"
+     preserveAspectRatio="xMidYMid slice"
+     xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="wallG" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#cfd3d6"/>
+      <stop offset="100%" stop-color="#a9aeb2"/>
+    </linearGradient>
+    <linearGradient id="doorG" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#8f979c"/>
+      <stop offset="18%" stop-color="#c8d0d4"/>
+      <stop offset="45%" stop-color="#9aa2a7"/>
+      <stop offset="50%" stop-color="#6f767a"/>
+      <stop offset="55%" stop-color="#9aa2a7"/>
+      <stop offset="82%" stop-color="#c8d0d4"/>
+      <stop offset="100%" stop-color="#8f979c"/>
+    </linearGradient>
+    <linearGradient id="frameG" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#6d7276"/>
+      <stop offset="50%" stop-color="#b6bcc0"/>
+      <stop offset="100%" stop-color="#6d7276"/>
+    </linearGradient>
+    <linearGradient id="floorG" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#7d7168"/>
+      <stop offset="100%" stop-color="#5b524b"/>
+    </linearGradient>
+    <radialGradient id="glowG" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0%" stop-color="#ffd27a" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#ffd27a" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="shadowG" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0%" stop-color="#000" stop-opacity="0.45"/>
+      <stop offset="100%" stop-color="#000" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="reflG" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#000" stop-opacity="0.28"/>
+      <stop offset="100%" stop-color="#000" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- corridor falloff: darkens the far left and right of the wall -->
+    <linearGradient id="fallG" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%"   stop-color="#000" stop-opacity="0.34"/>
+      <stop offset="18%"  stop-color="#000" stop-opacity="0.10"/>
+      <stop offset="40%"  stop-color="#000" stop-opacity="0"/>
+      <stop offset="60%"  stop-color="#000" stop-opacity="0"/>
+      <stop offset="82%"  stop-color="#000" stop-opacity="0.10"/>
+      <stop offset="100%" stop-color="#000" stop-opacity="0.34"/>
+    </linearGradient>
+    <!-- pool of light on the floor, centered under the elevator -->
+    <radialGradient id="poolG" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0%"   stop-color="#fff" stop-opacity="0.10"/>
+      <stop offset="100%" stop-color="#fff" stop-opacity="0"/>
+    </radialGradient>
+
+    <linearGradient id="shirtG" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%"   stop-color="#2b4267"/>
+      <stop offset="22%"  stop-color="#40608c"/>
+      <stop offset="55%"  stop-color="#33507a"/>
+      <stop offset="100%" stop-color="#1e2f49"/>
+    </linearGradient>
+    <linearGradient id="sleeveL" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%"   stop-color="#26395a"/>
+      <stop offset="60%"  stop-color="#3a5680"/>
+      <stop offset="100%" stop-color="#243755"/>
+    </linearGradient>
+    <linearGradient id="sleeveR" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%"   stop-color="#26395a"/>
+      <stop offset="45%"  stop-color="#2b4165"/>
+      <stop offset="100%" stop-color="#182640"/>
+    </linearGradient>
+    <linearGradient id="pantG" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%"   stop-color="#333941"/>
+      <stop offset="45%"  stop-color="#4a5058"/>
+      <stop offset="100%" stop-color="#272c33"/>
+    </linearGradient>
+  </defs>
+
+  <!-- ===================== WALL (extended) ===================== -->
+  <rect x="-361" y="0" width="1422" height="640" fill="url(#wallG)"/>
+
+  <!-- horizontal panel seam, full width -->
+  <line x1="-361" y1="90" x2="1061" y2="90" stroke="#000" stroke-opacity="0.07" stroke-width="3"/>
+  <!-- vertical panel seams, rhythmically spaced across the new width -->
+  <g stroke="#000" stroke-opacity="0.05" stroke-width="3">
+    <line x1="-270" y1="0" x2="-270" y2="640"/>
+    <line x1="-90"  y1="0" x2="-90"  y2="640"/>
+    <line x1="90"   y1="0" x2="90"   y2="640"/>
+    <line x1="610"  y1="0" x2="610"  y2="640"/>
+    <line x1="790"  y1="0" x2="790"  y2="640"/>
+    <line x1="970"  y1="0" x2="970"  y2="640"/>
+  </g>
+
+  <!-- a second horizontal seam low on the wall, reads as a chair rail -->
+  <line x1="-361" y1="470" x2="1061" y2="470" stroke="#000" stroke-opacity="0.05" stroke-width="2"/>
+
+  <!-- ===================== FLOOR (extended) ===================== -->
+  <rect x="-361" y="640" width="1422" height="160" fill="url(#floorG)"/>
+  <ellipse cx="350" cy="700" rx="520" ry="120" fill="url(#poolG)"/>
+
+  <!-- baseboard, full width -->
+  <rect x="-361" y="624" width="1422" height="18" fill="#7f858a"/>
+  <rect x="-361" y="624" width="1422" height="4" fill="#c3c9cd" opacity="0.6"/>
+
+  <!-- tile grid: receding lines converge on a vanishing point behind the doors -->
+  <g stroke="#000" stroke-opacity="0.11" stroke-width="2">
+    <line x1="-400" y1="640" x2="-752.9" y2="800"/>
+    <line x1="-330" y1="640" x2="-650.0" y2="800"/>
+    <line x1="-260" y1="640" x2="-547.1" y2="800"/>
+    <line x1="-190" y1="640" x2="-444.1" y2="800"/>
+    <line x1="-120" y1="640" x2="-341.2" y2="800"/>
+    <line x1="-50"  y1="640" x2="-238.2" y2="800"/>
+    <line x1="20"   y1="640" x2="-135.3" y2="800"/>
+    <line x1="90"   y1="640" x2="-32.4"  y2="800"/>
+    <line x1="160"  y1="640" x2="70.6"   y2="800"/>
+    <line x1="510"  y1="640" x2="585.3"  y2="800"/>
+    <line x1="580"  y1="640" x2="688.2"  y2="800"/>
+    <line x1="650"  y1="640" x2="791.2"  y2="800"/>
+    <line x1="720"  y1="640" x2="894.1"  y2="800"/>
+    <line x1="790"  y1="640" x2="997.1"  y2="800"/>
+    <line x1="860"  y1="640" x2="1100.0" y2="800"/>
+    <line x1="930"  y1="640" x2="1202.9" y2="800"/>
+    <line x1="1000" y1="640" x2="1305.9" y2="800"/>
+    <line x1="1070" y1="640" x2="1408.8" y2="800"/>
+  </g>
+  <!-- depth lines, spacing compresses toward the horizon -->
+  <g stroke="#000" stroke-opacity="0.11" stroke-width="2">
+    <line x1="-361" y1="656" x2="1061" y2="656"/>
+    <line x1="-361" y1="678" x2="1061" y2="678"/>
+    <line x1="-361" y1="707" x2="1061" y2="707"/>
+    <line x1="-361" y1="746" x2="1061" y2="746"/>
+    <line x1="-361" y1="792" x2="1061" y2="792"/>
+  </g>
+
+  <!-- ===================== ELEVATOR (unchanged) ===================== -->
+  <rect x="188" y="228" width="324" height="414" fill="url(#frameG)"/>
+  <rect x="206" y="244" width="288" height="398" fill="url(#doorG)"/>
+  <g stroke="#fff" stroke-opacity="0.07" stroke-width="1">
+    <line x1="222" y1="244" x2="222" y2="642"/><line x1="240" y1="244" x2="240" y2="642"/>
+    <line x1="262" y1="244" x2="262" y2="642"/><line x1="286" y1="244" x2="286" y2="642"/>
+    <line x1="312" y1="244" x2="312" y2="642"/><line x1="338" y1="244" x2="338" y2="642"/>
+    <line x1="368" y1="244" x2="368" y2="642"/><line x1="396" y1="244" x2="396" y2="642"/>
+    <line x1="424" y1="244" x2="424" y2="642"/><line x1="452" y1="244" x2="452" y2="642"/>
+    <line x1="474" y1="244" x2="474" y2="642"/>
+  </g>
+  <rect x="347" y="244" width="6" height="398" fill="#4a5054"/>
+  <rect x="349" y="244" width="2" height="398" fill="#252a2d"/>
+  <rect x="206" y="630" width="288" height="12" fill="#585e62"/>
+  <rect x="206" y="634" width="288" height="3" fill="#2c3134"/>
+
+  <!-- indicator panel (unchanged) -->
+  <rect x="228" y="120" width="244" height="88" rx="9" fill="#2b2f33"/>
+  <rect x="234" y="126" width="232" height="76" rx="6" fill="#14181b"/>
+  <circle cx="350" cy="164" r="54" fill="url(#glowG)" opacity="0.30"/>
+  <polygon id="arrowDown" fill="#ffb547" points="252,148 274,148 263,176"/>
+  <polygon fill="#5a6165" points="426,176 448,176 437,148"/>
+  <g id="digits"></g>
+
+  <!-- call button (unchanged) -->
+  <rect x="524" y="384" width="40" height="76" rx="6" fill="#8d9498"/>
+  <rect x="528" y="388" width="32" height="68" rx="4" fill="#6f7579"/>
+  <circle cx="544" cy="408" r="9" fill="#3b4044"/>
+  <circle cx="544" cy="408" r="6" fill="#565c60"/>
+  <circle cx="544" cy="436" r="9" fill="#3b4044"/>
+  <circle cx="544" cy="436" r="6.5" fill="#ffb547"/>
+  <circle cx="544" cy="436" r="12" fill="#ffb547" opacity="0.18"/>
+
+  <ellipse cx="352" cy="742" rx="130" ry="34" fill="url(#shadowG)"/>
+
+  <!-- ===================== FIGURE (unchanged) ===================== -->
+  <g>
+    <path d="M318 574 L312 722 Q310 734 316 738 L340 738 Q345 734 344 722 L346 574 Z" fill="#2e343b"/>
+    <path d="M352 574 L354 722 Q353 734 358 738 L386 738 Q392 734 389 722 L380 574 Z" fill="url(#pantG)"/>
+    <path d="M300 736 Q297 750 308 752 L342 752 Q349 747 344 736 Z" fill="#1e2228"/>
+    <path d="M352 736 Q348 750 359 752 L394 752 Q401 746 392 736 Z" fill="#171b20"/>
+
+    <path d="M296 396 Q283 412 279 452 Q276 496 282 534 Q286 552 297 558 Q307 552 308 534 Q303 494 306 456 Q309 420 318 400 Z" fill="url(#sleeveL)"/>
+    <path d="M398 396 Q411 412 415 452 Q418 496 412 534 Q408 552 397 558 Q387 552 386 534 Q391 494 388 456 Q385 420 376 400 Z" fill="url(#sleeveR)"/>
+    <path d="M284 546 Q296 566 310 560 L306 536 Q292 534 284 546 Z" fill="#1c2b44"/>
+    <path d="M410 546 Q398 566 384 560 L388 536 Q402 534 410 546 Z" fill="#142034"/>
+
+    <path d="M347 372
+             Q381 372 400 392
+             Q408 404 410 430
+             L414 508
+             Q416 546 411 572
+             Q380 582 347 582
+             Q314 582 283 572
+             Q278 546 280 508
+             L284 430
+             Q286 404 294 392
+             Q313 372 347 372 Z" fill="url(#shirtG)"/>
+
+    <ellipse cx="320" cy="428" rx="20" ry="26" fill="#4a6b99" opacity="0.14"/>
+    <ellipse cx="376" cy="428" rx="20" ry="26" fill="#14213a" opacity="0.14"/>
+    <path d="M347 400 L347 566" stroke="#1a2b45" stroke-width="2" opacity="0.28"/>
+    <path d="M296 396 Q290 428 288 470" stroke="#1a2b45" stroke-width="2" fill="none" opacity="0.35"/>
+    <path d="M398 396 Q404 428 406 470" stroke="#1a2b45" stroke-width="2" fill="none" opacity="0.35"/>
+    <path d="M285 570 Q347 580 409 570" stroke="#182740" stroke-width="3" fill="none" opacity="0.5"/>
+    <path d="M300 536 Q347 546 394 536" stroke="#1a2b45" stroke-width="2" fill="none" opacity="0.18"/>
+
+    <path d="M320 380 Q347 368 374 380 Q366 392 347 394 Q328 392 320 380 Z" fill="#182740"/>
+
+    <path d="M333 344 L333 380 Q347 388 361 380 L361 344 Z" fill="#c99a7c"/>
+    <path d="M333 344 L361 344 L361 360 Q347 368 333 360 Z" fill="#b0826a" opacity="0.5"/>
+
+    <ellipse cx="347" cy="308" rx="42" ry="48" fill="#d5a785"/>
+    <ellipse cx="306" cy="312" rx="8" ry="13" fill="#c9997a"/>
+    <ellipse cx="388" cy="312" rx="8" ry="13" fill="#c9997a"/>
+    <path d="M347 258 Q390 258 391 306 Q392 338 386 356 L308 356 Q302 338 303 306 Q304 258 347 258 Z" fill="#3a2a20"/>
+    <path d="M347 262 Q384 264 386 302 Q370 292 347 292 Q324 292 308 302 Q310 264 347 262 Z" fill="#4a362a"/>
+    <g stroke="#241a13" stroke-width="1.6" fill="none" opacity="0.55">
+      <path d="M320 272 Q330 296 326 340"/>
+      <path d="M347 266 Q347 296 349 342"/>
+      <path d="M374 272 Q366 296 370 340"/>
+      <path d="M334 268 Q340 294 336 340"/>
+      <path d="M360 268 Q356 294 360 340"/>
+    </g>
+  </g>
+
+  <g opacity="0.13">
+    <ellipse cx="347" cy="470" rx="34" ry="90" fill="#0b1420"/>
+  </g>
+  <rect x="-361" y="642" width="1422" height="60" fill="url(#reflG)" opacity="0.5"/>
+
+  <!-- corridor falloff sits on top of everything, darkening the far edges -->
+  <rect x="-361" y="0" width="1422" height="800" fill="url(#fallG)" pointer-events="none"/>
+</svg>
+
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var qs    = new URLSearchParams(location.search);
+  var start = parseInt(qs.get("start"), 10);
+  var end   = parseInt(qs.get("end"),   10);
+  var tick  = parseFloat(qs.get("tick"));
+
+  if (!Number.isFinite(start) || start < 0 || start > 999) start = 560;
+  if (!Number.isFinite(end)   || end   < 0 || end   > 999) end   = 1;
+  if (!Number.isFinite(tick)  || tick <= 0)                tick  = 1.0733;
+
+  var loop = qs.get("loop") !== "0";
+
+  var W = 40, H = 62, T = 8, GAP = 14, CY = 137;
+
+  function hSeg(x, y) {
+    var h = T / 2;
+    return [[x+h,y],[x+W-h,y],[x+W,y+h],[x+W-h,y+T],[x+h,y+T],[x,y+h]]
+      .map(function (p) { return p.join(","); }).join(" ");
+  }
+  function vSeg(x, y) {
+    var L = (H - T) / 2, h = T / 2;
+    return [[x,y+h],[x+h,y],[x+T,y+h],[x+T,y+L-h],[x+h,y+L],[x,y+L-h]]
+      .map(function (p) { return p.join(","); }).join(" ");
+  }
+  function segPoints(name, ox, oy) {
+    var L = (H - T) / 2;
+    switch (name) {
+      case "a": return hSeg(ox,         oy);
+      case "b": return vSeg(ox + W - T, oy);
+      case "c": return vSeg(ox + W - T, oy + L);
+      case "d": return hSeg(ox,         oy + H - T);
+      case "e": return vSeg(ox,         oy + L);
+      case "f": return vSeg(ox,         oy);
+      case "g": return hSeg(ox,         oy + L - T / 2);
+    }
+  }
+
+  var SEGS = ["a","b","c","d","e","f","g"];
+  var GLYPH = {
+    0:"abcdef", 1:"bc", 2:"abged", 3:"abgcd", 4:"fgbc",
+    5:"afgcd", 6:"afgecd", 7:"abc", 8:"abcdefg", 9:"abfgcd"
+  };
+
+  var NS = "http://www.w3.org/2000/svg";
+  var host = document.getElementById("digits");
+  var totalW = 3 * W + 2 * GAP;
+  var x0 = 350 - totalW / 2;   // still centered on the elevator panel
+  var cells = [];
+
+  for (var i = 0; i < 3; i++) {
+    var ox = x0 + i * (W + GAP), cell = {};
+    for (var s = 0; s < SEGS.length; s++) {
+      var name = SEGS[s];
+      var poly = document.createElementNS(NS, "polygon");
+      poly.setAttribute("points", segPoints(name, ox, CY));
+      poly.setAttribute("class", "seg");
+      host.appendChild(poly);
+      cell[name] = poly;
+    }
+    cells.push(cell);
+  }
+
+  function renderDigit(cell, digit) {
+    var lit = digit === null ? "" : GLYPH[digit];
+    for (var s = 0; s < SEGS.length; s++) {
+      var name = SEGS[s];
+      cell[name].classList.toggle("on", lit.indexOf(name) !== -1);
+    }
+  }
+  function render(n) {
+    var str = String(n), pad = 3 - str.length;
+    for (var i = 0; i < 3; i++) {
+      if (i < pad) renderDigit(cells[i], null);
+      else         renderDigit(cells[i], Number(str[i - pad]));
+    }
+  }
+
+  var step   = start >= end ? -1 : 1;
+  var steps  = Math.abs(start - end);
+  var period = tick * 1000;
+  var t0 = performance.now();
+  var last = null;
+
+  var arrow = document.getElementById("arrowDown");
+  if (step > 0) arrow.setAttribute("points", "252,176 274,176 263,148");
+
+  function frame(now) {
+    var k = Math.floor((now - t0) / period);
+    if (k > steps) {
+      if (loop) { t0 = now; k = 0; }
+      else      { k = steps; }
+    }
+    var value = start + step * k;
+    if (value !== last) { render(value); last = value; }
+    if (loop || k < steps) requestAnimationFrame(frame);
+  }
+
+  render(start);
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

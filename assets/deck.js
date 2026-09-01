@@ -1341,6 +1341,48 @@
   Reveal.on('overviewshown', () => { layer.style.display = 'none'; player.pause(); pauseStack(); stackwrap.style.display = 'none'; stopCamera(); quadgrid.style.display = 'none'; });
   Reveal.on('overviewhidden', configure);
 
+  // SLIDE-SCOPED BACKGROUND AUDIO — `data-audio="clips/x.mp3"`, level from `data-audio-volume`
+  // (0..1, default 1), optional `data-audio-loop`. Plays while that slide is up and stops when you
+  // leave it. Class B's exit-quiz finale plays the 2001 fanfare under the asteroid.
+  //
+  // NOT the video path. `data-media` mounts a picture; this is sound with nothing to show, so it gets
+  // its own element rather than a fourth branch inside configure() — the media layer stays about the
+  // rectangle on screen, and an image slide keeps being an image slide.
+  //
+  // THE AUTOPLAY CATCH, which is the only interesting part: a browser refuses to start UNMUTED audio
+  // until the page has had a user gesture, and a deck opened cold on this slide (or reloaded onto it,
+  // which `hash: true` makes easy) has had none. play() then rejects silently and the fanfare simply
+  // never happens — the worst kind of failure, because nothing says so. So a rejection arms a one-shot
+  // listener that retries on the next key or click, by which time the gesture exists. Presenting
+  // normally you arrive here having pressed → thirty times and the first attempt just works.
+  (function slideAudio(){
+    const el = new Audio(); el.preload = 'auto';
+    let armed = null;                                  // pending retry listener, if autoplay was refused
+    function disarm(){ if(armed){ ['keydown','pointerdown'].forEach(e => document.removeEventListener(e, armed)); armed = null; } }
+    function stop(){ disarm(); el.pause(); try{ el.currentTime = 0; }catch(e){} el.removeAttribute('src'); }
+    function apply(){
+      const cur = Reveal.getCurrentSlide();
+      const src = (!Reveal.isOverview() && cur) ? cur.dataset.audio : null;
+      if(!src){ stop(); return; }
+      const vr = parseFloat(cur.dataset.audioVolume);
+      el.volume = isNaN(vr) ? 1 : Math.max(0, Math.min(1, vr));
+      el.loop = cur.dataset.audioLoop !== undefined;
+      // Re-entering the same slide restarts the track; staying on it (a resize, a fragment) does not.
+      const want = new URL(src, location.href).href;
+      if(el.src !== want){ el.src = src; try{ el.currentTime = 0; }catch(e){} }
+      else if(!el.paused) return;
+      disarm();
+      el.play().catch(() => {
+        armed = () => { disarm(); if(Reveal.getCurrentSlide()?.dataset.audio === src) el.play().catch(()=>{}); };
+        ['keydown','pointerdown'].forEach(e => document.addEventListener(e, armed, {once:true}));
+      });
+    }
+    Reveal.on('ready', apply);
+    Reveal.on('slidechanged', apply);
+    Reveal.on('overviewshown', stop);
+    Reveal.on('overviewhidden', apply);
+  })();
+
   // Starfield for data-stars slides (e.g. the asteroid): scatter tiny white dots with a gentle twinkle.
   (function makeStars(){
     const sf = document.getElementById('starfield'); if(!sf || sf.childElementCount) return;
