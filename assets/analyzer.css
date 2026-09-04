@@ -197,6 +197,22 @@
     color:var(--ink);font-weight:400;font-size:var(--fs-label);line-height:1.45;box-shadow:0 4px 16px rgba(0,0,0,.45);}
   .plotreadout .r2:hover .r2pop,.plotreadout .r2:focus .r2pop{display:block;}
 
+  /* ---- `?[trigger](tip)` in lead prose: the same idea as the R² popup above, authorable from a
+     manifest. It exists so a step can say WHY without spending a paragraph on it — the aside under
+     Get Air's Method 2 was three lines of small type explaining a two-line instruction, and moving it
+     onto the words it is about ("half a second") gave the step back its shape.
+     Deliberately NOT green: green is the tool's language (a number you measured), and an explanation
+     is neither. Blue is the signal color and reads here as "there is more of this if you want it".
+     Wider than the readout's popup because the prose column is wider and the text is a sentence, not
+     a definition. `overflow:visible` on the prose column is what keeps it from being clipped. */
+  .deck-prose .tip{color:var(--accent);border-bottom:1px dotted var(--accent);
+    cursor:help;position:relative;}
+  .deck-prose .tippop{display:none;position:absolute;left:0;top:1.6em;width:310px;max-width:70vw;z-index:6;
+    background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:9px 12px;
+    color:var(--ink);font-weight:400;font-size:var(--fs-label);line-height:1.5;
+    box-shadow:0 4px 16px rgba(0,0,0,.45);}
+  .deck-prose .tip:hover .tippop,.deck-prose .tip:focus .tippop{display:block;}
+
   /* ---- top-region content modes: big equation (html) + title slide ---- */
   #topmedia .topcustom{max-width:92%;text-align:center;}
   #topmedia .bigeq{color:var(--ink);font-size:clamp(24px,4.6vw,52px);line-height:1.25;letter-spacing:.01em;}
@@ -204,6 +220,12 @@
   #topmedia .bigeq .frac .num{border-bottom:2px solid var(--ink);padding:0 .28em;}
   #topmedia .bigeq .frac .den{padding:0 .28em;}
   #topmedia .bigeq .units{color:var(--muted);font-size:.62em;margin-left:.35em;}
+  /* The mission kicker: a small uppercase line over a `bigeq` statement. Workshop 1 opens on one
+     ("TODAY'S MISSION" / "Estimate the g-forces…") in the same white-on-black type as the "Nice work."
+     finale, so a workshop's first and last screens rhyme and a student who has just typed the access
+     code knows what the next two hours are for. A class, not an inline style — no deck carries one. */
+  #topmedia .bigeq .kicker{display:block;color:var(--muted);font-size:.30em;letter-spacing:.18em;
+    text-transform:uppercase;margin-bottom:.85em;font-weight:600;}
   /* padding-top clears the course-map strip. The strip is width:100% of a full-viewport-width panel and the
      SVG is 1280x139, so its rendered height is 139/1280 = 10.86vw — hence the vw term, which tracks the strip
      at any window size (a fixed px value crowds the teaser on a wide screen and wastes the panel on a narrow

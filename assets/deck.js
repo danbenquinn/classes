@@ -132,6 +132,17 @@
   // read a freeze frame as a video, mounted it on <video>, and every frozen slide came up black.
   const isStill = m => /\.(png|jpe?g|webp|gif|svg)$/i.test(m || '') || /^data:image\//i.test(m || '');
 
+  // THE HEAD OF A CLIP IS NOT ALWAYS t = 0. An .mp4 can carry a non-zero stream start_time (an edit
+  // list, or a trim that moved the first sample), and then `currentTime = 0` seeks BEFORE the first
+  // frame — which paints black and never resolves. Class D's soccer throw-in was exactly this
+  // (start_time 0.066 s): the slide arrived black, the settle handler kept re-asserting 0, and the
+  // 0.05 s "still at the start" test in smartNext read the clip as already-playing, so the next arrow
+  // moved on instead of starting it. That clip has since been re-encoded to start at 0; this asks the
+  // element where its head actually is, so no future clip can do it again.
+  const headTime = (v) => { try { return (v.seekable && v.seekable.length) ? v.seekable.start(0) : 0; }
+                            catch(e){ return 0; } };
+  const atHead = (v, slack) => v.currentTime <= headTime(v) + slack;
+
   let mrect = {x:0,y:0,w:0,h:0};
   function contain(el, w, h){
     if(!w || !h) return;
@@ -172,13 +183,28 @@
   function placeCap(){                    // plain caption, lower-left of the media itself (like placeAttrib)
     if(slidecap.style.display === 'none') return;
     const cur = Reveal.getCurrentSlide();
+    // The caption and the attribution badge want the SAME corner, and until Class D no slide carried
+    // both — the caption slides were uncredited stills and the credited ones were captionless. Class D
+    // dates its history beats with a caption on top of a credited image, so they have to stack: credit
+    // on the line the badge always had, caption directly above it. Measured, not guessed, because the
+    // badge's height is a font-size the deck scales.
+    const lift = (attrib.style.display !== 'none') ? attrib.offsetHeight + 6 : 0;
+    // data-capfixed: pin to the SLIDE's top-left and leave the media rectangle out of it entirely.
+    // See deck.css → #slidecap.capfixed for why a run of beats wants a caption that does not move.
+    const fixed = !!(cur && cur.dataset.capfixed !== undefined);
+    slidecap.classList.toggle('capfixed', fixed);
+    if(fixed){
+      slidecap.style.left = '3.2%'; slidecap.style.top = '4.5%';
+      slidecap.style.bottom = 'auto'; slidecap.style.maxWidth = '60%'; return;
+    }
+    slidecap.style.top = 'auto';
     if(cur && (cur.dataset.creditScreen !== undefined || cur.dataset.fullscreen !== undefined)){
-      slidecap.style.left = '3%'; slidecap.style.bottom = '4%';
+      slidecap.style.left = '3%'; slidecap.style.bottom = 'calc(4% + ' + lift + 'px)';
       slidecap.style.maxWidth = '94%'; return;                     // full-bleed: wrap within the screen
     }
     const LH = layer.clientHeight, pad = Math.max(8, Math.round(mrect.w*0.025));
     slidecap.style.left   = (mrect.x + pad) + 'px';
-    slidecap.style.bottom = (LH - (mrect.y + mrect.h) + Math.round(pad*0.5)) + 'px';
+    slidecap.style.bottom = (LH - (mrect.y + mrect.h) + Math.round(pad*0.5) + lift) + 'px';
     slidecap.style.maxWidth = Math.max(0, mrect.w - 2*pad) + 'px'; // wrap on the media, never spill past it
   }
   function placeYear(){                    // lower-right corner of the media rectangle (data-year)
@@ -306,13 +332,43 @@
     const frameMatch = d.framematch !== undefined && activeVideo && !player.paused;
     const matchAt = frameMatch ? player.currentTime : 0;
 
+    // A PAUSED <video> is not guaranteed to have PAINTED anything. Setting currentTime queues a seek,
+    // and until the decoder actually presents that frame the element composites as BLACK — which is
+    // exactly what the room sees on a video slide that "starts black" and only comes to life on the
+    // second click. The intent has always been first frame on arrival, play on the next → (see
+    // smartNext); this closes the gap between the intent and what is on the wall.
+    //
+    // Confirm rather than assume: requestVideoFrameCallback fires once a frame has been handed to the
+    // compositor. If nothing has been presented within PAINT_GRACE_MS, set currentTime to a value a
+    // few MILLISECONDS in — a different time, so the element must seek, decode and present, but still
+    // inside frame 0 of any clip we ship (30 fps → frame 0 spans 0 to 33 ms), so the picture is the
+    // first frame and nothing is skipped. All three escalations stay under smartNext's 0.05 s
+    // "still at the start" threshold, so the next → still PLAYS rather than being read as a resume.
+    const PAINT_GRACE_MS = 240;
+    const PAINT_NUDGES = [0.001, 0.004, 0.012];
+    function ensurePainted(v){
+      if(typeof v.requestVideoFrameCallback !== 'function') return;   // nothing to confirm with; seek handlers are all we have
+      if(v._paintT){ clearTimeout(v._paintT); v._paintT = null; }
+      let painted = false, tries = 0;
+      const watch = () => { try{ v.requestVideoFrameCallback(() => { painted = true; }); }catch(e){} };
+      const check = () => {
+        v._paintT = null;
+        if(painted || !v.paused || !atHead(v, 0.05)) return;          // painted, playing, or moved on
+        try{ v.currentTime = headTime(v) + PAINT_NUDGES[tries]; }catch(e){}
+        logMedia('repaint', v);
+        if(++tries < PAINT_NUDGES.length){ watch(); v._paintT = setTimeout(check, PAINT_GRACE_MS); }
+      };
+      watch();
+      v._paintT = setTimeout(check, PAINT_GRACE_MS);
+    }
+
     // Takes the element EXPLICITLY. It is called from an onloadeddata handler, and between load() and
     // loadeddata the module-level `player` can be reassigned by a cross-fade or a playlist swap — in
     // which case seeking "player" to 0 seeks the wrong element and leaves the clip that just loaded
     // sitting whereever its decoder landed. Same family as the stale-handler bug noted below.
     const startPlayback = (v) => {
       v = v || player;
-      try{ v.currentTime = 0; }catch(e){}
+      try{ v.currentTime = headTime(v); }catch(e){}
       if(d.autoplay !== undefined){ v.play().catch(()=>{}); return; }   // warm-up autoplays; others wait for →
       v.pause();
       // Re-assert frame 0 once the seek actually lands. A currentTime set at `loadeddata` is issued
@@ -321,10 +377,11 @@
       // frame some seconds in. Cheap, idempotent, and only for clips that are meant to sit still.
       const settle = () => {
         v.removeEventListener('seeked', settle); v.removeEventListener('canplay', settle);
-        if(v.paused && v.currentTime > 0.02){ try{ v.currentTime = 0; }catch(e){} }
+        if(v.paused && !atHead(v, 0.02)){ try{ v.currentTime = headTime(v); }catch(e){} }
         logMedia('settle', v);
       };
       v.addEventListener('seeked', settle); v.addEventListener('canplay', settle);
+      ensurePainted(v);
       logMedia('mount', v);
     };
     if(isStill(media)){                                     // still image, animated GIF, or an inlined freeze frame (shown via <img>)
@@ -1271,7 +1328,7 @@
     if(cur && cur.classList.contains('sim') && cur._sim && !cur._sim.everPlayed){ cur._sim.play(); return; }
     // Quad slide (data-quad): first → plays the full-screen opener, second → tiles the four-up grid, next → advances.
     if(cur && cur.dataset.quad !== undefined && !cur._quadShown){
-      if(activeVideo && cur.dataset.autoplay === undefined && player.paused && player.currentTime < 0.05 && !player.ended){ player.play().catch(()=>{}); return; }
+      if(activeVideo && cur.dataset.autoplay === undefined && player.paused && atHead(player, 0.05) && !player.ended){ player.play().catch(()=>{}); return; }
       showQuad(cur); cur._quadShown = true; return;
     }
     // A deferred-reveal poll (`data-reveal-at`) locks the vote AND advances on the same press, because
@@ -1295,7 +1352,7 @@
       if(pl.idx < pl.list.length - 1){ pl.idx++; playPlaylistClip(pl); return; }
       // last clip reached → fall through to Reveal.next()
     }
-    if(activeVideo && cur && cur.classList.contains('vid') && cur.dataset.autoplay === undefined && player.paused && player.currentTime < 0.05 && !player.ended){
+    if(activeVideo && cur && cur.classList.contains('vid') && cur.dataset.autoplay === undefined && player.paused && atHead(player, 0.05) && !player.ended){
       player.play().catch(()=>{}); return;   // "first → plays a fresh clip" — but NOT warm-up/autoplay slides, which → should just skip past
     }
     // Static quiz (concept / homework MC): first → reveals the correct answer green; next → advances.

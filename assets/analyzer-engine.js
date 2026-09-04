@@ -20,6 +20,14 @@ const codeHash = s => cyrb53(String(s||"").trim().toLowerCase());   // normalize
 // still reads the real samples — because the first thing it was needed for (Get Air's elevator) is a
 // signal 25x smaller than the noise of setting the phone down, and the pedagogy is that the noise is
 // STILL THERE, greyed, a screen away from the thing you came to measure.
+// CHOICE LABELS ARE ROMAN NUMERALS (2026-09-03). They were `a) b) c)` until Workshop 1's
+// jump-sections figure put five labelled stretches **A-E** on screen beside five lettered choices —
+// "Section A — what's happening?" sitting an inch above a list that starts "a)", two alphabets doing
+// different jobs in the same glance. Relabelling the answers was the cheap half of that fix (the other
+// half would have been redrawing the figure). Numerals cost nothing anywhere else and can never collide
+// with a letter someone puts on a graphic, so this is house-wide rather than a Workshop 1 switch.
+const ROMAN=["i","ii","iii","iv","v","vi","vii","viii","ix","x","xi","xii"];
+const choiceLabel = i => ROMAN[i] || String(i+1);
 const TOOLDEF={point:"Select Point", avg:"Average Value", integrate:"Integrate", dblint:"Double Integrate", fitsine:"Fit Sine", crop:"Crop"};
 const TOOLS=(typeof CONFIG!=='undefined'&&CONFIG&&Array.isArray(CONFIG.tools)&&CONFIG.tools.length)
   ? CONFIG.tools.filter(t=>TOOLDEF[t]) : ["point","avg","dblint","fitsine"];
@@ -836,6 +844,26 @@ const LOCK_S = 60;   // seconds a wrong MC answer locks the choices, to force di
 // prompt; only the first workshop tells students to install the app — later ones just remind them to go full-screen.)
 const TEASER_FULLSCREEN = "<div style='text-align:left'>For the best experience, go <b>full-screen</b>:<br>press <b>F11</b> (<b>⌃⌘F</b> on a Mac).</div>";
 
+/* A felt g-factor is `1 + a/g`, where `a` is the number the green box is showing RIGHT NOW. It is the
+   one arithmetic step in this workshop the instrument can check for itself, and until 2026-09-03
+   nothing did: the jump's g-factor box accepted anything from 1 to 8, so a student who typed their raw
+   acceleration, dropped the `1 +`, or divided by the wrong thing walked into the punchline the whole
+   workshop builds toward with a number that meant nothing. Same box, four more times, in the elevator.
+
+   It reads the LIVE selection rather than a stored value because that is the only place the number
+   exists — the average is a property of the drag, not an answer the student typed. If there is no live
+   selection (they measured, moved on, and came Back) the check is silent: re-blocking a finished step
+   on a drag the student has no reason to still be holding is a gate that punishes reviewing.
+
+   The tolerance scales with the SIZE of the effect — 10% of (expected - 1), floored at 0.02 — because a
+   jump reads about 2.0 and an elevator about 1.03, and no single absolute tolerance serves both. */
+const G_STD = 9.8;
+function gExpect(){
+  const P=active(), s=series(P);
+  if(!s||!P||!P.sel) return null;
+  const av=average(s,P);
+  return av==null ? null : {av:av, g:1+av/G_STD};
+}
 function hangExpect(){ return Number.isFinite(S.answers.tair) ? 9.8*Math.pow(S.answers.tair,2)/8*100 : null; }
 function setTop(st){                                    // top region: analyzer tool, video, figure, big equation, title slide, or the pong game
   if(activePong){ activePong.stop(); activePong=null; }   // leaving a pong step tears the game down
@@ -999,6 +1027,15 @@ function inputIssue(st){
       const dir = v<exp ? "higher" : "lower";
       return fbText(st,"check","Hmm — with a time aloft of {tair} s, you should be calculating a {dir} peak height. Re-check your formula and arithmetic.",
                 {expected:exp.toFixed(0), tair:S.answers.tair, dir:dir});
+    }
+  }
+  if(st.checkKind==="gfactor"){
+    const E=gExpect(), v=S.answers[st.key];
+    if(E && Number.isFinite(v)){
+      const tol=Math.max(0.02, 0.10*Math.abs(E.g-1));
+      if(Math.abs(v-E.g)>tol)
+        return fbText(st,"check","That doesn't match the plot — the green box reads {avg} m/s2, so 1 + a/g is about {expected}.",
+                  {expected:E.g.toFixed(2), avg:E.av.toFixed(2)});
     }
   }
   if(st.checkKind==="peaks"){                          // three peaks in a row → times must increase
@@ -1324,7 +1361,7 @@ function renderStep(){
     const grid=document.createElement("div"); grid.className="deck-choices";
     const choiceEls=[];
     st.choices.forEach((c,i)=>{
-      const d=document.createElement("div"); d.className="choice"; d.innerHTML='<span class="ci">'+String.fromCharCode(97+i)+')</span> '+c; choiceEls.push(d);
+      const d=document.createElement("div"); d.className="choice"; d.innerHTML='<span class="ci">'+choiceLabel(i)+')</span> '+c; choiceEls.push(d);
       d.addEventListener("click",()=>{
         if(d.dataset.locked==="1") return;
         if(isCorrect(st,i)){
@@ -1457,7 +1494,12 @@ function renderStep(){
     const unlock=()=>{ inp.disabled=true; btn.disabled=true;
       setFb("✓ Unlocked — click <b>Next ›</b>."); refreshNext(); };
     if(S.answers["code"+S.step]===true){ inp.value="••••••••"; unlock(); }
-    const tryCode=()=>{ if(codeHash(inp.value)===st.code.hash){ S.answers["code"+S.step]=true; unlock(); }
+    // `hash` may be ONE number or a LIST of them (2026-09-03). Workshop 1's elevator passcode is a
+    // number the student works out — 18 — and "eighteen" is the same answer typed by someone who read
+    // the question as a sentence rather than a form field. Accepting both costs one array and removes
+    // the only failure mode of that gate that teaches nothing.
+    const codeHashes = Array.isArray(st.code.hash) ? st.code.hash : [st.code.hash];
+    const tryCode=()=>{ if(codeHashes.indexOf(codeHash(inp.value))>=0){ S.answers["code"+S.step]=true; unlock(); }
       else setFb(st.code.wrong||"That code isn't right — try again."); };
     btn.addEventListener("click",tryCode);
     inp.addEventListener("keydown",e=>{ if(e.key==="Enter"){ e.preventDefault(); tryCode(); } });

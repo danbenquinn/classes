@@ -217,6 +217,14 @@
   #attrib:not(.hasfull){ pointer-events:none; }
   #slidecap{ position:absolute; z-index:8; display:none; color:#fff; font-size:calc(var(--size-caption) * 720px); font-weight:600;
              letter-spacing:.01em; line-height:1.2; }
+  /* SLIDE-ANCHORED caption (data-capfixed). The default caption tracks the media rectangle, which is
+     right for a one-off label on one picture and wrong for a RUN of them: five history beats with five
+     different aspect ratios put the same caption in five different places, and the eye has to find it
+     again on every advance. Pinned to the slide instead, it stays put across the run and reads as one
+     recurring label. Bigger than the default caption (body tier, not caption tier) and on its own black
+     box, because it sits ON the artwork rather than under it. */
+  #slidecap.capfixed{ font-size:calc(var(--size-body) * 720px); background:rgba(0,0,0,.82);
+                      padding:.42em .66em; border-radius:3px; letter-spacing:.015em; }
 
   /* Synced / tiled video STACK (Class E). SYNC mode: the animation fills the whole frame and its
      impulse-graph strip(s) overlay the bottom (sized in JS). COVER mode (walk-in warm-up): two
@@ -240,6 +248,20 @@
 
   /* Practice slides */
   .practice .pnum{ color:var(--accent); font-size:calc(var(--size-caption) * 720px); letter-spacing:.12em; text-transform:uppercase; margin-bottom:.5em; }
+  /* A practice slide may open with a SETUP block — the tool or identity the problem needs, stated
+     before the problem itself. Deliberately quieter and smaller than the question, and closed by a
+     hairline rule, so the eye can see where the preamble stops and the thing being ASKED starts.
+     Class D's practice-1 is the case that asked for it: the range formula has to be rewritten with
+     the double-angle identity before the archery question can be inverted, and with both in one
+     `.lead` the slide read as a single undifferentiated paragraph — and ran off the bottom of the
+     frame once the solution fragment opened. */
+  .practice .psetup{ font-size:calc(var(--size-caption) * 720px); line-height:1.45; color:var(--muted);
+                     max-width:92%; padding-bottom:.5em; margin-bottom:.65em;
+                     border-bottom:1px solid var(--guide, #5a5a68); }
+  /* muted, not accent: the accent belongs to the `Practice N` badge, and two accent-coloured
+     uppercase labels stacked on top of each other read as one two-line label. */
+  .practice .psetup .tag{ display:block; color:var(--muted); letter-spacing:.12em;
+                          text-transform:uppercase; font-size:.82em; margin-bottom:.3em; }
   .practice .lead{ font-size:calc(var(--size-subtitle) * 720px); line-height:1.5; max-width:90%; }
   .practice .eval{ color:var(--muted); }
   .practice .soln{ font-size:calc(var(--size-body) * 720px); margin-top:.2em; border-left:3px solid var(--accent); padding-left:.8em; }

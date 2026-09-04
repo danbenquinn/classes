@@ -1825,6 +1825,27 @@
       }
       this.render();
     }
+    // The blue tick + label on the ground line marking where this shot lands. It is the number the
+    // slide is arguing about on every projectile2d beat, so it belongs to the base class rather than
+    // to the pair sim that first grew it. Sized off the CANVAS, not the world, for the same reason as
+    // the arrowheads: it is a property of the picture. Skipped under drag, where the landing point is
+    // not analytic and `_refLanding` already marks the drag-free reference.
+    _rangeTick(range) {
+      const ctx = this.ctx, X = this.sx(range), Y = this.sy(0);
+      if (!isFinite(X) || X > this.W + 40) return;
+      const half = Math.max(this.H * 0.022, 10);
+      ctx.save();
+      ctx.strokeStyle = HOUSE.velocity; ctx.lineWidth = 2; ctx.lineCap = "round"; ctx.setLineDash([]);
+      ctx.globalAlpha = 0.9;
+      ctx.beginPath(); ctx.moveTo(X, Y - half); ctx.lineTo(X, Y + half); ctx.stroke();
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = HOUSE.muted;
+      ctx.font = `600 ${Math.max(11, Math.round(this.H * 0.026))}px ${HOUSE.fontSans}`;
+      // ABOVE the ground line: below it is the control bar's 140 px, which covered the label outright.
+      ctx.textAlign = "center"; ctx.textBaseline = "bottom";
+      ctx.fillText(`${range.toFixed(0)} m`, X, Y - half - 20);
+      ctx.restore();
+    }
     _velTip() { return { x: this.x0 + this.u0 * this.velWorldPerMS, y: this.y0 + this.v0 * this.velWorldPerMS }; }
     _velShown() { return !this.running && !this.landed && (Math.abs(this.u0) > 0.01 || Math.abs(this.v0) > 0.01); }
     render() {
@@ -1836,6 +1857,7 @@
       const tEnd = (active && !this.dragMode) ? this.tLand : this._landTime(src.y0, src.v0, src.g);
       ctx.save(); ctx.globalAlpha = 0.32; this._path(src, 0, tEnd, HOUSE.velocity, 2, [9, 8]); ctx.restore();   // dashed velocity-blue predicted parabola (house style: optional prediction)
       if (this.dragMode) this._refLanding(src, tEnd);   // ...and make sure it visibly lands
+      if (!this.dragMode && src.g > 0) { const R = src.x0 + src.u0 * tEnd; if (R > 0.5) this._rangeTick(R); }
       const tNow = active ? Math.min(this.t, this.tLand) : 0;
       if (active) this._trail(src, tNow);                                      // white fading trajectory (house style)
       if (active) this._motionBlur(this.radius, k => { const tk = tNow - k * HOUSE.blurDt; return tk < 0 ? null : this.pos(tk); });
@@ -1996,6 +2018,17 @@
       frameW: d.framew !== undefined ? +d.framew : undefined,
       slomo: d.slomo !== "false"   // default ON; a slide opts out with data-slomo="false"
     };
+    // OPTIONAL data-speed / data-theta preload the launch vector. Omitted, the sim opens on the class
+    // default — 40 m/s @ 45 deg, the world-record baseball throw — which is what every slide wanted until
+    // Class D's `sim-2d-q2` needed to open on its comprehension check's own numbers instead.
+    // KEEP THEM INTEGERS. The two sliders below step by 1, and the block right after this reads the sim's
+    // u0/v0 back OUT into them, rounded; a preload the sliders cannot represent renders at one value and
+    // then jumps to another the instant anyone touches a control or presses Play.
+    if (d.speed !== undefined || d.theta !== undefined) {
+      const sp = d.speed !== undefined ? +d.speed : 40;
+      const th = (d.theta !== undefined ? +d.theta : 45) * Math.PI / 180;
+      opts.u0 = sp * Math.cos(th); opts.v0 = sp * Math.sin(th);
+    }
     const canvas = section.querySelector(".simcanvas");
     const sim = new Projectile2D(canvas, opts);
     const q = s => section.querySelector(s);
@@ -4336,13 +4369,216 @@
     return sim;
   }
 
+
+  // ============================================================================================
+  // Projectile2DPair (data-sim="projectile2d-pair") — Class D's comprehension check, made visible.
+  // TWO balls launched at once from the origin, with their velocity COMPONENTS SWAPPED: ball A goes
+  // <vx0, vy0>, ball B goes <vy0, vx0>. Sliders set vx0 and vy0 directly (not speed and angle) because
+  // the whole argument is about the two components and about what happens when you exchange them.
+  //
+  // WHY IT EXISTS. `sim-2d` already sweeps one shot through theta and shows 45 degrees winning. That
+  // demonstrates the maximum; it does NOT demonstrate the tie, because you cannot see two ranges at
+  // once by playing one ball twice — the first arc is gone by the time the second lands. Here both are
+  // in the air together, they trace visibly different paths, one is still climbing while the other is
+  // already down, and they finish on the same tick on the ground line. Range is 2·vx0·vy0/g and a
+  // product does not care which factor is which; the two hang times, 2·vy0/g and 2·vx0/g, differ.
+  //
+  // THE BALLS DO NOT INTERACT, and nothing here pretends they do — two independent analytic
+  // parabolas drawn in one frame.
+  //
+  // COLOUR IS ROLE, NOT IDENTITY (style/STYLE.md), so both balls are HOUSE.mass and both launch
+  // arrows are HOUSE.velocity — giving ball B its own hue would be inventing a second physical role
+  // that does not exist. They are told apart by their arrows and their paths; there are no A/B labels,
+  // because the point of the slide is that the two are interchangeable.
+  //
+  // EITHER ARROW IS DRAGGABLE. Grab one tip and you set that arrow's own components; the other follows,
+  // swapped, because the pair is pinned to be each other's converse.
+  //
+  // EACH COMPONENT CAPS AT 28 m/s, not 40. The frame is the same FIXED 165 m as `sim-2d`, whose cap is
+  // on the SPEED; here the sliders are the components, and 28 m/s each is a speed of 39.6 — the same
+  // shot, so the widest possible range (160 m) still just fills the screen instead of flying off it.
+  // The axes do NOT follow the shot. An auto-fitting frame kept the arcs large, but it also meant the
+  // ruler changed every time a slider moved, so two settings could not be compared by eye — which is
+  // the whole job here. Frozen axes, same as `sim-2d`.
+  // ============================================================================================
+  class Projectile2DPair extends Projectile2D {
+    constructor(canvas, opts = {}) {
+      super(canvas, opts);
+      this.u0 = opts.u0 ?? 10;      // vx0 of ball A (= vy0 of ball B)
+      this.v0 = opts.v0 ?? 20;      // vy0 of ball A (= vx0 of ball B)
+      this.maxComp = opts.maxComp ?? 28;
+      this.showReadout = false;
+    }
+    _legs() { return [{ u: this.u0, v: this.v0 }, { u: this.v0, v: this.u0 }]; }
+    _srcOf(leg) { return { x0: 0, y0: 0, u0: leg.u, v0: leg.v, g: this.g }; }
+    get range() { return this.g > 0 ? 2 * this.u0 * this.v0 / this.g : 0; }
+    play() {
+      this.L = { x0: 0, y0: 0, u0: this.u0, v0: this.v0, g: this.g };
+      // run until the SLOWER of the two is down, so nothing vanishes mid-flight
+      this.tLand = Math.max(this._landTime(0, this.u0, this.g), this._landTime(0, this.v0, this.g));
+      this.t = 0; this.running = true; this.paused = false; this.landed = false;
+      this.everPlayed = true; this.last = performance.now();
+    }
+    _at(leg, t) { return { x: leg.u * t, y: leg.v * t - 0.5 * this.g * t * t }; }
+    // EITHER TIP IS GRABBABLE. The base class only knows one velocity arrow; here there are two, and
+    // they are locked converses, so dragging B is dragging A with the components exchanged. Nearest
+    // tip wins, which keeps the two separable even when vx0 and vy0 are close (and when they are
+    // equal the arrows coincide and it does not matter which one you get).
+    _bindDrag() {
+      let leg = null;                       // 0 = the <vx0, vy0> arrow, 1 = its converse
+      const toWorld = (ev) => {
+        const r = this.c.getBoundingClientRect();
+        const px = (ev.clientX - r.left) / r.width * this.W, py = (ev.clientY - r.top) / r.height * this.H;
+        return { x: (px - this.ox) / this.scale, y: ((this.H - this.padB) - py) / this.scale };
+      };
+      const tipOf = (l) => ({ x: l.u * this.velWorldPerMS, y: l.v * this.velWorldPerMS });
+      this.c.addEventListener("pointerdown", (ev) => {
+        if (this.running || !this._velShown()) return;
+        const w = toWorld(ev);
+        let best = null, bestD = Infinity;
+        this._legs().forEach((l, i) => {
+          const t = tipOf(l), d = Math.hypot(w.x - t.x, w.y - t.y);
+          if (d < bestD) { bestD = d; best = i; }
+        });
+        leg = bestD < Math.max(this.frameW * 0.03, this.radius * 2) ? best : null;
+        if (leg !== null) this.c.setPointerCapture?.(ev.pointerId);
+      });
+      this.c.addEventListener("pointermove", (ev) => {
+        if (leg === null) return;
+        const w = toWorld(ev);
+        // the DRAGGED arrow's own components, first quadrant only, each capped at the slider max
+        const lim = (q) => Math.max(0, Math.min(this.maxComp, q));
+        const a = lim(w.x / this.velWorldPerMS), b = lim(w.y / this.velWorldPerMS);
+        if (leg === 0) { this.u0 = a; this.v0 = b; } else { this.u0 = b; this.v0 = a; }
+        this.landed = false;
+        if (this.onVecChange) this.onVecChange(this.u0, this.v0);   // → the vx0 / vy0 sliders, rounded
+        this.render();
+      });
+      window.addEventListener("pointerup", () => { leg = null; });
+    }
+    render() {
+      const ctx = this.ctx; ctx.clearRect(0, 0, this.W, this.H); this._axes();
+      const active = this.running || this.landed;
+      const legs = this._legs();
+      // dashed predicted parabolas first, then the shared landing tick, then the bodies on top
+      for (const leg of legs) {
+        const src = this._srcOf(leg);
+        ctx.save(); ctx.globalAlpha = 0.32;
+        this._path(src, 0, this._landTime(0, leg.v, this.g), HOUSE.velocity, 2, [9, 8]);
+        ctx.restore();
+      }
+      if (this.g > 0) this._rangeTick(this.range);
+      for (const leg of legs) {
+        const src = this._srcOf(leg);
+        const tLeg = this._landTime(0, leg.v, this.g);
+        const tNow = active ? Math.min(this.t, tLeg) : 0;
+        if (active) {
+          this._trail(src, tNow);
+          this._motionBlur(this.radius, k => {
+            const tk = tNow - k * HOUSE.blurDt;
+            return tk < 0 ? null : this._at(leg, tk);
+          });
+        }
+        if (this._velShown()) this._velArrow(0, 0, leg.u, leg.v);
+        const p = active ? this._at(leg, tNow) : { x: 0, y: 0 };
+        this._disc(p.x, p.y, this.radius, HOUSE.mass, 1);
+        if (this.g > 0) this._arrow(p.x, p.y, 0, -this._forceLen(this.g), HOUSE.gravity, 1);
+      }
+    }
+  }
+
+  // NO g SLIDER, unlike `sim-2d`. Two reasons, and the second is the real one. The labels here are long
+  // — each names both balls — so a third control wrapped the bar onto two rows at 1280. And this slide
+  // is not asking a question about gravity: it is asking whether swapping the two components changes
+  // the range, and the answer (a product does not care which factor is which) is the same on the moon.
+  // `data-g` still sets it, so a slide can open on another world; nothing on screen can change it.
+  //
+  // SLIDER LABELS NAME BOTH BALLS. Each slider is one number wearing two hats — the first is ball 1's
+  // x-component AND ball 2's y-component, the second is ball 2's x AND ball 1's y — and saying that on
+  // the label is the cheapest way to make the swap legible without putting identity tags back on the
+  // canvas. Note the second slider is labelled from ball 2's point of view but still sets `v0`, ball
+  // 1's vertical component; they are the same number, which is the point.
+  const CONTROLS_PAIR_HTML = `
+      <canvas class="simcanvas"></canvas>
+      <div class="simctrls">
+        <button class="simbtn play">▶ Play</button>
+        <button class="simbtn reset">↺ Reset</button>
+        <button class="simbtn slomo" title="Slow motion">🐢</button>
+        <label><span class="var"><i>v</i><sub><i>x</i>01</sub> (<i>v</i><sub><i>y</i>02</sub>):</span> <input type="range" class="s-vx" min="0" max="28" step="1"><input type="number" class="n-vx" step="1"><span class="u">m/s</span></label>
+        <label><span class="var"><i>v</i><sub><i>x</i>02</sub> (<i>v</i><sub><i>y</i>01</sub>):</span> <input type="range" class="s-vy" min="0" max="28" step="1"><input type="number" class="n-vy" step="1"><span class="u">m/s</span></label>
+      </div>`;
+
+  function mountProjectile2DPair(section) {
+    if (!section.querySelector(".simcanvas")) section.insertAdjacentHTML("beforeend", CONTROLS_PAIR_HTML);
+    const d = section.dataset;
+    const sim = new Projectile2DPair(section.querySelector(".simcanvas"), {
+      g: d.g !== undefined ? +d.g : 9.8,
+      frameW: d.framew !== undefined ? +d.framew : undefined,
+      u0: d.vx0 !== undefined ? +d.vx0 : undefined,
+      v0: d.vy0 !== undefined ? +d.vy0 : undefined,
+      slomo: d.slomo !== "false"
+    });
+    const q = s => section.querySelector(s);
+    const rng = { vx: q(".s-vx"), vy: q(".s-vy") };
+    const num = { vx: q(".n-vx"), vy: q(".n-vy") };
+    const clamp = (el, v) => Math.max(+el.min, Math.min(+el.max, v));
+    rng.vx.value = sim.u0; rng.vy.value = sim.v0;
+    sim.maxComp = +rng.vx.max;
+    // Arrow drag → the two component sliders. Snap the sim to the rounded values as well: the sliders
+    // step by 1, and `apply()` re-reads them on Play, so an unrounded drag would jump on launch.
+    sim.onVecChange = (vx, vy) => {
+      const a = Math.round(vx), b = Math.round(vy);
+      rng.vx.value = a; num.vx.value = a; rng.vy.value = b; num.vy.value = b;
+      sim.u0 = a; sim.v0 = b;
+    };
+    const apply = () => {
+      sim.u0 = +rng.vx.value; sim.v0 = +rng.vy.value;      // g is fixed on this sim — see above
+      if (!sim.running) { sim.landed = false; sim.render(); }
+    };
+    Object.keys(rng).forEach(k => {
+      const s = rng[k], n = num[k]; n.value = s.value;
+      s.addEventListener("input", () => { n.value = s.value; apply(); });
+      n.addEventListener("input", () => { const v = parseFloat(n.value); if (isNaN(v)) return; s.value = clamp(s, v); apply(); });
+      n.addEventListener("change", () => { const v = parseFloat(n.value); n.value = isNaN(v) ? s.value : clamp(s, v); s.value = n.value; apply(); });
+    });
+    const playBtn = q(".play");
+    const refreshPlay = () => { playBtn.textContent = !sim.running ? "▶ Play" : (sim.paused ? "▶ Resume" : "⏸ Pause"); };
+    sim.refreshPlayBtn = refreshPlay;
+    playBtn.addEventListener("click", () => {
+      if (!sim.running) { apply(); sim.play(); } else if (sim.paused) sim.resume(); else sim.pause();
+      refreshPlay();
+    });
+    q(".reset").addEventListener("click", () => { sim.reset(); refreshPlay(); });
+    const slo = q(".slomo"); slo.classList.toggle("on", sim.slomo);
+    slo.addEventListener("click", () => { sim.slomo = !sim.slomo; slo.classList.toggle("on", sim.slomo); });
+    apply();
+    if (window.self !== window.top) {                 // framed (the published site): look, don't touch
+      sim.c.style.pointerEvents = "none";
+      [playBtn, q(".reset"), slo, rng.vx, rng.vy, num.vx, num.vy].forEach(el => { if (el) el.disabled = true; });
+      const ctrls = q(".simctrls"); if (ctrls) ctrls.style.opacity = ".4";
+    }
+    // THE ANIMATION LOOP. Every other mount ends with this and it is not optional: deck.js calls
+    // sim.start()/sim.stop() as the slide comes and goes, and without it the sim mounts, renders once,
+    // accepts a click on Play (the button even flips to Pause) and then never moves.
+    let raf = null, prevRunning = sim.running;
+    sim.start = () => { if (raf) return; const loop = (now) => {
+      sim.step(now);
+      if (sim.running !== prevRunning) { prevRunning = sim.running; refreshPlay(); }
+      raf = requestAnimationFrame(loop);
+    }; raf = requestAnimationFrame(loop); };
+    sim.stop = () => { if (raf) { cancelAnimationFrame(raf); raf = null; } };
+    window.addEventListener("resize", () => { sim.resize(); sim.render(); });
+    return sim;
+  }
+
   // Dispatcher: pick the preset from data-sim (default projectile).
   // The closed vocabulary of data-sim values, so mount() can tell "no attribute" (fall back to the
   // projectile, as it always has) from "an attribute nobody implemented" (say so). Keep in step with
   // the branches below, and with DESIGN.md's sim catalog.
   const SIM_KINDS = new Set([
     "projectile", "elevator", "handlift", "normal", "handlift-energy", "handliftenergy",
-    "projectile2d", "2d", "deflect", "game", "circle", "circular", "oscillator", "spring",
+    "projectile2d", "2d", "projectile2d-pair", "pair2d",
+    "deflect", "game", "circle", "circular", "oscillator", "spring",
     "oscillator-game", "springgame", "attractor2d", "attractor", "launcher", "launchergame",
     "platformbounce", "frictionramp", "coupledmass"
   ]);
@@ -4364,6 +4600,7 @@
     }
     if (kind === "elevator" || kind === "handlift" || kind === "normal") return mountHandLift(section);
     if (kind === "handlift-energy" || kind === "handliftenergy") return mountHandLiftEnergy(section);
+    if (kind === "projectile2d-pair" || kind === "pair2d") return mountProjectile2DPair(section);
     if (kind === "projectile2d" || kind === "2d")
       return section.dataset.drag !== undefined ? mountProjectile2DDrag(section) : mountProjectile2D(section);
     if (kind === "deflect" || kind === "game") return mountDeflect(section);
