@@ -17,7 +17,7 @@
   .title-wrap .subtitle{ color:var(--muted); font-style:italic; font-size:calc(var(--size-subtitle) * 720px); }
 
   /* Presenter-remote QR setup slide (my reference only — trimmed before publishing).
-     TWO COLUMNS: QR left, text right. It was a centred vertical stack, which was fine until the backend
+     TWO COLUMNS: QR left, text right. It was a centered vertical stack, which was fine until the backend
      health panel arrived underneath and pushed everything off the bottom of the slide. A stack has no
      spare room on a 720-tall slide once a 300px QR is in it; a second column has plenty.
      The QR is 200px rather than 300px because this one is only ever scanned from arm's length, at the
@@ -41,7 +41,7 @@
      max-height + overflow:auto is the guarantee: whatever the panel ends up saying, it scrolls inside
      its own box instead of growing the slide. Structural, not a guess about how long the text runs —
      which is what the old vertical stack was relying on, right up until it wasn't. Rows stay `auto` so
-     the block still centres vertically when the status is a single healthy green line. */
+     the block still centers vertically when the status is a single healthy green line. */
   .remoteqr .rq-status{ grid-column:2; grid-row:4; max-height:58%; overflow:auto;
                         font-size:.4em; line-height:1.45; margin:.35em 0 0;
                         padding:.55em .8em; border-radius:8px; border:1px solid transparent; }
@@ -258,7 +258,7 @@
   .practice .psetup{ font-size:calc(var(--size-caption) * 720px); line-height:1.45; color:var(--muted);
                      max-width:92%; padding-bottom:.5em; margin-bottom:.65em;
                      border-bottom:1px solid var(--guide, #5a5a68); }
-  /* muted, not accent: the accent belongs to the `Practice N` badge, and two accent-coloured
+  /* muted, not accent: the accent belongs to the `Practice N` badge, and two accent-colored
      uppercase labels stacked on top of each other read as one two-line label. */
   .practice .psetup .tag{ display:block; color:var(--muted); letter-spacing:.12em;
                           text-transform:uppercase; font-size:.82em; margin-bottom:.3em; }
@@ -297,11 +297,11 @@
   .poll.sealed .choice.correct .bar{ background:var(--ok); }
   .poll.sealed .choice.correct .txt{ color:var(--ok); font-weight:650; }
   .poll.sealed .choice.correct .key{ border-color:var(--ok); color:var(--ok); }
-  /* HOUSE RULE (2026-08-25): in a comprehension check the three palette colours carry meaning, and the
+  /* HOUSE RULE (2026-08-25): in a comprehension check the three palette colors carry meaning, and the
      same grammar runs on the phone — blue is neutral, GREEN is the right answer, RED is a wrong one.
      Before this the wrong bars stayed the neutral blue, which read as "no verdict yet" on the one slide
      where the verdict is the whole point.
-     BARS ONLY, deliberately. The correct option keeps the only coloured label and key, so on a
+     BARS ONLY, deliberately. The correct option keeps the only colored label and key, so on a
      four-choice question — where three of the four bars are about to go red — the eye still lands on
      green first instead of on the tallest red thing in the room.
      Survey polls are excluded: they carry data-answer="-1" because there is no right answer, so
@@ -364,18 +364,18 @@
   /* Prize wheel — TWO Price-Is-Right vertical reels side by side (winner | prize).
      Both reels spin the same way (upward) — counter-rotating them was tried and reverted; two reels
      running opposite ways for several seconds is unpleasant to watch.
-     WINNER reel is deliberately colourless: white on black, so the only colour on the slide carries
+     WINNER reel is deliberately colourless: white on black, so the only color on the slide carries
      meaning. Amber marks the selection — the pointer band on both reels, and the winning name once
-     it lands. PRIZE reel keeps colour because there the colour IS the information: a blue band of
+     it lands. PRIZE reel keeps color because there the color IS the information: a blue band of
      100 identical "select a prize" slots, one of which is green and says $20. Every prize slot is
-     labelled — cluttered on purpose, because an unlabelled band read as a mystery. Prize slots are
+     labeled — cluttered on purpose, because an unlabelled band read as a mystery. Prize slots are
      shorter than name slots (40 vs 64 px) so eight of them are visible at once and the 1-in-100
      is legible as a proportion. */
-  /* Centring: the REELS are centred on the slide, not the block as a whole — the labels, the Spin
+  /* Centering: the REELS are centered on the slide, not the block as a whole — the labels, the Spin
      controls and the result line are all out of the flow, because while they were in it their
-     combined height sat below the windows and pushed the reels above the optical centre.
+     combined height sat below the windows and pushed the reels above the optical center.
      The stage is pinned with top:50% + translateY(-50%) rather than by making the section a
-     centring flex box. Both work in principle, but the flex version depends on `display:flex`
+     centering flex box. Both work in principle, but the flex version depends on `display:flex`
      out-ranking reveal's own `display:block` on `.present` — and on NOT out-ranking its
      `display:none` on every other slide. That is a cascade fight with a nasty failure mode (the
      wheel rendering on top of every slide), and it has to be won in whatever browser the lecture
@@ -399,12 +399,12 @@
      small caps, a computing ID is six. Change the height here and in SEGH/PSEGH together. */
   .wheel-seg{ height:40px; display:flex; align-items:center; justify-content:center;
               font-weight:700; font-size:.44em; color:#000000; letter-spacing:.01em; white-space:nowrap; }
-  /* winner reel — no colour until there is a winner */
+  /* winner reel — no color until there is a winner */
   .wheel-seg.name{ background:#000; color:#fff; font-weight:600; }
   /* Amber is light, so the winning band flips to dark ink — white on --mma-amber does not carry
      across a lecture-hall projector. */
   .wheel-seg.name.hit{ background:var(--mma-amber); color:#241800; }
-  /* prize reel — 26 labelled slots, one of them green */
+  /* prize reel — 26 labeled slots, one of them green */
   .wheel-seg.prize{ background:var(--mma-blue); color:#06111d; font-size:.3em;
                     font-weight:800; letter-spacing:.1em; text-transform:uppercase;
                     box-shadow:inset 0 1px 0 rgba(0,0,0,.16); }
@@ -455,7 +455,7 @@
 
 /* ---- Blackout (reveal's pause: `.` / `B` on the laptop, the Black button on the phone) ----------
    Reveal draws a "Resume presentation" button in the corner of its pause overlay. On a laptop that is
-   a helpful affordance; on a projector it is a caption, three metres wide, telling a lecture hall that
+   a helpful affordance; on a projector it is a caption, three meters wide, telling a lecture hall that
    the screen they are looking at is paused — which is exactly what a blackout is trying not to say.
    The way back is unchanged and there are two of them: `.` on the laptop, or the phone's own button,
    which now reads "Show" while the room is dark. Added 2026-08-24 with the phone blackout. */

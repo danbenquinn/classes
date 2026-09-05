@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Presenter Remote</title>
+<!--
+  Phone-side presenter remote for the MAE 2501 reveal decks. Opened on Daniel's phone; syncs with the
+  laptop deck over the SAME Supabase project the polls use, via a realtime BROADCAST channel (one socket).
+  Shows the current slide's speaker notes + a "next" card, and its Prev/Next buttons drive the laptop.
+  Purely additive: if this page (or wifi) dies, the laptop deck + its S speaker view are unaffected.
+  Channel = "deck-<class>", where <class> comes from ?class=classD (matches the deck's CLASS_ID).
+-->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>window.MathJax = { tex:{ inlineMath:[['$','$']], displayMath:[['$$','$$']] }, svg:{ fontCache:'none' }, options:{ enableAssistiveMml:false } };</script>
+<script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+  :root{ --ink:#f2f2ef; --muted:#9aa0a6; --bg:#0b0c0e; --panel:#15171b; --line:#24272d;
+         --accent:#5D9EC7; --ok:#8FB032; --amber:#E19C24; }
+  *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body{ margin:0; height:100%; }
+  body{ background:var(--bg); color:var(--ink); display:flex; flex-direction:column; height:100dvh;
+        font-family:-apple-system,system-ui,"Segoe UI",Roboto,sans-serif; }
+  header{ display:flex; align-items:center; gap:.55em; padding:.6em .85em; border-bottom:1px solid var(--line); font-size:.9rem; }
+  .lamp{ width:.7em; height:.7em; border-radius:50%; background:var(--amber); flex:none; transition:background .3s; }
+  .lamp.on{ background:var(--ok); box-shadow:0 0 8px var(--ok); }
+  .status{ color:var(--muted); }
+  .spacer{ flex:1; }
+  .idx{ color:var(--muted); font-variant-numeric:tabular-nums; font-size:.85rem; }
+  main{ flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; padding:1em 1.1em 1.2em; }
+  .waiting{ color:var(--muted); text-align:center; margin-top:32%; font-size:1.15rem; line-height:1.6; }
+  .waiting small{ color:#6b7075; font-size:.8rem; }
+  .cur-notes{ font-size:1.28rem; line-height:1.55; }
+  .cur-notes b{ color:#fff; }
+  .cur-notes svg{ max-width:100%; height:auto; }
+  .cur-empty{ color:var(--muted); font-style:italic; }
+  /* Cards — the CURRENT card and the up-next card share one look (badge colors, bar, panel) */
+  .card{ border:1px solid var(--line); border-radius:14px; overflow:hidden; background:var(--panel); }
+  .card .bar{ display:flex; align-items:center; gap:.5em; padding:.55em .75em; border-bottom:1px solid var(--line); }
+  .card .badge{ font-size:.62rem; letter-spacing:.1em; text-transform:uppercase; font-weight:700;
+                padding:.25em .6em; border-radius:999px; color:#04121d; background:var(--accent); }
+  .card .badge.video{ background:var(--accent); } .card .badge.image{ background:#7FbFd9; }
+  .card .badge.board{ background:var(--amber); } .card .badge.poll{ background:var(--ok); }
+  .card .badge.sim{ background:#8778B3; color:#fff; } .card .badge.wheel{ background:#E19C24; }
+  .card .badge.camera{ background:#C56E1A; color:#fff; } .card .badge.intro,.card .badge.title,.card .badge.slide{ background:#5E81B5; color:#fff; }
+  .card .badge.practice{ background:#929600; color:#fff; } .card .badge.quiz{ background:#FFBF00; color:#04121d; }
+  .card .badge.homework{ background:#A5609D; color:#fff; }
+  .card .nid{ font-weight:650; color:var(--ink); font-size:.95rem; }
+  .card .lbl{ color:var(--muted); font-size:.6rem; letter-spacing:.14em; text-transform:uppercase; margin-left:auto; }
+  .cur .cbody{ padding:.75em .85em; }
+  .next{ margin-top:1.5em; }
+  .next .ntitle{ padding:.7em .85em; color:var(--ink); font-size:1.08rem; line-height:1.35; font-weight:600; }
+  .next .npreview{ padding:.75em .85em; color:#c7ccd2; font-size:.98rem; line-height:1.45;
+                   max-height:9.5em; overflow:hidden; position:relative; }
+  .next .npreview svg{ max-width:100%; height:auto; }
+  .next .npreview.faded::after{ content:""; position:absolute; left:0; right:0; bottom:0; height:2.4em;
+                   background:linear-gradient(transparent, var(--panel)); }
+  .next .npreview .none{ color:var(--muted); font-style:italic; }
+  .build{ margin-left:auto; color:var(--muted); font-size:.62rem; opacity:.65;
+          font-family:ui-monospace,monospace; letter-spacing:.04em; }
+  footer{ display:flex; gap:.7em; padding:.75em; padding-bottom:calc(.75em + env(safe-area-inset-bottom)); border-top:1px solid var(--line); }
+  button{ flex:1; font:inherit; font-size:1.2rem; font-weight:650; padding:1.05em 1em; border-radius:15px;
+          border:1px solid #2c3038; background:var(--panel); color:var(--ink);
+          /* touch-action:manipulation is the fix for "tap twice quickly and the phone zooms instead of
+             advancing": it tells the browser this element has no double-tap gesture, so the second tap
+             is delivered as a second tap rather than held back to see if a zoom is starting. That wait
+             is also where the old ~300 ms tap delay came from, so taps get snappier as a side effect.
+             Unlike maximum-scale=1 it disables zooming ONLY on these two buttons — pinch-zoom on the
+             notes still works, which matters when the notes are small and the room is dark. */
+          touch-action:manipulation;
+          -webkit-tap-highlight-color:transparent;   /* no grey flash on a fast double tap */
+          -webkit-user-select:none; user-select:none; }  /* a fast double tap must not select the label */
+  button:active, button.hit{ background:#20242a; transform:translateY(1px); }   /* .hit — pointerdown
+     handles the press now, and :active alone can lag behind a fast burst; this keeps the feedback
+     honest so you can see that four taps registered as four. */
+  button.next-btn{ flex:1.6; background:var(--accent); color:#04121d; border-color:var(--accent); }
+  /* Black: narrow, and unmistakable when it is ON. A blackout you cannot confirm from the phone is
+     worse than no blackout button, because the recovery (walk to the laptop) is the thing you were
+     trying to avoid. */
+  /* nowrap + a fixed share of the row: "Un-black" wrapped to two lines and shoved Prev/Next down,
+     so the footer changed shape every time the room went dark. A control you aim at by muscle memory
+     must not move. Hence also the short second label. */
+  button.black-btn{ flex:.9; white-space:nowrap; }
+  button.black-btn.on{ background:#f2f2ef; color:#04121d; border-color:#f2f2ef; font-weight:700; }
+</style>
+</head>
+<body>
+  <header>
+    <span class="lamp" id="lamp"></span>
+    <span class="status" id="status">connecting…</span>
+    <!-- Build stamp. The phone loads the GitHub Pages copy, not the one in this folder, so "I changed
+         remote.html and nothing happened" is almost always "the change was never pushed" or "the phone
+         is on a cached page". Bump this string whenever this file changes, alongside remoteVersion in
+         engine/deck.js, and you can read which copy the phone actually has without guessing. -->
+    <span class="build" id="build">b5</span>
+    <span class="spacer"></span>
+    <span class="idx" id="idx"></span>
+  </header>
+
+  <main id="main">
+    <div class="waiting" id="waiting">Waiting for the laptop deck…<br><small id="chan"></small></div>
+    <div class="card cur" id="curwrap" style="display:none">
+      <div class="bar"><span class="badge" id="cbadge">slide</span><span class="lbl">current</span></div>
+      <div class="cbody"><div class="cur-notes" id="notes"></div></div>
+    </div>
+    <div class="card next" id="nextwrap" style="display:none">
+      <div class="bar"><span class="badge" id="nbadge">slide</span><span class="lbl">up next</span></div>
+      <div class="ntitle" id="ntitle"></div>
+    </div>
+  </main>
+
+  <footer>
+    <button id="prev">‹ Prev</button>
+    <!-- Deliberately between Prev and Next and deliberately narrow: this is the button you press when
+         you want the room looking at YOU, and it is also the button you must never hit by accident
+         while advancing. Narrow + centred keeps it off both thumb paths. -->
+    <button id="black" class="black-btn">Black</button>
+    <button id="next" class="next-btn">Next ›</button>
+  </footer>
+
+<script>
+  const SUPABASE_URL = "https://rdbacwwbeyeqdkswwvjt.supabase.co";
+  const SUPABASE_ANON_KEY = "sb_publishable_IQNxMMynit0aWtOS3tjiRQ_h5sNo159";
+  const CLASS = new URLSearchParams(location.search).get('class') || 'classD';
+  const CHAN  = 'deck-' + CLASS;
+  const $ = id => document.getElementById(id);
+  $('chan').textContent = CHAN;
+
+  function setLive(on, label){ $('lamp').classList.toggle('on', !!on); $('status').textContent = label; }
+
+  function render(p){
+    $('waiting').style.display = 'none';
+    $('curwrap').style.display = 'block';
+    $('nextwrap').style.display = 'block';
+    $('notes').innerHTML = p.notes ? p.notes : '<span class="cur-empty">(no notes for this slide)</span>';
+    const ctype = (p.type || 'slide');                    // older decks don't broadcast a current type
+    const cbadge = $('cbadge'); cbadge.textContent = ctype; cbadge.className = 'badge ' + ctype;
+    $('idx').textContent = (p.index && p.total) ? (p.index + ' / ' + p.total) : '';
+    // next card — a short descriptive title (the deck's data-title), not the full notes
+    const type = (p.nextType || 'slide');
+    const badge = $('nbadge'); badge.textContent = type; badge.className = 'badge ' + type;
+    $('ntitle').textContent = p.nextId ? (p.nextTitle || p.nextId) : 'End of deck';
+    typesetNotes();
+    $('main').scrollTop = 0;
+  }
+  function typesetNotes(){   // only the CURRENT notes carry math; the next card is plain text
+    if(window.MathJax && MathJax.typesetPromise) MathJax.typesetPromise([$('notes')]).catch(()=>{});
+  }
+  // If MathJax finishes loading AFTER the first notes already arrived, typeset whatever's on screen now.
+  if(window.MathJax && MathJax.startup && MathJax.startup.promise){ MathJax.startup.promise.then(typesetNotes).catch(()=>{}); }
+
+  // Only re-render when the slide actually changed, so MathJax isn't re-typesetting on every 2s safety poll.
+  let lastKey = null;
+  // `paused` is part of the key, not just the payload: without it the early-return below swallows a
+  // blackout that happened on the current slide — the one case the button exists for — and the phone
+  // would sit showing "Black" un-lit while the room is dark.
+  function onState(p){
+    setBlack(!!p.paused);
+    const key = (p.index||'') + '|' + (p.id||'') + '|' + (p.nextId||'') + '|' + (p.paused ? 1 : 0);
+    if(key === lastKey) return; lastKey = key; render(p);
+  }
+  function setBlack(on){
+    const b = $('black'); if(!b) return;
+    b.classList.toggle('on', on);
+    b.textContent = on ? 'Show' : 'Black';
+  }
+
+  let client, chan;
+  try{
+    client = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { realtime:{ params:{ eventsPerSecond: 5 } } });
+    chan = client.channel(CHAN, { config:{ broadcast:{ self:false } } });
+    chan.on('broadcast', { event:'state' }, ({ payload }) => { setLive(true, 'live'); onState(payload); });
+    chan.subscribe((status) => {
+      if(status === 'SUBSCRIBED'){ setLive(false, 'waiting for laptop…'); chan.send({ type:'broadcast', event:'request', payload:{} }); }
+      else if(status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED'){ setLive(false, 'reconnecting…'); }
+    });
+  }catch(e){ setLive(false, 'no connection'); }
+
+  // Safety net: re-ask the laptop for current state every 2s (only while visible). If a broadcast was ever
+  // dropped, the phone self-heals within ~2s instead of sitting stale. onState() dedups so this is cheap.
+  setInterval(() => { if(!document.hidden){ try{ chan && chan.send({ type:'broadcast', event:'request', payload:{} }); }catch(e){} } }, 2000);
+
+  function nav(action){ try{ chan && chan.send({ type:'broadcast', event:'nav', payload:{ action } }); }catch(e){} }
+  // Fire on pointerdown, not click. `click` on a touchscreen only resolves once the browser has ruled
+  // out a double-tap gesture, so a rapid burst of taps arrives late, out of order, or partly swallowed —
+  // exactly the "I tapped four times and advanced twice" failure. pointerdown fires immediately and once
+  // per finger-down. preventDefault stops the synthetic click that would otherwise follow and
+  // double-advance; the click listener stays as the keyboard/desktop path.
+  function bindNav(id, action){
+    const el = $(id);
+    el.addEventListener('pointerdown', e => {
+      if(e.pointerType === 'mouse' && e.button !== 0) return;
+      e.preventDefault();
+      el.classList.add('hit'); setTimeout(() => el.classList.remove('hit'), 90);
+      nav(action);
+    });
+    el.addEventListener('click', e => { if(e.detail === 0) nav(action); });   // keyboard Enter/Space only
+  }
+  bindNav('next', 'next');
+  bindNav('prev', 'prev');
+  bindNav('black', 'blackout');
+  // Coming back to the tab: re-ask the laptop for the current state.
+  document.addEventListener('visibilitychange', () => { if(!document.hidden){ try{ chan && chan.send({ type:'broadcast', event:'request', payload:{} }); }catch(e){} } });
+</script>
+</body>
+</html>

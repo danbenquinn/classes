@@ -19,9 +19,9 @@ const codeHash = s => cyrb53(String(s||"").trim().toLowerCase());   // normalize
 // rescales the vertical axis to what is left. It changes nothing the other tools compute — a selection
 // still reads the real samples — because the first thing it was needed for (Get Air's elevator) is a
 // signal 25x smaller than the noise of setting the phone down, and the pedagogy is that the noise is
-// STILL THERE, greyed, a screen away from the thing you came to measure.
+// STILL THERE, grayed, a screen away from the thing you came to measure.
 // CHOICE LABELS ARE ROMAN NUMERALS (2026-09-03). They were `a) b) c)` until Workshop 1's
-// jump-sections figure put five labelled stretches **A-E** on screen beside five lettered choices —
+// jump-sections figure put five labeled stretches **A-E** on screen beside five lettered choices —
 // "Section A — what's happening?" sitting an inch above a list that starts "a)", two alphabets doing
 // different jobs in the same glance. Relabelling the answers was the cheap half of that fix (the other
 // half would have been redrawing the figure). Numerals cost nothing anywhere else and can never collide
@@ -34,7 +34,7 @@ const TOOLS=(typeof CONFIG!=='undefined'&&CONFIG&&Array.isArray(CONFIG.tools)&&C
 const _toolsHTML=TOOLS.map((t,i)=>'<button data-tool="'+t+'"'+(i===0?' class="on"':'')+'>'+TOOLDEF[t]+'</button>').join("");
 // PANELS (added with Workshop 1's elevator section). A workshop declares named data SLOTS; each is an
 // independent plot with its own file, signal column, selection, and crop. `CONFIG.panels` defaults to a
-// single unnamed slot, which is exactly the behaviour every workshop had before this existed — one plot,
+// single unnamed slot, which is exactly the behavior every workshop had before this existed — one plot,
 // its controls in the toolbar, no strip. A step then names which slots it wants stacked
 // (`slots:["up","down"]`); omit it and the step shows the FIRST slot, as always.
 //
@@ -118,7 +118,10 @@ const S = {
   hs:{best:null},          // R² high score (challenge)
   challenge:false,
   reqAxis:null,            // when set (e.g. "x"), a step requires that signal axis (default-select it; gate scoring on it)
-  step:0, answers:{}, lockTimer:null
+  step:0, answers:{}, lockTimer:null,
+  // What the student TYPED, per key, beside the parsed numbers. `0.30` and `0.3` are the same
+  // Number, and trailing zeros are precisely what the `dp:` check is about — see decimalsOf().
+  raw:{}
 };
 /* Per-slot fields, PROXIED onto S so that every call site written before slots existed still reads.
    `S.ds`, `S.sel`, `S.integ` … now mean "…of the panel the student is working in", which is what they
@@ -313,7 +316,7 @@ function selRange(s,P){ P=P||active(); if(!P||!P.sel) return null;
 function average(s,P){ const r=selRange(s,P); if(!r) return null; let sum=0; for(let i=r[0];i<=r[1];i++) sum+=s.a[i]; return sum/(r[1]-r[0]+1); }
 /* ---- crop: a VIEW window, not a filter ----
    `P.crop = {a,b}` in seconds. It changes what the plot SHOWS (dimmed outside, vertical axis rescaled to
-   what is inside) and nothing that any tool COMPUTES — an Average dragged across the greyed region still
+   what is inside) and nothing that any tool COMPUTES — an Average dragged across the grayed region still
    averages the real samples. Deliberate: on Get Air's elevator files the phone-placement spike is 15 m/s²
    against a 0.3 m/s² ride, and a student needs to see that it is still there, 25x taller and one screen
    away, rather than have the tool quietly delete it for them. */
@@ -486,7 +489,7 @@ function updateCtx(){
 function updateBiasNote(){
   const el=$("biasnote"); if(!el) return;
   el.textContent = (S.debias && Number.isFinite(S.debiasEst) && S.debiasEst!==null)
-    ? "removed "+S.debiasEst.toFixed(3)+" m/s²" : "";
+    ? "removed "+S.debiasEst.toFixed(2)+" m/s²" : "";   // an acceleration: 2 dp, like every other one
 }
 function syncFitControls(){                       // refresh free-param textboxes with the fitted values (no rebuild → keeps focus)
   if(S.fitLock||!S.fit) return;
@@ -498,6 +501,30 @@ function recomputeFit(){ const s=series(); if(s && S.sel) doFitSine(s); render()
 // HOUSE STYLE: every tool's readout is a green box in the plot's top-left (the Fit Sine formula set the pattern).
 // Select Point → t & value · Average → mean & span · Fit Sine → formula + R² (hover for the definition).
 // Integrate keeps its on-curve peak/end callouts and shows nothing here.
+/* HOW MANY DECIMALS MAY WE PRINT? (added 2026-09-04, and it is a rule we were breaking.)
+
+   The decks are about to gate students on reporting the right number of decimals, so the instrument
+   has to obey the same rule first. It was not: Select Point printed a time to the MILLISECOND off a
+   capture sampled at 100 Hz, inventing two digits, and a student copying that readout was being taught
+   to over-report by the very tool that was going to mark them down for it.
+
+   Derived from the data rather than hardcoded, because the rate is a property of the phone — a device
+   sampling at 400 Hz has genuinely earned a third decimal, and Get Air's two captures (jump and
+   elevator, both 100 Hz) have earned two. Median interval, so one dropped sample cannot move it, and
+   `round` rather than `ceil` because a nominal 100 Hz measures 9.98 ms and must still read as 2. */
+function sampleDt(s){
+  if(!s || !s.t || s.t.length < 3) return null;
+  const d = [];
+  for(let i = 1; i < Math.min(s.t.length, 200); i++) d.push(s.t[i] - s.t[i-1]);
+  d.sort((a,b) => a-b);
+  const m = d[d.length >> 1];
+  return (m > 0) ? m : null;
+}
+function timeDecimals(s){
+  const dt = sampleDt(s);
+  if(!dt) return 2;
+  return Math.max(0, Math.min(4, Math.round(-Math.log10(dt))));
+}
 function updatePlotReadout(P){
   P=P||active();
   const R=P&&P.readout; if(!R) return;
@@ -516,10 +543,11 @@ function updatePlotReadout(P){
   } else if(S.tool==="point"){
     if(P.point==null){ show('<span class="ro-hint">click or drag along the trace</span>'); return; }
     const i=nearest(s,P.point);
-    show('<span class="ro"><i>t</i> = '+s.t[i].toFixed(3)+' s&nbsp;·&nbsp;<i>'+A.ddot+'</i> = '+s.a[i].toFixed(2)+' m/s²</span>');
+    const td = timeDecimals(s);          // never finer than the sample interval — see timeDecimals()
+    show('<span class="ro"><i>t</i> = '+s.t[i].toFixed(td)+' s&nbsp;·&nbsp;<i>'+A.ddot+'</i> = '+s.a[i].toFixed(2)+' m/s²</span>');
   } else if(S.tool==="avg"){
     const av=average(s,P); if(av==null){ show('<span class="ro-hint">drag a region to average</span>'); return; }
-    show('<span class="ro">average <i>'+A.ddot+'</i> = '+av.toFixed(2)+' m/s²<span class="ro-ctx"> over '+Math.abs(P.sel.b-P.sel.a).toFixed(2)+' s</span></span>');
+    show('<span class="ro">average <i>'+A.ddot+'</i> = '+av.toFixed(2)+' m/s²<span class="ro-ctx"> over '+Math.abs(P.sel.b-P.sel.a).toFixed(timeDecimals(s))+' s</span></span>');
   } else if(S.tool==="crop"){
     // Crop is the one tool that reads out in AMBER, not green, and that is the point of the house rule
     // rather than an exception to it: green means "a number you measured", and a crop measures nothing.
@@ -528,7 +556,8 @@ function updatePlotReadout(P){
     // Just the window. It used to add "showing …" and a percent-of-the-recording, which was three facts
     // where one was wanted — the axis underneath already says what fraction of the run this is.
     const lo=Math.min(P.crop.a,P.crop.b), hi=Math.max(P.crop.a,P.crop.b);
-    show('<span class="ro-ctx">'+lo.toFixed(2)+'–'+hi.toFixed(2)+' s</span>');
+    const tdc = timeDecimals(s);
+    show('<span class="ro-ctx">'+lo.toFixed(tdc)+'–'+hi.toFixed(tdc)+' s</span>');
   } else { R.style.display="none"; R.innerHTML=""; }   // integrate → on-curve callouts only
 }
 // Every visible panel repaints its own readout; the legacy no-arg call sites now mean "all of them",
@@ -590,7 +619,7 @@ function renderPanel(P){
   // for a column of plots, and here also the only way to fit it: a half-height panel has no room to give.
   const vis=visiblePanels(), isLast = !vis.length || vis[vis.length-1]===P;
   // mB was 34, which put the axis title's cap-height straight through the tick labels' descenders. It only
-  // showed when a tick happened to land at the horizontal centre — Get Air's elevator files put "10" there
+  // showed when a tick happened to land at the horizontal center — Get Air's elevator files put "10" there
   // and printed it through the middle of "t (s)". The title now gets a row of its own rather than sharing.
   const mL=58, mR=(showX||showV)?62:18, mT=16, mB=isLast?42:24, ph=H-mT-mB, px=W-mL-mR;
 
@@ -599,7 +628,7 @@ function renderPanel(P){
   // true width and now visibly off the top of the plot. A student can see what they threw away.
   // The time axis always spans the WHOLE recording, however tight the crop is. Only the vertical axis
   // rescales to what is inside. Tried it the other way on 2026-08-21 — the view following the crop, with
-  // a margin of grey kept outside each bound to drag into — and it made the control worse to use, not
+  // a margin of gray kept outside each bound to drag into — and it made the control worse to use, not
   // better (Daniel, same day). Cropping is a drag-a-region gesture on a fixed axis; the moment the axis
   // moves underneath the gesture, the thing you are dragging is measured in a coordinate system your own
   // drag is changing, and no amount of care with the pointer maths makes that feel right.
@@ -901,7 +930,7 @@ function setTop(st){                                    // top region: analyzer 
     // `fit:"cover"` on the step → full-bleed background (no letterbox, crops to the panel aspect).
     // Default (omit it) keeps the contain + 1.4× framing. See analyzer.css → video.titlebg.
     // `fit:"cover-top"` → the same full-bleed fill, anchored to the TOP of the frame instead of the
-    // middle, for a clip whose subject is high up: Get Air's walk-in is a man jumping, so a centred crop
+    // middle, for a clip whose subject is high up: Get Air's walk-in is a man jumping, so a centered crop
     // spends its whole budget on the gym floor and cuts the person out. See analyzer.css.
     const fitCls = st.fit==="cover" ? " cover" : st.fit==="cover-top" ? " cover covertop" : "";
     const bg = st.media ? '<video class="titlebg'+fitCls+'" src="'+st.media+'" autoplay loop muted playsinline onerror="this.style.display=\'none\'"></video>' : '';
@@ -942,22 +971,26 @@ function setTop(st){                                    // top region: analyzer 
   typesetMath(tm);
 }
 // a step's numeric fields, normalized: supports one `input`/`key` (legacy) or an `inputs:[...]` array.
-function fieldsOf(st){ return st.inputs ? st.inputs : (st.input ? [{label:st.input,key:st.key,unit:st.unit,range:st.range}] : []); }
+function fieldsOf(st){ return st.inputs ? st.inputs : (st.input ? [{label:st.input,key:st.key,unit:st.unit,range:st.range,dp:st.dp}] : []); }
 // mean / population std helpers + a loose stats-consistency check (3-sample std is noisy → accept sample or
 // population, wide tolerance; low-stakes, just catches nonsense like entering 0 or the mean for the spread).
 function _mean(a){ return a.reduce((x,y)=>x+y,0)/(a.length||1); }
 function _std(a){ const m=_mean(a); return Math.sqrt(a.reduce((x,y)=>x+(y-m)*(y-m),0)/(a.length||1)); }
-function _statIssue(st, vals, meanAns, stdAns, label){
+// `dp` is the precision the QUANTITY is reported to (see WORKSHOP-DESIGN.md -> "Report to the
+// precision you measured"). It was a hardcoded 2 everywhere, which quoted g's one digit short of
+// what their own boxes now demand and impulses two digits finer than they can be known.
+function _statIssue(st, vals, meanAns, stdAns, label, dp){
+  if(dp == null) dp = 2;
   if(vals.some(v=>!Number.isFinite(v))) return null;         // an upstream input isn't in yet — don't block here
   const m=_mean(vals), sdP=_std(vals);
   const sdS=vals.length>1?Math.sqrt(vals.reduce((x,y)=>x+(y-m)*(y-m),0)/(vals.length-1)):sdP;   // sample std (accept either)
   if(Number.isFinite(meanAns) && Math.abs(meanAns-m) > Math.max(0.2*Math.abs(m),0.05))
     return fbText(st,"check","Your mean {label} looks off — average your {n} values again.",
-              {label:label, n:vals.length, expected:m.toFixed(2)});
+              {label:label, n:vals.length, expected:m.toFixed(dp)});
   const near=Math.min(Math.abs(stdAns-sdP),Math.abs(stdAns-sdS));
   if(Number.isFinite(stdAns) && near > Math.max(sdP,sdS,0.1*Math.abs(m),0.1))
     return fbText(st,"check","Your standard deviation of {label} looks off — check the spread of your {n} values.",
-              {label:label, n:vals.length, expected:sdP.toFixed(2)});
+              {label:label, n:vals.length, expected:sdP.toFixed(dp)});
   return null;
 }
 /* ------------------ tool-verified inputs (`verify:` on a step) ------------------
@@ -979,7 +1012,7 @@ function _statIssue(st, vals, meanAns, stdAns, label){
    are true, both are recorded. Type either without a live fit and neither is.
 
    Not a cheating countermeasure so much as a wiring check — the honest failure it catches most often
-   is a student typing the number from the wrong fit, or from their neighbour's screen. */
+   is a student typing the number from the wrong fit, or from their neighbor's screen. */
 const VERIFY_SOURCES = {
   r2: function(){ const P=active(); return (P && P.fit && Number.isFinite(P.fit.r2)) ? P.fit.r2 : null; }
 };
@@ -995,6 +1028,27 @@ function witness(st, key, v){
              (Math.abs(v-live) <= 0.0006 || v.toFixed(3) === live.toFixed(3));
   if(ok) S.answers["seen_"+key] = live; else delete S.answers["seen_"+key];
 }
+/* `dp:` ON AN INPUT — exactly this many decimal places, no more and no fewer (2026-09-04).
+
+   Students report far too many digits, and the fix is not a lecture on error propagation: it is a
+   number per box, chosen from what the instrument actually gives, with a one-line reason in the prose
+   beside it ("the capture is 100 Hz, so give the time to 2 decimal places").
+
+   WHY DECIMALS RATHER THAN SIGNIFICANT FIGURES. The uncertainty on these quantities is absolute, not
+   relative. phyphox's acceleration is good to about ±0.005 m/s², so 1 + a/g is good to ±0.0005 — which
+   makes 1.032 (4 s.f.) and 0.971 (3 s.f.) equally right and equally precise. A significant-figure rule
+   would accept one and reject the other for no physical reason. Decimal places is the rule that matches
+   the physics here, and it is also the rule a first-year can apply without being taught propagation.
+
+   IT COUNTS THE TYPED STRING, NOT THE NUMBER, and that is the whole mechanism: `0.30` and `0.3` parse
+   to the same Number, and trailing zeros are exactly what is being asked for. `S.raw[key]` holds what
+   is in the box; everything else still runs off the parsed value. */
+function decimalsOf(raw){
+  const m = String(raw == null ? "" : raw).trim().match(/^[+-]?\d*\.(\d*)$/);
+  if(m) return m[1].length;
+  return /^[+-]?\d+\.?$/.test(String(raw).trim()) ? 0 : null;   // an integer (or "5.") is 0 dp
+}
+
 // one place for all input validation; returns a gentle message if something's off, else null.
 // Assumes good faith — a bad value usually means a misread question, not gaming.
 function inputIssue(st){
@@ -1017,8 +1071,27 @@ function inputIssue(st){
     }
     if(f.range){
       const V={label:f.label, unit:f.unit||"", low:f.range[0], high:f.range[1]};
+      // A NEGATIVE answer to a question that cannot have one is a different mistake from a small one,
+      // and `low` was answering both with "that looks too small to be right" — which is true and
+      // useless. Almost always it is a subtraction run backwards (Get Air: t_land − t_takeoff typed the
+      // other way round), and naming that is the whole of the help. Only fires where the declared range
+      // is non-negative, so a step that legitimately expects a negative number is untouched.
+      if(v<0 && f.range[0]>=0) return fbText(st,"negative",
+        "That came out negative, and this quantity cannot be. Check the order you subtracted in.",V);
       if(v<f.range[0]) return fbText(st,"low","That value looks too small to be right — re-read the question, check your units, and try again.",V);
       if(v>f.range[1]) return fbText(st,"high","That value looks too large to be right — re-read the question, check your units, and try again.",V);
+    }
+    // Precision LAST among the per-field checks: a number that is out of range is wrong in a way that
+    // matters more than how it is written, and hearing about the decimals first would be noise.
+    if(f.dp != null){
+      const got = decimalsOf(S.raw ? S.raw[f.key] : null);
+      if(got != null && got !== f.dp){
+        const V2 = {label:f.label, unit:f.unit||"", dp:f.dp, got:got,
+                    rounded: Number.isFinite(v) ? v.toFixed(f.dp) : ""};
+        return fbText(st, "dp", got > f.dp
+          ? "That is more precision than the measurement supports — give it to exactly {dp} decimal place(s), so {rounded}."
+          : "Give this one to exactly {dp} decimal place(s) — you measured that digit, so don't drop it.", V2);
+      }
     }
   }
   if(st.checkKind==="hang"){
@@ -1035,7 +1108,7 @@ function inputIssue(st){
       const tol=Math.max(0.02, 0.10*Math.abs(E.g-1));
       if(Math.abs(v-E.g)>tol)
         return fbText(st,"check","That doesn't match the plot — the green box reads {avg} m/s2, so 1 + a/g is about {expected}.",
-                  {expected:E.g.toFixed(2), avg:E.av.toFixed(2)});
+                  {expected:E.g.toFixed(3), avg:E.av.toFixed(2)});
     }
   }
   if(st.checkKind==="peaks"){                          // three peaks in a row → times must increase
@@ -1056,10 +1129,10 @@ function inputIssue(st){
     if(Math.abs(pp-1)>0.12 || Math.abs(tau-2)>0.25)
       return fbText(st,"check","Not quite. Integrate the acceleration twice to get position — and don't forget the chain rule when you integrate sin(πt). The amplitude and period of x(t) are what we're after.");
   }
-  if(st.checkKind==="gstats"){                         // felt g's: |peak|/g, mean & std for partner and wall pushes
-    const g=9.8, A=S.answers;
-    const P=[A.ap1,A.ap2,A.ap3].map(v=>Math.abs(v)/g), W=[A.aw1,A.aw2,A.aw3].map(v=>Math.abs(v)/g);
-    return _statIssue(st, P, A.gp_mean, A.gp_std, "g-factor (human)") || _statIssue(st, W, A.gw_mean, A.gw_std, "g-factor (wall)");
+  if(st.checkKind==="gstats"){                         // felt g's: |peak|/g, mean & std for the two kinds of push
+    const A=S.answers;                                 // G_STD, not a second local copy of g
+    const P=[A.ap1,A.ap2,A.ap3].map(v=>Math.abs(v)/G_STD), W=[A.aw1,A.aw2,A.aw3].map(v=>Math.abs(v)/G_STD);
+    return _statIssue(st, P, A.gp_mean, A.gp_std, "g's (human)", 3) || _statIssue(st, W, A.gw_mean, A.gw_std, "g's (wall)", 3);
   }
   if(st.checkKind==="impulse"){                        // impulse must be m·Δv, not the bare integral — the mass must appear
     const A=S.answers, m=A.m_sys;
@@ -1073,8 +1146,8 @@ function inputIssue(st){
   }
   if(st.checkKind==="impstats"){                       // impulses: mean & std for partner and wall pushes
     const A=S.answers;
-    return _statIssue(st, [A.Jp1,A.Jp2,A.Jp3], A.Jp_mean, A.Jp_std, "impulse (human)")
-        || _statIssue(st, [A.Jw1,A.Jw2,A.Jw3], A.Jw_mean, A.Jw_std, "impulse (wall)");
+    return _statIssue(st, [A.Jp1,A.Jp2,A.Jp3], A.Jp_mean, A.Jp_std, "impulse (human)", 0)
+        || _statIssue(st, [A.Jw1,A.Jw2,A.Jw3], A.Jw_mean, A.Jw_std, "impulse (wall)", 0);
   }
   return null;
 }
@@ -1412,8 +1485,10 @@ function renderStep(){
       // `input`, not `change`: `change` only fires on blur, so a student who retyped a number and
       // reached straight for Enter was being judged on the previous one. Editing any value RETRACTS
       // the submission — what they had checked is not what is in the boxes any more.
+      if(S.raw && S.raw[f.key] != null) inp.value = S.raw[f.key];   // restore what they TYPED, zeros and all
       inp.addEventListener("input",()=>{
         S.answers[f.key]=parseFloat(inp.value);
+        S.raw[f.key]=inp.value;                     // the string, for the `dp:` check — see decimalsOf()
         witness(st, f.key, S.answers[f.key]);       // was it true when they typed it?
         S.answers["ok"+S.step]=false; clearFb(); refreshNext(); });
       inp.addEventListener("keydown",e=>{ if(e.key==="Enter"){ e.preventDefault(); submit(); } });
@@ -1421,7 +1496,7 @@ function renderStep(){
     });
     // The Enter row is a SIBLING of the input grid, never a child of it. Inside, it inherits the grid's
     // placement: `.inputs.multi` flows column-first with an explicit row count, so a `grid-column:1/-1`
-    // row landed in the first cell and shoved every labelled field one column right — the button came
+    // row landed in the first cell and shoved every labeled field one column right — the button came
     // out to the LEFT of the first label. Outside, it sits under whichever of the three input layouts
     // the step happens to use, and none of them has to know about it.
     let goRow=null;
@@ -1444,7 +1519,7 @@ function renderStep(){
     // A step that MEASURES and then ASKS puts the boxes above the question, not below it. Get Air's four
     // elevator steps each read a number off the trace and then ask which way the g's pushed, and appending
     // the inputs last put the question between the instruction and the box it was asking about — you read
-    // "which way are the g's pushing?", then hit a field labelled "average z̈", and have to scroll back up
+    // "which way are the g's pushing?", then hit a field labeled "average z̈", and have to scroll back up
     // to work out which one you were meant to do first. Do the measurement, then answer about it.
     else if(qEl){ prose.insertBefore(wrap,qEl); if(goRow) prose.insertBefore(goRow,qEl); }
     else { prose.appendChild(wrap); if(goRow) prose.appendChild(goRow); }

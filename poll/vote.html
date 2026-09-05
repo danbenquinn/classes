@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>MAE 2501 · Vote</title>
+<style>
+  /* Three colours, one grammar, and the projector runs the same one (slide-suite/style/tokens.css):
+     BLUE is neutral — the chrome, your current selection, and every status line this page ever shows.
+     GREEN is a right answer, RED is a wrong one, and neither appears until the deck reveals.
+     The hexes are copied rather than linked because this page is hosted from a different repo than
+     tokens.css and has no build step. They are the MMA palette; change them here and there together. */
+  :root{ --bg:#0b0c0e; --ink:#f2f2ef; --muted:#9aa0a6; --card:#16181c;
+         --accent:#5e81b5;         /* --mma-blue  · neutral */
+         --ok:#8fb032;             /* --mma-green · correct */
+         --bad:#eb6235;            /* --mma-red   · wrong   */
+         --ink-on-color:#0b0f16; } /* text on a filled swatch, dark enough for all three */
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; height:100%; background:var(--bg); color:var(--ink);
+             font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; -webkit-tap-highlight-color:transparent; }
+  .wrap{ max-width:520px; margin:0 auto; padding:22px 18px 40px; min-height:100%; display:flex; flex-direction:column; }
+  .kicker{ color:var(--accent); font-size:.72rem; letter-spacing:.16em; text-transform:uppercase; }
+  h1{ font-size:1.25rem; line-height:1.35; margin:.5em 0 .2em; font-weight:650; }
+  button{ font:inherit; color:inherit; cursor:pointer; }
+  .choice{ display:flex; align-items:center; gap:.7em; width:100%; text-align:left;
+           background:var(--card); border:1.5px solid #2a2d33; border-radius:14px;
+           padding:16px 16px; margin:0 0 12px; font-size:1.05rem; transition:border-color .15s, background .15s; }
+  .choice .key{ flex:0 0 1.9em; height:1.9em; line-height:1.9em; text-align:center; border-radius:8px;
+                background:#22252b; color:var(--muted); font-weight:650; }
+  .choice.sel{ border-color:var(--accent); background:#232b38; }
+  .choice.sel .key{ background:var(--accent); color:var(--ink-on-color); }
+  .choice[disabled]{ opacity:.55; }
+  /* Revealed. ONLY the student's own choice is coloured: the projector behind them is already showing
+     the full tally and the correct option six feet tall, so the job left for a 5-inch screen is the one
+     question the phone is actually for — was I right? Colouring the right answer here as well would
+     make the page a second, smaller version of the slide, and a worse one.
+     `.sel[disabled]` back to full opacity: everything dims when voting closes, and the one button that
+     must NOT dim is the one that just turned green or red. */
+  .choice.sel[disabled]{ opacity:1; }
+  .choice.right{ border-color:var(--ok);  background:rgba(143,176,50,.16); }
+  .choice.right .key{ background:var(--ok);  color:var(--ink-on-color); }
+  .choice.wrong{ border-color:var(--bad); background:rgba(235,98,53,.16); }
+  .choice.wrong .key{ background:var(--bad); color:var(--ink-on-color); }
+  .status{ margin-top:8px; font-size:.95rem; color:var(--accent); min-height:1.4em; }
+  /* Blue is the default and stays the default — every "recorded", "closed", "sending" line is chrome.
+     The two VERDICT lines are the exception and match the button they are describing, so the answer
+     reads the same whether you look at your thumb or at the sentence under it. */
+  .status.right{ color:var(--ok); }
+  .status.wrong{ color:var(--bad); }
+  .idbar{ margin-top:auto; padding-top:22px; color:var(--muted); font-size:.85rem; }
+  .idbar a{ color:var(--accent); text-decoration:none; }
+  .idscreen label{ display:block; margin:1.2em 0 .5em; color:var(--muted); }
+  .idscreen input{ width:100%; padding:14px 14px; font-size:1.1rem; border-radius:12px;
+                   border:1.5px solid #2a2d33; background:var(--card); color:var(--ink); }
+  .idscreen .go{ width:100%; margin-top:16px; padding:15px; border-radius:12px; border:0;
+                 background:var(--accent); color:var(--ink-on-color); font-weight:700; font-size:1.05rem; }
+  .hint{ color:var(--muted); font-size:.85rem; margin-top:.7em; line-height:1.4; }
+  .err{ color:var(--bad); }
+  /* The screen panels are plain block children of the flex `.wrap`, so `.waiting{margin:auto 0}` and
+     `.idbar{margin-top:auto}` had no flex parent to resolve against and quietly did nothing — the idle
+     text sat jammed at the top of the page with the id bar riding up underneath it. Making the visible
+     panel a full-height flex column is what those two auto margins were always written for.
+     `:not(.hidden)` rather than a bare `#waitscreen`: `.hidden{display:none}` is a single class and
+     would lose to an id, so setting `display` on the id itself would stop the panel ever hiding. */
+  #waitscreen:not(.hidden){ flex:1; display:flex; flex-direction:column; }
+  .waiting{ margin:auto 0; text-align:center; color:var(--muted); }
+  /* ONE slow breath, not three quick dots (2026-08-25). Three pulsing dots is the loading idiom — it
+     promises something imminent, and this screen is up for most of a lecture and again after the last
+     question, when nothing is coming at all. A single slow pulse says connected-and-idle instead, which
+     is the only thing the page actually knows. */
+  .waiting .breath{ display:block; width:11px; height:11px; border-radius:50%; margin:0 auto 22px;
+                    background:var(--accent); animation:breathe 3.6s ease-in-out infinite; }
+  @keyframes breathe{ 0%,100%{ opacity:.28; transform:scale(.86) } 50%{ opacity:1; transform:scale(1) } }
+  /* A dot that never stops moving, on a page that sits open for fifty minutes, is worth an opt-out. */
+  @media (prefers-reduced-motion: reduce){ .waiting .breath{ animation:none; opacity:.8; } }
+  .hidden{ display:none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="kicker">MAE 2501 · Applied Physics I</div>
+
+  <div id="idscreen" class="idscreen hidden">
+    <h1>Before you vote</h1>
+    <label for="cid">Your UVA Computing ID</label>
+    <input id="cid" name="computing-id" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="e.g. abc1de" inputmode="text">
+    <button class="go" id="idgo">Continue</button>
+    <p class="hint">Used once to distribute prizes. Saved on this phone so you won't be asked again. It is not a password.</p>
+    <p id="iderr" class="hint err"></p>
+  </div>
+
+  <div id="pollscreen" class="hidden">
+    <h1 id="qtitle"></h1>
+    <div id="choices"></div>
+    <div id="status" class="status"></div>
+    <div class="idbar">Voting as <b id="whoami"></b> · <a href="#" id="changeid">change</a></div>
+  </div>
+
+  <div id="waitscreen" class="hidden">
+    <div class="waiting">
+      <span class="breath"></span>
+      <h1 id="waittitle">Nothing to answer right now</h1>
+      <p class="hint" id="waitbody">If another question comes up, it'll appear here.</p>
+    </div>
+    <div class="idbar">Voting as <b id="whoami2"></b> · <a href="#" id="changeid2">change</a></div>
+  </div>
+
+  <div id="msg" class="hidden"><h1 id="msgtitle"></h1><p id="msgbody" class="hint"></p></div>
+</div>
+
+<!-- Math. Same jsdelivr the supabase client below already comes from, and the same tex-svg
+     output the deck uses (engine/mathjax-config.js), so the phone and the projector agree.
+     `async` on purpose: if it never arrives the student sees raw $…$ and the buttons still work —
+     the question is projected six feet tall behind them, and this page is a keypad. -->
+<script>
+  window.MathJax = {
+    tex: { inlineMath: [['$','$']], processEscapes: true },
+    svg: { fontCache: 'none' },
+    options: { skipHtmlTags: ['script','noscript','style','textarea','pre','code'], enableAssistiveMml: false },
+    startup: { typeset: false }
+  };
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+  console.log("vote.html build v9 — reveal colours, vote_round clears wiped votes, server-side closed check");
+  // ---- Supabase project (same values as in the deck) ----
+  const SUPABASE_URL = "https://rdbacwwbeyeqdkswwvjt.supabase.co";
+  const SUPABASE_ANON_KEY = "sb_publishable_IQNxMMynit0aWtOS3tjiRQ_h5sNo159";
+  // --------------------------------------------------------
+
+  // ==== POLLS · generated by slide-suite/tools/build_vote_page.py — do not hand-edit ====
+  const POLLS = {
+    "classA-q1": {
+      q: "You measure a ball's motion from the front-left corner of this room; I measure it from the back-right corner. Both origins are <b>fixed</b>. Of position, velocity, and acceleration, which do we agree on?",
+      choices: ["Position only", "None of them", "Velocity and acceleration, but not position", "All three"]
+    },
+    "classA-q2": {
+      q: "A mass $m$ moves so that $\\underline{r}(t) = \\ell\\left\\langle \\cos\\omega t,\\; \\sin\\omega t\\right\\rangle$. What force is acting?",
+      choices: ["$-m\\omega^2\\underline{r}$", "$+m\\omega^2\\underline{r}$", "$\\underline{0}$", "$-m\\underline{r}$"]
+    },
+    "classB-q1": {
+      q: "A ball dropped from height $y_0$ takes time $\\tau$ to land. Now it's thrown <b>upward</b> from $y_0$ at speed $y_0/\\tau$. What is the new time to land, compared to $\\tau$?",
+      choices: ["Longer", "Shorter", "The same", "Depends on $y_0$"]
+    },
+    "classB-q2": {
+      q: "How much longer, in terms of $\\tau$? <i>(hint: $g=2y_0/\\tau^{2}$)</i>",
+      choices: ["$1.5\\,\\tau$", "$\\tfrac{1+\\sqrt5}{2}\\,\\tau$", "$2\\,\\tau$", "$\\sqrt2\\,\\tau$"]
+    },
+    "classC-q1": {
+      q: "Astronauts on the space shuttle feel about three times heavier during launch ($F_\\text{N}/mg\\approx 3$). What is their upward acceleration?",
+      choices: ["$9.8$ m/s²", "$19.6$ m/s²", "$29.4$ m/s²", "$3$ m/s²"]
+    },
+    "classC-q2": {
+      q: "An astronaut's mass is $80$ kg. While experiencing those <b>3 g's</b>, what is the normal force from the seat on their body?",
+      choices: ["$\\approx800$ N", "$\\approx1600$ N", "$\\approx2400$ N", "$\\approx3200$ N"]
+    },
+    "classC-q3": {
+      q: "An elevator is broken and about to accelerate upward at 25 g's. Is it a <b>good idea</b> to jump right before the elevator starts moving?",
+      choices: ["Yes", "No"]
+    },
+    "classD-q1": {
+      q: "Ball A is dropped from rest at the same instant Ball B is launched horizontally from the same height. What happens?",
+      choices: ["Ball A lands first", "Ball B lands first", "They land together"]
+    },
+    "classD-q2": {
+      q: "Two projectiles are launched at the <b>same speed</b>, one with $v_{x0}=10$ m/s and $v_{y0}=20$ m/s, the other with $v_{x0}=20$ m/s and $v_{y0}=10$ m/s. Which travels <b>farther</b>?",
+      choices: ["The first one", "The second one", "They tie", "Depends on $g$"]
+    },
+    "classE-q1": {
+      q: "In which case does a baseball probably experience the smallest magnitude of force?",
+      choices: ["Ball is hit; home run", "Ball is bunted", "Ball hits the batter's leg", "Ball is caught by the catcher"]
+    },
+    "classE-q2": {
+      q: "The world record speed for a baseball pitch is $105.8$ mph. A baseball's mass is about $0.145$ kg. Suppose it takes $\\approx 20$ ms for a catcher to stop the ball. About how much force would it require to catch a world record pitch?",
+      choices: ["$340$ N", "$770$ N", "$3400$ N", "$7700$ N"]
+    },
+    "classF-q1": {
+      q: "Consider a mass resting atop a vertical spring. All else equal, if you <b>double the mass</b>, the oscillation frequency…",
+      choices: ["doubles", "drops by a factor of $\\sqrt{2}$", "is unchanged", "is cut to a quarter"]
+    },
+    "classF-q2": {
+      q: "Consider a mass resting atop a vertical spring. All else equal, if you double the force of gravity...",
+      choices: ["it oscillates faster", "it oscillates slower", "equilibrium drops; frequency unchanged", "it stops oscillating"]
+    },
+    "classG-q1": {
+      q: "You drive the hanging spring <b>above</b> its resonant frequency. Compared with the push, the mass moves…",
+      choices: ["in step with the push (in phase)", "opposite the push (out of phase)", "it doesn't move at all", "at exactly twice the push frequency"]
+    },
+    "classG-q2": {
+      q: "You stiffen the spring (larger $k$), same mass. To hit resonance you must now drive it…",
+      choices: ["at a higher frequency", "at a lower frequency", "at the same frequency as before", "you can't reach resonance anymore"]
+    },
+    "classH-q1": {
+      q: "Consider the simulation of the ball bouncing off a vertical spring. As we slid $k$ toward $\\infty$, what happened to <b>contact time</b> and <b>peak force</b>?",
+      choices: ["both increased", "both decreased", "contact time $\\to 0$, peak force $\\to \\infty$ (constant impulse)", "both stay the same"]
+    },
+    "classH-q2": {
+      q: "The upward <b>normal force</b> from a solid floor is best understood as…",
+      choices: ["a brand-new fundamental force, unrelated to springs", "the rigid limit of countless atomic push-only springs (electron-cloud repulsion)", "the same thing as friction", "gravity pointing the other way"]
+    },
+    "classI-q1": {
+      q: "Two frictionless coaster cars start from rest at the <b>same height</b>. One goes down a steep hill; the other goes down a gentler hill; but they bottom out at the same height. At the bottom, which is faster?",
+      choices: ["The one on the steeper track", "The one on the gentler track", "They arrive at the same speed", "Not enough information — need the track shapes"]
+    },
+    "classI-q2": {
+      q: "A spring-loaded launcher fires a ball. If you compress the spring <b>twice as far</b>, the ball leaves…",
+      choices: ["at the same speed", "twice as fast", "about $1.4\\times$ as fast", "four times as fast"]
+    },
+    "classJ-q1": {
+      q: "Thrown <b>down</b> hard, \"sleeps\" at the bottom of the string, then yanked back <b>up</b>. Which graph fits? (blue = $K$ · red = $U_\\text{grav}$ · green = $U_\\text{elastic}$)",
+      choices: ["flat lid throughout", "lid climbs, no trading", "flat lid, green spike at the bottom", "lid up, then down, then up"]
+    },
+    "classJ-q2": {
+      q: "Thrown forward, <b>one full revolution</b> on a taut string, then caught. Which graph fits?",
+      choices: ["the same graph as the sleeper", "one clean cycle, flat lid", "lid up, flat, then down", "green and blue, one cycle"]
+    },
+    "classJ-q3": {
+      q: "The clip you have been watching since you walked in: thrown <b>horizontally</b> on its elastic cord, it falls, hits the ground about when the cord is fully stretched, bounces, and is hauled back. Which graph fits?",
+      choices: ["red into blue, and it stays there", "broad green hump, sharp spike at the floor", "blue and green only, no red", "green grows and never returns"]
+    },
+    "classJ-q4": {
+      q: "Same ball, same cord (stiffness $k$, slack length $\\ell$), now thrown <b>straight up</b> from its anchor and caught back at the same height. Which graph fits?",
+      choices: ["no green at any point", "green spike at the apex only", "green the whole way up and down", "green only past the slack length"]
+    },
+    "classK-q1": {
+      q: "A skydiver has reached terminal speed and is still falling. On their energy graph, which is happening?",
+      choices: ["Blue is flat, red drains, amber grows at the same rate red drains", "Blue grows, red drains, amber is flat", "Blue is flat, red is flat, amber grows", "All three are flat — nothing is changing"]
+    },
+    "classK-q2": {
+      q: "A whiffle ball: $m=20$ g, diameter $7.5$ cm, $C_d\\approx0.5$, in air at $\\rho=1.2$ kg/m$^3$. Its terminal speed is about…",
+      choices: ["$4$ m/s", "$12$ m/s", "$25$ m/s", "$40$ m/s"]
+    },
+    "classL-q1": {
+      q: "You are adjusting a door closer. You want the door to reach the frame <b>as quickly as possible</b> without ever swinging past it. You should set the damping to…",
+      choices: ["$\\zeta$ a little below 1", "$\\zeta=1$", "$\\zeta$ as large as you can make it", "$\\zeta=0$"]
+    },
+    "classL-q2": {
+      q: "A mass $m=2$ kg sits on a spring with $k=200$ N/m and a damper with $\\alpha=20$ kg/s. Which is it?",
+      choices: ["$\\zeta=0.5$ — underdamped", "$\\zeta=0.5$ — overdamped", "$\\zeta=2$ — overdamped", "$\\zeta=1$ — critically damped"]
+    },
+    "classM-q1": {
+      q: "You walk across a level floor without slipping. The friction force that pushes you forward is…",
+      choices: ["static friction", "kinetic friction", "static while the foot lands, kinetic while it pushes off", "neither — friction only ever slows things down"]
+    },
+    "classM-q2": {
+      q: "A $4$ kg block slides $5$ m down a $30^\\circ$ ramp at <b>constant speed</b>. How much energy ends up as heat?",
+      choices: ["$98$ J", "$0$ J — the speed never changes, so nothing is lost", "$170$ J", "You cannot say without knowing $\\mu_k$"]
+    },
+    "classN-q1": {
+      q: "In the sim, $m_2$ was ten times heavier than $m_1$. The spring force on $m_2$ was…",
+      choices: ["the same size as the force on $m_1$, in the opposite direction", "ten times larger than the force on $m_1$", "one tenth the force on $m_1$", "larger while $m_2$ was moving, equal when it was at rest"]
+    },
+    "classN-q2": {
+      q: "You are shaking $m_1$ and you want $m_2$ to hold as still as possible. Using $x_2/x_1 = k/(k - m_2\\omega_d^2)$, you should…",
+      choices: ["shake much faster than $\\sqrt{k/m_2}$ — a soft spring and a heavy $m_2$ both help", "shake much slower than $\\sqrt{k/m_2}$ — slow shaking transmits less", "use a very stiff spring, so $m_2$ is held firmly in place", "shake at exactly $\\sqrt{k/m_2}$, where the formula has its special point"]
+    },
+    "classO-q1": {
+      q: "Two rods of the same steel. One is twice as thick as the other. A tap travels along the thick rod…",
+      choices: ["twice as fast", "at the same speed", "half as fast", "$\\sqrt2$ times as fast"]
+    },
+    "classO-q2": {
+      q: "The pulse arrives at the clamped end, squeezes hard against it, and for an instant nothing in the rod is moving. At that moment the rod's energy is…",
+      choices: ["all kinetic", "all stored in the springs", "split evenly between the two", "gone — absorbed by the wall"]
+    },
+    "classO-q3": {
+      q: "You swing a mass on a string in a circle over your head, and you let go of the string. <b>Immediately</b> after you let go, the mass…",
+      choices: ["keeps going around the circle", "flies off along the tangent", "flies straight out, away from the center"]
+    },
+    "classP-q1": {
+      q: "A metal spoon and a wooden spoon have been lying in this room all morning. You pick up both. The metal one feels colder because…",
+      choices: ["it is colder", "it pulls heat out of your finger much faster", "it holds more heat per kilogram", "it is denser, so there is more of it touching you"]
+    },
+    "classP-q2": {
+      q: "You double the thickness of a mug's wall, same ceramic. The time before the outside starts to feel the coffee…",
+      choices: ["doubles", "quadruples", "is unchanged — the coffee is the same temperature", "halves"]
+    },
+    "classP-q3": {
+      q: "A hand rests for a few seconds on a sheet of gray paper, and on a sheet of bare aluminum. Both are lifted away and filmed on a thermal camera. The <b>crisper</b> handprint will be on…",
+      choices: ["the paper", "the aluminum", "neither — they will look the same"]
+    }
+  };
+  // ==== /POLLS ====
+
+  const $ = id => document.getElementById(id);
+  const params = new URLSearchParams(location.search);
+  const CLASS = params.get("class");
+  const configured = !SUPABASE_URL.includes("YOUR-PROJECT");
+  let supa = null;   // created below, only once we know the library actually loaded
+
+  // Pushed from the deck via get_state. `answer` is the correct choice index and is null until the
+  // deck SEALS the question — that is the whole reveal channel, and the reason the answer key is not
+  // sitting in this file: the page is public, and POLLS below is the entire course.
+  let state = { poll: null, open: false, answer: null, round: 0 };
+  let shownKey = null;                        // what's currently rendered (poll|open|answer|round)
+
+  // This phone's vote, stored as "<round>:<choice>" so it can be invalidated when the instructor wipes
+  // the question with "↻ Reset votes". A bare "2" is the pre-2026-08-25 format and reads as round 0,
+  // which is correct: it survives until the first wipe, then goes, which is exactly what should happen.
+  function myVote(pid){
+    const raw = localStorage.getItem("voted_" + pid);
+    if(raw === null) return null;
+    const [a, b] = raw.includes(":") ? raw.split(":") : ["0", raw];
+    return { round: Number(a), choice: Number(b) };
+  }
+  function rememberVote(pid, choice){ localStorage.setItem("voted_" + pid, state.round + ":" + choice); }
+  function forgetVote(pid){ localStorage.removeItem("voted_" + pid); }
+
+  function show(el){ ["idscreen","pollscreen","waitscreen","msg"].forEach(i=>$(i).classList.add("hidden")); $(el).classList.remove("hidden"); }
+  function message(t,b){ $("msgtitle").textContent=t; $("msgbody").textContent=b; show("msg"); }
+  function getId(){ return (localStorage.getItem("uva_computing_id")||"").trim(); }
+  function setWho(){ $("whoami").textContent=getId(); $("whoami2").textContent=getId(); }
+
+  // Is the student SITTING on the id screen right now, as opposed to the panel merely not having been
+  // swapped out yet? reconcile() has to know, and it used to ask the DOM — "is #idscreen visible?" —
+  // which is true in both cases and so refused to leave the id screen the moment anyone first arrived.
+  // Nobody caught it because a phone that has ever voted has the id in localStorage and skips this
+  // screen entirely; it only ever bit a first-time user, which on day one is the entire class.
+  let editingId = false;
+
+  function start(){
+    setWho();
+    if(!getId()){ editingId = true; show("idscreen"); $("cid").focus(); return; }
+    beginPolling();
+  }
+
+  // ID GATE (rewritten 2026-08-25 after it turned out to be rejecting 25 of the 26 students enrolled).
+  //
+  // The old rule was /^[a-z]{2,4}[0-9]{0,4}[a-z]?$/ — at most ONE trailing letter. Real UVA computing
+  // ids overwhelmingly end in TWO (pkz2bn, auf6sh, vsj6ry), so almost nobody could get past the first
+  // screen. It survived testing because the one id it did accept was Daniel's own, dbq9d, which happens
+  // to have a single trailing letter; and the placeholder printed underneath the box, `abc1de`, was
+  // rejected by the very field it was an example for.
+  //
+  // The lesson is about what this field IS. It is not authentication — nothing here is secret, and the
+  // server only requires the id to be non-empty. It exists to dedup one vote per student and to match a
+  // roster when handing out prizes. So a false reject costs a student their whole class's participation,
+  // while a false accept costs a prize-draw entry. Those are not remotely the same size, and the check
+  // should be shaped accordingly: catch the obvious slip — blank, a phone number, a pasted sentence —
+  // and otherwise get out of the way rather than encode a guess about every id UVA has ever issued.
+  const ID_OK = /^[a-z][a-z0-9]{2,9}$/;
+  function normalizeId(raw){
+    // Lowercased, trimmed, and an email reduced to its local part: typing the whole address is the
+    // single likeliest thing a student does here, and it is a correct answer wearing a suffix.
+    return String(raw || "").trim().toLowerCase().replace(/^mailto:/, "").replace(/@.*$/, "");
+  }
+  $("idgo").addEventListener("click", () => {
+    const v = normalizeId($("cid").value);
+    if(!ID_OK.test(v)){
+      $("iderr").textContent = "That doesn't look like a Computing ID. It's the part before " +
+                               "@virginia.edu — letters and numbers only, like abc1de.";
+      return;
+    }
+    localStorage.setItem("uva_computing_id", v);
+    editingId = false;                       // done here — let reconcile() move us on
+    $("iderr").textContent = "";
+    setWho(); beginPolling();
+  });
+  function changeId(e){ e.preventDefault(); editingId = true; shownKey = null;
+                        $("iderr").textContent = ""; show("idscreen");
+                        $("cid").value = getId(); $("cid").focus(); }
+  $("changeid").addEventListener("click", changeId);
+  $("changeid2").addEventListener("click", changeId);
+
+  let polling = false;
+  function beginPolling(){
+    reconcile();                       // show a screen IMMEDIATELY (no blank gap while the first poll loads)
+    if(polling) return;
+    polling = true; poll(); setInterval(poll, 2500);
+  }
+
+  async function poll(){
+    try{
+      const { data, error } = await supa.rpc("get_state", { p_class: CLASS });
+      if(error) throw error;
+      const row = (data && data[0]) || null;
+      state = row ? { poll: row.current_poll, open: !!row.is_open,
+                      answer: (row.answer === null || row.answer === undefined) ? null : Number(row.answer),
+                      round: Number(row.vote_round || 0) }   // absent on the older schema -> 0, behaves as before
+                  : { poll: null, open: false, answer: null, round: 0 };
+    }catch(e){ console.warn(e); }
+    reconcile();
+  }
+
+  function reconcile(){
+    if(!getId()) return;                       // no id yet — start() is showing the id screen
+    if(editingId) return;                      // they are typing an id right now — don't yank it away
+    // `answer` is part of the key: the reveal arrives with the poll id unchanged and open already
+    // false, so without it the seal would be a no-op and the phones would never light up.
+    // `round` is in the key too: resetting a question that was still OPEN changes nothing else about
+    // the state, so without it the wipe would not even trigger a re-render.
+    const key = (state.poll || "-") + "|" + state.open + "|" + (state.answer === null ? "-" : state.answer)
+              + "|" + state.round;
+    if(key === shownKey) return;               // nothing changed
+    shownKey = key;
+    if(state.poll && POLLS[state.poll]) renderQuestion(state.poll, state.open, state.answer);
+    // Nothing promised and nothing demanded: this screen is up between questions AND after the last
+    // one, and the page has no way to tell those apart — so it says only what is true in both, and does
+    // not tell a student to keep a page open when the class may well be over.
+    else showWait("Nothing to answer right now", "If another question comes up, it'll appear here.");
+  }
+
+  // MathJax is loaded `async`, so the FIRST question routinely renders before the library exists —
+  // and since `shownKey` stops a question re-rendering, a typeset that is merely skipped is a
+  // question that stays raw TeX for as long as it is on screen. Caught in testing exactly that way:
+  // Class A's Q2 (the only all-equation choice set in the course) came up as backslashes while the
+  // later questions typeset fine. So this WAITS for MathJax rather than checking for it.
+  //
+  // `window.MathJax` is the config object from the head and exists immediately; `startup.promise`
+  // only appears once the library itself lands, which is the thing worth waiting on. If it never
+  // lands we give up after 15 s and the student reads raw $…$ — survivable, because the question is
+  // projected six feet tall behind them and this page is a keypad.
+  let mjReady = null;
+  function whenMathJax(){
+    if(mjReady) return mjReady;
+    mjReady = new Promise(done => {
+      const tick = setInterval(() => {
+        if(window.MathJax && window.MathJax.startup && window.MathJax.startup.promise){
+          clearInterval(tick); clearTimeout(giveUp);
+          window.MathJax.startup.promise.then(done, done);
+        }
+      }, 100);
+      const giveUp = setTimeout(() => { clearInterval(tick); console.warn("MathJax never loaded"); done(); }, 15000);
+    });
+    return mjReady;
+  }
+  function typeset(els){
+    whenMathJax().then(() => {
+      try{ window.MathJax.typesetPromise(els).catch(e => console.warn(e)); }catch(e){ console.warn(e); }
+    });
+  }
+
+  function showWait(t,b){ $("waittitle").textContent=t; $("waitbody").textContent=b; show("waitscreen"); }
+
+  // Every status write goes through here so the verdict colour can never be left behind on the next
+  // line — the bug you get for free the moment two places set .textContent and only one clears a class.
+  function setStatus(text, kind){
+    const el = $("status");
+    el.className = "status" + (kind ? " " + kind : "");
+    el.textContent = text;
+  }
+
+  function renderQuestion(pid, open, answer){
+    show("pollscreen");
+    const poll = POLLS[pid];
+    $("qtitle").innerHTML = poll.q;
+    // A vote cast in an earlier round was deleted server-side; forget it rather than keep showing a
+    // confident highlight on a choice the database no longer has.
+    const vote = myVote(pid);
+    if(vote && vote.round !== state.round) forgetVote(pid);
+    const mine = (vote && vote.round === state.round) ? vote.choice : null;
+    const revealed = answer !== null && answer !== undefined;
+    const box = $("choices"); box.innerHTML = "";
+    poll.choices.forEach((txt,i) => {
+      const b = document.createElement("button");
+      const isMine = i === mine;
+      b.className = "choice" + (isMine ? " sel" : "")
+                  + (revealed && isMine ? (i === answer ? " right" : " wrong") : "");
+      if(!open) b.setAttribute("disabled","");
+      b.innerHTML = `<span class="key">${"ABCD"[i]}</span><span>${txt}</span>`;   // txt is escaped by the generator
+      b.addEventListener("click", () => submit(pid, i));
+      box.appendChild(b);
+    });
+    // Blue for the chrome states; the two VERDICT lines take the colour of the button they describe
+    // (2026-08-25 — they were blue at first, on the theory that colouring both would dilute the button,
+    // and in the room it read as hedging: the sentence telling you you were wrong should not look like
+    // every other notice). A closed-but-not-yet-revealed question USED to be only the momentary gap
+    // between sealing and the answer arriving, which is why this line said "Voting closed for this
+    // question." and stopped there. The deferred-reveal poll made that state a resting one — Class O
+    // locks the vote, plays two clips and reveals a minute and a half later — so the line now says what
+    // happens next. Nothing else here needed changing: buttons already disable on `!open` and colours
+    // already wait on a non-null `answer`, which is exactly the behaviour the feature wanted.
+    // A closed-but-not-yet-revealed question is the gap between sealing
+    // the vote and talking through it — say nothing more than that.
+    const verdict = !open && revealed && mine !== null ? (mine === answer ? "right" : "wrong") : "";
+    setStatus(
+        open            ? (mine !== null ? "Recorded. Tap another to change it (until voting closes)." : "")
+      : !revealed       ? "Voting closed. The answer is coming up on the screen."
+      : mine === null   ? "Voting closed. You didn't vote on this one."
+      : mine === answer ? "Voting closed. Your answer was correct."
+                        : "Voting closed. Your answer was not the right one.", verdict);
+    typeset([$("qtitle"), box]);
+  }
+
+  async function submit(pid, i){
+    if(!state.open || state.poll !== pid) return;
+    [...document.querySelectorAll(".choice")].forEach((c,j)=>c.classList.toggle("sel", j===i));
+    setStatus("Sending…", "");
+    try{
+      const { error } = await supa.rpc("cast_vote", { p_poll: pid, p_id: getId(), p_choice: i });
+      if(error) throw error;
+      rememberVote(pid, i);
+      setStatus("Vote recorded ✓  You can change it until voting closes.", "");
+    }catch(e){
+      console.warn(e);
+      // The server is the authority on whether voting is open, and this phone can be up to one polling
+      // tick behind it — so a tap a moment after the seal looks accepted here and is refused there.
+      // Take the selection back rather than leave a highlight on a vote that was not counted, and
+      // re-poll at once so the screen catches up to the reveal instead of waiting out the interval.
+      if(/voting closed/i.test(e.message || "")){
+        // Roll back to the last CONFIRMED vote rather than clearing: a student changing their mind a
+        // moment too late still has their earlier answer on the server, and blanking the phone would
+        // tell them they had not voted at all. Only a first-ever vote that was refused leaves nothing.
+        const kept = myVote(pid);
+        const keptChoice = (kept && kept.round === state.round) ? kept.choice : null;
+        [...document.querySelectorAll(".choice")].forEach((c, j) => c.classList.toggle("sel", j === keptChoice));
+        setStatus(keptChoice === null ? "Voting had already closed — that vote was not counted."
+                                      : "Voting had already closed — your earlier answer still stands.", "");
+        // Let them actually read that before the screen snaps to the revealed state. Without the delay
+        // the resync lands in the same breath and the tap looks like it simply did nothing.
+        setTimeout(() => { shownKey = null; poll(); }, 2200);
+      } else {
+        $("status").className = "status";
+        $("status").innerHTML = '<span class="err">Could not send — check your connection and tap again.</span>';
+      }
+    }
+  }
+
+  // ---- Kick things off LAST, so every function + variable above is already initialized ----
+  if(!CLASS){ message("Missing class", "This link is incomplete. Scan the code shown on the current slide."); }
+  else if(!configured){ message("Not configured", "The voting backend isn't set up yet."); }
+  else if(!window.supabase){ message("Couldn't load", "A network hiccup stopped the voter from loading. Check your connection and reload this page."); }
+  else { supa = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY); start(); }
+</script>
+</body>
+</html>

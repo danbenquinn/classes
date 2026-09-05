@@ -1305,7 +1305,7 @@
   // The hand's travel is the same every run — that is the whole point of this variant — and the slider
   // asks for a peak SPEED, from which the duration follows. V_MIN is not decoration: T = 1.875*H/|v|, so
   // a speed of 0.2 m/s would be an eleven-second animation. Below V_MIN, Play is off.
-  HandLiftEnergy.TRAVEL = 1.2;      // metres the hand moves, every time
+  HandLiftEnergy.TRAVEL = 1.2;      // meters the hand moves, every time
   HandLiftEnergy.V_MAX  = 5;        // slider bound, m/s
   HandLiftEnergy.V_MIN  = 0.8;      // below this, Play is disabled (longest run ~2.8 s)
   HandLiftEnergy.A_MAX = 22;        // kept: HandLift's own slider bound, unused by this preset
@@ -1317,16 +1317,25 @@
   // A mass drifts in top-left at constant speed (no gravity). Two horizontal "infinite-mass bat"
   // paddles slide vertically; dragging one INTO the ball reflects its vertical velocity off a MOVING
   // wall (v_y → 2u − v_y) over a short but finite contact τ, so the force graph shows a real pulse
-  // (area = Δp), not a delta spike. A wall in the middle blocks the straight shot: you must knock the
-  // ball DOWN under the wall with paddle 1, then UP onto the target with paddle 2. A live impulse/
+  // (area = Δp), not a delta spike. A wall in the middle blocks the straight shot: you knock the ball
+  // OFF the entry line with the left bat, meet it again in the corridor beside the wall, and lift it
+  // onto the target with the right one — four bats, so no shot has to be aimed perfectly. A live impulse/
   // momentum graph (impulsegraph.py style — blue momentum line over a purple force trace with the
-  // impulse area shaded) draws underneath.
+  // impulse area shaded) draws underneath, and while the paddle is in contact the same purple is
+  // drawn ON the mass as its normal-force arrow — the house F_N of Class C and the coaster clips.
+  // The paddles start one above and one below the ball's entry line, so a ball nobody touches sails
+  // between them into the wall rather than arriving already overlapping a bat.
   // ============================================================================================
   class DeflectGame extends SimBase {
     constructor(canvas) {
       super(canvas);
       this.discMinPx = 1.5;                           // this sim's minimum on-screen disc radius
-      this.mass = 1; this.tau = 0.05;                 // finite contact time (s)
+      // Contact time. It sets the force's MAGNITUDE and the pulse's WIDTH, never where the ball goes
+      // (v_out depends only on paddleGain and the paddle's speed), so it is free to be chosen for
+      // legibility. 0.05 s was three frames at 60 Hz — long enough for the graph, which persists, and
+      // far too short for the normal-force arrow, which does not. 0.10 s is still "short but finite"
+      // and shows both. Halving the peak force for the same Δp is, conveniently, the lesson.
+      this.mass = 1; this.tau = 0.10;                 // finite contact time (s)
       this.vx = 3.0;                                  // ball's horizontal drift speed — the "u" slider (difficulty)
       this.bx0 = 0.8;                                 // ball's start x (world) — the graph's t=0 origin
       this.paddleGain = 0.55;                         // <1 softens the imparted momentum (gentle hits easy) but firm enough to avoid tunneling; pedagogy needs only "impulse changes p"
@@ -1352,8 +1361,44 @@
       this.obst = { x0: wW * 0.40, x1: wW * 0.60, yc: cy, h: 0.35 };   // red bar, dead center
       this.target = { x: wW * 0.90, y: cy, r: 0.26 };                  // green target, right-center (smaller = harder)
       const pw = 1.9;
-      if (!this.paddles) this.paddles = [ { x: 0, w: pw, y: cy, ly: cy, pY: cy, u: 0, hist: [] }, { x: 0, w: pw, y: cy, ly: cy, pY: cy, u: 0, hist: [] } ];
-      this.paddles[0].x = wW * 0.26; this.paddles[1].x = wW * 0.72;
+      // FOUR paddles (2026-09-04, was two): entry, the two corridor bats stacked over and under the
+      // wall, and the lifter. See _paddleHome for why.
+      this.paddleX = [wW * 0.26, wW * 0.50, wW * 0.50, wW * 0.76];
+      if (!this.paddles) {
+        this.paddles = this.paddleX.map(() => ({ x: 0, w: pw, y: 0, ly: 0, pY: 0, u: 0, hist: [] }));
+        this.paddles.forEach((p, i) => { p.y = p.ly = p.pY = this._paddleHome(i); });
+      }
+      this.paddles.forEach((p, i) => { p.x = this.paddleX[i]; });
+    }
+    // WHERE THE BATS LIVE, and it is the difference between a fiddly game and a fun one.
+    //
+    // It started as two, both homed on the entry line at `cy` — which is exactly where the ball
+    // arrives, so a round nobody touched opened with the ball already inside a bat. Moving them off
+    // the line (one above, one below) fixed that and pre-staged the intended gesture: bat 0 gets
+    // dragged DOWN to send the ball under the wall, bat 3 UP to lift it onto the target.
+    //
+    // Two bats still made it too hard, and Daniel put a finger on why (2026-09-04): with only one
+    // hit available on each side of the wall, every shot had to be aimed perfectly the first time,
+    // which means *tiny* nudges — and a tiny nudge is a tiny impulse, which draws a stub of a force
+    // arrow and reads badly on the very quantity the slide is about. So there are now **two more, in
+    // the middle, one in each corridor beside the wall**: the ball can be met again on its way past,
+    // corrections are big and legible, and the arrows have something to show.
+    //   0 — entry bat, LEFT, above the line     1 — upper corridor, over the wall
+    //   3 — lifter, RIGHT, below the line       2 — lower corridor, under the wall
+    // The middle pair share an x inside the wall's own span, so they read as "over it" and "under
+    // it"; they home at the CENTER of their corridor, which is both where a struck ball crosses and
+    // as far as it is possible to be from the wall and the border at once.
+    // The lifter also moved 0.72 -> 0.76 of the frame. Counter-intuitively that makes it EASIER: the
+    // nearer the target it sits, the more vertical speed the last hit needs to climb to it, so the
+    // final shot becomes a proper swing instead of a tap.
+    _paddleHome(i) {
+      const wH = this.worldH, cy = wH / 2, lo = 0.5, hi = wH - 0.3;   // the drag clamps, so a home is always reachable
+      const clamp = v => Math.max(lo, Math.min(hi, v));
+      const off = Math.max(this.ballR * 3, wH * 0.12);                // clears the contact band (ballR + 0.05) several times over
+      if (i === 0) return clamp(cy + off);
+      if (i === 3) return clamp(cy - off);
+      return clamp(i === 1 ? (this.obst.yc + this.obst.h + wH) / 2    // upper corridor center
+                           : (this.obst.yc - this.obst.h) / 2);       // lower corridor center
     }
     sx(x) { return x * this.scale; }
     sy(y) { return this.playH - y * this.scale; }     // world-y up; play-area floor at y=0
@@ -1362,7 +1407,7 @@
       this.running = false; this.paused = false; this.t = 0; this.phase = "idle";
       this.bx = this.bx0; this.by = this.entryY; this.vy = 0;
       this.contact = null; this.hist = []; this.posHist = []; this.now = 0; this.maxF = 1; this.maxP = 1; this.result = "";
-      if (this.paddles) this.paddles.forEach(p => { p.y = this.worldH * 0.5; p.ly = p.y; p.pY = p.y; p.u = 0; p.hist = []; });
+      if (this.paddles) this.paddles.forEach((p, i) => { p.y = this._paddleHome(i); p.ly = p.y; p.pY = p.y; p.u = 0; p.hist = []; });
       this.render();
     }
     play() { this.reset(); this.running = true; this.paused = false; this.everPlayed = true; this.phase = "ready"; this.t = 0; this.last = performance.now(); }
@@ -1376,7 +1421,13 @@
         return { x: px / this.scale, y: (this.playH - py) / this.scale }; };
       this.c.addEventListener("pointerdown", (ev) => {
         const w = toWorld(ev); grab = null;
-        this.paddles.forEach((p, i) => { if (Math.abs(w.x - p.x) < p.w / 2 + 0.5 && Math.abs(w.y - p.y) < 0.9) grab = i; });
+        // NEAREST match, not last (2026-09-04). `forEach` with last-wins was fine while every bat had
+        // its own x; the middle pair share one, so a grab between them has to resolve by distance.
+        let best = Infinity;
+        this.paddles.forEach((p, i) => {
+          const dy = Math.abs(w.y - p.y);
+          if (Math.abs(w.x - p.x) < p.w / 2 + 0.5 && dy < 0.9 && dy < best) { best = dy; grab = i; }
+        });
         if (grab != null) this.c.setPointerCapture?.(ev.pointerId);
       });
       this.c.addEventListener("pointermove", (ev) => {
@@ -1423,6 +1474,9 @@
             if (Math.abs(vout - vin) > 0.05) {
               this.contact = { v0: vin, v1: vout, el: 0, F: 0 };
               this.by = p.y + Math.sign(vout || 1) * (this.ballR + 0.12);
+              break;                        // one contact per frame. Harmless while the two bats had
+                                            // distinct x; the middle pair SHARE one, so without this a
+                                            // second bat could overwrite the contact just opened.
             }
           }
         }
@@ -1465,6 +1519,15 @@
       // ball + motion-blur (shared house model, sampled from the same history)
       this._motionBlur(this.ballR, k => this._posAtBack(k * HOUSE.blurDt * 1000));
       this._disc(this.bx, this.by, this.ballR, HOUSE.mass, 1);
+      // Normal force ON THE MASS, purple, only while the bat is actually touching it — the same F_N
+      // the hand/elevator clips and the coaster animations draw, which is the connection this slide
+      // exists to make (Daniel, 2026-09-04). It is deliberately the same purple as the force trace
+      // directly below, and deliberately absent the rest of the time: between hits there is no force
+      // on this ball at all, which is the other half of the lesson.
+      if (this.contact && Math.abs(this.contact.F) > 1e-6) {
+        const F = this.contact.F;
+        this._arrow(this.bx, this.by, 0, Math.sign(F) * this._forceArrowLen(F), HOUSE.normal, 1);
+      }
       // all game text at one spot — top center
       const ty = this.playH * 0.13;
       ctx.save(); ctx.textAlign = "center"; ctx.textBaseline = "middle";
@@ -1478,6 +1541,12 @@
       ctx.restore();
       this._drawGraph();
     }
+    // Arrow length in world meters, on the SAME normalisation the graph's force trace uses (the
+    // running max, ×1.15 of headroom). Sharing the scale is the point: the arrow on the ball and the
+    // purple curve under it are one quantity drawn twice, so they must not rescale independently.
+    // `maxF` is updated in _advance before render() runs, so the first contact frame is already in it
+    // and the arrow can never exceed 0.30·worldH.
+    _forceArrowLen(F) { return this.worldH * 0.30 * Math.abs(F) / (this.maxF * 1.15); }
     _drawGraph() {
       const ctx = this.ctx, gy = this.gy, gh = this.gh;
       // Graph x maps to the ball's x: origin at the ball's start, right end at the target — so the curve fills
@@ -1528,7 +1597,7 @@
       <canvas class="simcanvas"></canvas>
       <div class="simctrls">
         <button class="simbtn play">▶ Play</button>
-        <label><span class="var">|<i>ṙ</i>|:</span> <input type="range" class="s-u" min="2" max="5" step="0.5"><input type="number" class="n-u" step="0.5"><span class="u">m/s</span></label>
+        <label><span class="var"><i>ẋ</i>:</span> <input type="range" class="s-u" min="2" max="5" step="0.5"><input type="number" class="n-u" step="0.5"><span class="u">m/s</span></label>
       </div>`;
   function mountDeflect(section) {
     if (!section.querySelector(".simcanvas")) section.insertAdjacentHTML("beforeend", DEFLECT_CONTROLS_HTML);
@@ -1537,7 +1606,9 @@
     const q = s => section.querySelector(s);
     const readonly = window.self !== window.top;
     const playBtn = q(".play");
-    // u slider: the ball's horizontal drift speed — slower is easier, faster is harder (3 = middle).
+    // ẋ slider: the ball's horizontal drift — slower is easier, faster is harder (3 = middle). Labeled
+    // as the signed component `ẋ` rather than the magnitude `|ṙ|` (Daniel, 2026-09-04): everything else
+    // on this slide is component algebra (the graph reads p and F_y), so the control should be too.
     const su = q(".s-u"), nu = q(".n-u"), clampU = v => Math.max(+su.min, Math.min(+su.max, v));
     su.value = sim.vx; nu.value = sim.vx;
     const applyU = () => { sim.vx = +su.value; };
@@ -3793,7 +3864,7 @@
       // The numbers start OFF behind the `123` toggle, as in HandLiftEnergy. The energy strip is
       // ALWAYS drawn — it is part of the object, not an option (Daniel, 2026-08-25).
       this.showReadout = false;
-      // Per-body shades off the house ramp: body 0 keeps the pure colour, body 1 is a step darker, and
+      // Per-body shades off the house ramp: body 0 keeps the pure color, body 1 is a step darker, and
       // the SAME index drives the mass disc and its kinetic band, so the little dark mass and the dark
       // blue band are visibly the same body.
       // Indices 0 and 2, NOT 0 and 1: adjacent steps on the ramp (#f0f0f5 vs #cdcdd2) are a difference
@@ -3940,7 +4011,7 @@
      *  fades the strong term out and a light ordinary dashpot in — which is what we want there anyway:
      *  a tall peak that keeps climbing until the masses touch. The two never both act at full strength.
      *
-     *  It is a modelling choice rather than a mechanism, and so was the plain dashpot — you cannot run
+     *  It is a modeling choice rather than a mechanism, and so was the plain dashpot — you cannot run
      *  a driven oscillator from an arbitrary state in real time without choosing how the transient
      *  goes away. This choice is the one that makes the slide show the board. Say "there is a little
      *  damping" to the room; say this to whoever asks the good question. */
@@ -3969,7 +4040,7 @@
      *  world units in twelve seconds.
      *
      *  Changing a body's mass mid-flight is not a physical operation at all, so what happens next is a
-     *  modelling choice rather than a result. The honest choice is to keep the momentum the drive
+     *  modeling choice rather than a result. The honest choice is to keep the momentum the drive
      *  accounts for and discard the rest: subtract the excess from BOTH velocities equally, which
      *  leaves the RELATIVE velocity — the internal mode, the entire subject of the slide — untouched
      *  to the last bit, and removes only the spurious drift. Applied every step, so integrator creep
@@ -3984,7 +4055,7 @@
     /** Semi-implicit Euler, re-reading m1/m2/k/alpha EVERY substep. Precomputing at play() is the
      *  trap DESIGN.md records from Class K's drag — it freezes the motion on a snapshot while the
      *  render keeps reading the sliders live — and here it would also destroy the fast-sweep
-     *  behaviour, which is the best thing on the slide. Integrate, do not solve. */
+     *  behavior, which is the best thing on the slide. Integrate, do not solve. */
     _advance(dt) {
       const n = CoupledMass.SUBSTEPS, h = dt / n;
       for (let i = 0; i < n; i++) {
@@ -4289,12 +4360,12 @@
   CoupledMass.EMAX = 24.0;       // FIXED energy-axis ceiling (joules, world units) — see _freezeScale
   CoupledMass.L0 = 5.0;          // world m — spring natural length, i.e. the collision headroom is
                                // L0 - (r1 + r2) ~ 3.6. Chosen so the k in [5, 7] resonance neighbourhood
-                               // collides and everything outside it survives, which is the behaviour the
+                               // collides and everything outside it survives, which is the behavior the
                                // slide is about.
-  CoupledMass.X1EQ = HOUSE.frameW * 0.30;  // m1 sits left of centre; m2 is L0 to its right, and the pair
+  CoupledMass.X1EQ = HOUSE.frameW * 0.30;  // m1 sits left of center; m2 is L0 to its right, and the pair
                                  // then has symmetric room to swing before either leaves the frame
   CoupledMass.PLAY_WORLD_H = 4.2;
-  CoupledMass.PLAY_CY = 0.40;    // the masses' centre line, as a fraction of the play area's height —
+  CoupledMass.PLAY_CY = 0.40;    // the masses' center line, as a fraction of the play area's height —
                                  // above the middle, leaving room beneath for the energy stack to climb
                                  // into as it overshoots near resonance
   CoupledMass.SUBSTEPS = 16;
@@ -4386,7 +4457,7 @@
   // THE BALLS DO NOT INTERACT, and nothing here pretends they do — two independent analytic
   // parabolas drawn in one frame.
   //
-  // COLOUR IS ROLE, NOT IDENTITY (style/STYLE.md), so both balls are HOUSE.mass and both launch
+  // COLOR IS ROLE, NOT IDENTITY (style/STYLE.md), so both balls are HOUSE.mass and both launch
   // arrows are HOUSE.velocity — giving ball B its own hue would be inventing a second physical role
   // that does not exist. They are told apart by their arrows and their paths; there are no A/B labels,
   // because the point of the slide is that the two are interchangeable.
@@ -4496,7 +4567,7 @@
   // SLIDER LABELS NAME BOTH BALLS. Each slider is one number wearing two hats — the first is ball 1's
   // x-component AND ball 2's y-component, the second is ball 2's x AND ball 1's y — and saying that on
   // the label is the cheapest way to make the swap legible without putting identity tags back on the
-  // canvas. Note the second slider is labelled from ball 2's point of view but still sets `v0`, ball
+  // canvas. Note the second slider is labeled from ball 2's point of view but still sets `v0`, ball
   // 1's vertical component; they are the same number, which is the point.
   const CONTROLS_PAIR_HTML = `
       <canvas class="simcanvas"></canvas>

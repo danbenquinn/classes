@@ -46,7 +46,7 @@
   input[type=number]{width:66px;}
   /* a step with `requireAxis:` locks the Signal select (see applyAxisLock). Reads as settled rather
      than broken: dimmed text, no cursor change, border unchanged — the browser's default disabled
-     grey on a dark panel looks like a bug. */
+     gray on a dark panel looks like a bug. */
   select:disabled{color:var(--muted);opacity:1;cursor:default;}
   .tools{display:flex;border:1px solid var(--line);border-radius:7px;overflow:hidden;}
   .tools button{font:inherit;font-size:var(--fs-ui);padding:6px 13px;border:0;border-right:1px solid var(--line);background:var(--raised);color:var(--ink);cursor:pointer;}
@@ -111,7 +111,7 @@
      needs no color rule. What it does need is to sit ON the text baseline: MathJax's default
      `vertical-align` is computed for prose line-height, and in a compact deck row — an input label,
      a choice, a 1.4-line feedback box — an un-nudged inline equation pushes the line taller than its
-     neighbours and the row jitters as you step through. */
+     neighbors and the row jitters as you step through. */
   #stepbody mjx-container[jax="SVG"]{display:inline-block;vertical-align:-0.12em;margin:0;}
   #stepbody mjx-container[jax="SVG"][display="true"]{display:block;margin:6px 0;text-align:left;}
   #stepbody .inrow mjx-container[jax="SVG"],#stepbody .deck-fb mjx-container[jax="SVG"]{vertical-align:-0.1em;}

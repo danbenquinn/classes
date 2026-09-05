@@ -42,7 +42,7 @@ const NARR = [
   // TITLE + access-code gate (house-style first slide; code given orally, per workshop).
   // Teaser omitted → the engine shows the house-standard full-screen reminder (only Workshop 0 says "download phyphox").
   // The walk-in clip is a world-record STANDING jump — the same measurement the room is about to make on
-  // itself, done by the best there is. `cover-top` because the subject is HIGH in frame: a centred cover
+  // itself, done by the best there is. `cover-top` because the subject is HIGH in frame: a centered cover
   // crop on 16:9 footage in this much wider panel spends its whole loss on the gym floor and cuts him.
   { id:"title",
     top:"title",
@@ -63,7 +63,7 @@ const NARR = [
   // before any of the doing starts.
   { id:"mission",
     top:"html",
-    html:"<div class='bigeq'><span class='kicker'>Today's mission</span>Estimate the g's you feel during a standing jump and an elevator ride.</div>",
+    html:"<div class='bigeq'><span class='kicker'>Today's mission</span>Estimate the g's you feel during<br>a standing jump and an elevator ride.</div>",
     lead:"" },
 
   // capture (looping video on top)
@@ -80,7 +80,7 @@ const NARR = [
 
   // interpret sections A–E (figure in the deck). Choices repeated per question by design.
   // The choice labels are ROMAN numerals — this figure is why (see `choiceLabel` in the engine): five
-  // stretches labelled A–E beside five choices labelled a–e is two alphabets an inch apart.
+  // stretches labeled A–E beside five choices labeled a–e is two alphabets an inch apart.
   { id:"interpret-A",
     figure:"media/jump-sections.svg",
     lead:"<p>Your recording should look roughly like this labeled example. For each stretch <b>A–E</b>, decipher what was happening.</p>",
@@ -115,7 +115,7 @@ const NARR = [
     choices:["Jumper is pushing off the ground to accelerate up","Jumper is in free fall","Jumper is standing still before the jump","Jumper is pushing off the ground to decelerate back to rest","Jumper is dropping their chest to prep for the jump"],
     answer:1,
     feedback:"Right — airborne, the only force is gravity, so you read ≈ −g. That flat run is your time aloft.",
-    feedbackWhen:{"wrong":"<b>Discuss for a minute.</b> D is flat and sits near $-9.8$ m/s$^2$. Which is the one stretch where nothing but gravity is touching the jumper?"} },
+    feedbackWhen:{"wrong":"<b>Discuss for a minute.</b> D is the one long flat stretch that sits well below zero. Which is the only part of a jump where nothing but gravity is touching the jumper?"} },
 
   { id:"interpret-E",
     figure:"media/jump-sections.svg",
@@ -134,10 +134,10 @@ const NARR = [
   // step is asking students to reach back for what Class B wrote. Matching the class beats matching the
   // suite's usual duration symbol here; notation.md has no rule against it.
   { id:"height-hang-1",
-    lead:"<p><b>Method 1: time in the air.</b> Use <b>Select Point</b> to note the time you leave the ground (the moment the signal drops to the roughly flat −$g$ run) and the time you land (the moment the signal jumps back upward).</p><p>Your time aloft is $t_\\text{air} = t_\\text{land} - t_\\text{takeoff}$.</p>",
-    feedbackWhen:{"empty":"Read both moments off the trace with <b>Select Point</b>, subtract, and enter the difference.","low":"That would be a very short flight — under 0.1 s you would barely have left the floor. Check that you took the <i>start</i> and <i>end</i> of the flat $-g$ run.","high":"Over 2 s aloft is a 5 m jump. You have probably picked up the crouch or the landing as well — $t_\\text{air}$ is only the flat $-g$ stretch between them."},
+    lead:"<p><b>Method 1: time in the air.</b> Use <b>Select Point</b> to note the time you leave the ground (the moment the signal drops to the roughly flat −$g$ run) and the time you land (the moment the signal jumps back upward).</p><p>Your time aloft is $t_\\text{air} = t_\\text{land} - t_\\text{takeoff}$. Phyphox captured data at 100 Hz — one sample every hundredth of a second — so give the time to <b>2 decimal places</b>.</p>",
+    feedbackWhen:{"empty":"Read both moments off the trace with <b>Select Point</b>, subtract, and enter the difference — to 2 decimal places.","dp":"The capture is 100 Hz, so a time off this trace is only good to the hundredth of a second. Give $t_\\text{air}$ to <b>exactly 2 decimal places</b>.","negative":"A negative time aloft means the subtraction went the other way round — it is $t_\\text{air} = t_\\text{land} - t_\\text{takeoff}$, landing minus takeoff. Swap them.","low":"That would be a very short flight — under 0.1 s you would barely have left the floor. Check that you took the <i>start</i> and <i>end</i> of the flat $-g$ run.","high":"Over 2 s aloft is a 5 m jump. You have probably picked up the crouch or the landing as well — $t_\\text{air}$ is only the flat $-g$ stretch between them."},
     input:"$t_\\text{air}$", key:"tair", unit:"s",
-    range:[0.1,2] },
+    range:[0.1,2], dp:2 },
 
   // The formula is NOT given (changed 2026-09-03). It used to hand over h = g·tau^2/8, a compound that
   // appears nowhere in the course — so the step tested arithmetic and taught nothing. Now it quotes the two
@@ -146,18 +146,18 @@ const NARR = [
   // "hang"` still computes); the difference is that the student has to remember where it came from.
   { id:"height-hang-2",
     checkKind:"hang",
-    lead:"<p><b>Back to Class B.</b> We solved exactly this problem there — a body launched straight up under constant gravity — and wrote down two results: $t_\\text{air} = 2\\dot y_0/g$ and $y_\\text{apex} = \\dot y_0^{2}/2g$.</p><p>You measured $t_\\text{air}$. Use the first to recover the launch speed $\\dot y_0$, then the second to get the height.</p>",
-    feedback:"That is your jump, measured from the clock alone — no ruler, no camera, just the moment you left the floor and the moment you came back.",
-    feedbackWhen:{"empty":"Two steps: $\\dot y_0$ from your $t_\\text{air}$, then $y_\\text{apex}$ from that $\\dot y_0$. Enter the height in cm.","low":"Too small. Check that you converted meters to centimeters.","high":"Too large for a standing jump. Feed $\\dot y_0$ into $y_\\text{apex} = \\dot y_0^{2}/2g$, then convert to cm.","check":"Note quite. Work it in two steps: $\\dot y_0 = g\\,t_\\text{air}/2$, then $y_\\text{apex} = \\dot y_0^{2}/2g$. Stopping after the first leaves you holding a speed, not a height."},
+    lead:"<p><b>Back to Class B.</b> We solved exactly this problem there — a body launched straight up under constant gravity — and wrote down two results: $t_\\text{air} = 2\\dot y_0/g$ and $y_\\text{apex} = \\dot y_0^{2}/2g$.</p><p>You just estimated $t_\\text{air}$, so use the first formula to recover the launch speed $\\dot y_0$, then the second to get the height. Your time was good to a hundredth of a second, and squaring it doubles that uncertainty — so answer <b>to the nearest cm</b>.</p>",
+    feedback:"Right, that is your jump height, measured from the clock alone — no ruler, no camera, just the moment you left the floor and the moment you came back. How did you do compared to Chris Spell's 5'3\"??",
+    feedbackWhen:{"empty":"Two steps: $\\dot y_0$ from your $t_\\text{air}$, then $y_\\text{apex}$ from that $\\dot y_0$. Enter the height in cm.","dp":"Your $t_\\text{air}$ is good to a hundredth of a second, and $y_\\text{apex}$ goes as $t_\\text{air}^2$, so that uncertainty doubles — a centimeter is as fine as this answer gets. Give it <b>to the nearest cm</b>, no decimals.","low":"Too small. Check that you converted meters to centimeters.","high":"Too large for a standing jump. Feed $\\dot y_0$ into $y_\\text{apex} = \\dot y_0^{2}/2g$, then convert to cm.","check":"Note quite. Work it in two steps: $\\dot y_0 = g\\,t_\\text{air}/2$, then $y_\\text{apex} = \\dot y_0^{2}/2g$. Stopping after the first leaves you holding a speed, not a height."},
     input:"$y_\\text{apex}$", key:"y_apex", unit:"cm",
-    range:[2,200] },
+    range:[2,200], dp:0 },
 
   // Method 2, split in two (2026-09-03). The drag and the reading of the peak used to be one step, which
   // put a numeric box under a paragraph nobody had a reason to finish. This half asks what the FAINT curve
   // is — the tool draws v(t) on the way to x(t), and its zero crossing is the apex, which is the single
   // most useful thing on that plot and was previously unremarked.
   { id:"height-integrate",
-    lead:"<p><b>Method 2: integrate acceleration.</b> Position is acceleration integrated twice. Switch to <b>Double Integrate</b> and drag across the jump, starting about <span class=\"tip\" tabindex=\"0\">half a second<span class=\"tippop\"><i>Why half a second?</i> The Double Integrate tool assumes you begin at <b>rest</b> — zero velocity, zero position — so starting mid-motion would give nonsense. But you don't want too large a stretch before, because integrating twice turns any tiny offset into errors that grow with the <b>square</b> of time.</span></span> before the crouch.</p><p>The solid green line is your $y$ acceleration ($\\ddot{y}$) integrated <b>twice</b> — the $y$ position. Note that there's also a fainter yellow line.</p>",
+    lead:"<p><b>Method 2: integrate acceleration.</b> Position is acceleration integrated twice. Switch to <b>Double Integrate</b> and drag across the jump, starting about <span class=\"tip\" tabindex=\"0\">half a second<span class=\"tippop\"><i>Why half a second?</i> The Double Integrate tool assumes you begin at <b>rest</b> — zero velocity, zero position — so starting mid-motion would give nonsense. But you don't want too large a stretch before, because integrating twice turns any tiny offset into errors that grow with the <b>square</b> of time.</span></span> before the crouch.</p><p>The solid green line is the $y$ position, your $y$ acceleration ($\\ddot{y}$) integrated <b>twice</b>. Note that there's also a fainter yellow line.</p>",
     check:"Based on its behavior, what is that yellow line showing?",
     choices:["The $y$ velocity ($\\dot{y}$)","The $y$ acceleration ($\\ddot{y}$) again, smoothed","The vertical force on the phone","An estimate of the integration error"],
     answer:0,
@@ -167,9 +167,9 @@ const NARR = [
   // …and this half reads the peak, now that they know what they are looking at.
   { id:"height-peak",
     lead:"<p>Now read the <b>peak value</b> of your green $y$ curve — the top of the jump — and enter it.</p>",
-    feedbackWhen:{"empty":"Read the peak off the green position curve and enter it in cm.","low":"That looks too small. Be sure you're dragging from the quiet stretch before the crouch.","high":"That looks too big. Be sure you're not dragging from too far before the jump or you could get large errors accumulating."},
-    input:"peak height (Double Integrate)", key:"h_int", unit:"cm",
-    range:[2,400] },
+    feedbackWhen:{"empty":"Read the peak off the green position curve and enter it in cm.","dp":"The peak callout on the curve is printed to the nearest centimeter — copy it as it stands, with <b>no decimals</b>.","low":"That looks too small. Be sure you're dragging from the quiet stretch before the crouch.","high":"That looks too big. Be sure you're not dragging from too far before the jump or you could get large errors accumulating."},
+    input:"$y_\\text{peak}$", key:"y_peak", unit:"cm",
+    range:[2,400], dp:0 },
 
   // drift question (drift figure in the deck)
   { id:"drift",
@@ -187,11 +187,11 @@ const NARR = [
   // builds toward was computed from it.
   { id:"apparent-weight",
     checkKind:"gfactor",
-    lead:"<p><b>Apparent weight — your felt g's.</b> Switch to <b>Average Value</b> and drag across the <b>push-off drive</b> — the big positive hump just before you leave the ground — to read your <b>average $\\ddot{y}$</b> over that launch. Then work out the <b>g's</b> you felt over that launch, $1 + \\ddot{y}/g$.</p>",
-    feedback:"That is what the floor was doing to you — for a fraction of a second you felt that you weighed that many times your own weight.",
-    feedbackWhen:{"empty":"Drag across the push-off hump with <b>Average Value</b>, read the green box, then enter $1 + \\ddot{y}/g$.","low":"Under 1 g would mean the floor pushed <i>less</i> than your weight — be sure you're dragging over the right hump.","high":"Above 8 g would happen in a car crash, not a jump. Check that you averaged correctly.","check":"That doesn't match your own plot — the green box reads {avg} m/s$^2$, so $1 + \\ddot{y}/g$ works out to about {expected}. Divide by $g$, then add 1."},
+    lead:"<p><b>Apparent weight — your felt g's.</b> Switch to <b>Average Value</b> and drag across the <b>push-off drive</b> — the big positive hump just before you leave the ground — to read your <b>average $\\ddot{y}$</b> over that launch. Then work out the <b>g's</b> you felt over that launch, $1 + \\ddot{y}/g$. Phyphox's acceleration is good to about $\\pm 0.005$ m/s$^2$, so give your g's to <b>3 decimal places</b> and no more.</p>",
+    feedback:"That is what the floor was doing to you — for a fraction of a second you felt that you weighed that number times your own weight.",
+    feedbackWhen:{"empty":"Drag across the push-off hump with <b>Average Value</b>, read the green box, then enter $1 + \\ddot{y}/g$.","dp":"The green box reads to 2 decimal places and phyphox is good to about $\\pm 0.005$ m/s$^2$, so $1 + \\ddot{y}/g$ is only meaningful to the third decimal. Give it to <b>exactly 3 decimal places</b>.","low":"Under 1 g would mean the floor pushed <i>less</i> than your weight — be sure you're dragging over the right hump.","high":"Above 8 g would happen in a car crash, not a jump. Check that you averaged correctly.","check":"That doesn't match your own plot — the green box reads {avg} m/s$^2$, so $1 + \\ddot{y}/g$ works out to about {expected}. Divide by $g$, then add 1."},
     input:"average over the push-off", key:"gfactor", unit:"g's",
-    range:[1,8] },
+    range:[1,8], dp:3 },
 
   /* ---------------------------------------------------------------------------------------------
      THE ELEVATOR SECTION. Students take the laptop to the MEC elevator, scan a QR posted in the car,
@@ -208,7 +208,7 @@ const NARR = [
      --------------------------------------------------------------------------------------------- */
   { id:"elevator",
     code:{ hash:[4320836341417941,2228546580717157], label:"Passcode from the MEC elevator", wrong:"Not yet — the code is behind the QR code posted inside the elevator car itself." },
-    lead:"<p><b>Field trip.</b> Bring your phone and head for the <b>elevator on this floor</b>. Inside the car you'll find a QR code — scan it, answer what it asks, and bring the passcode back here.</p>" },
+    lead:"<p><b>Field trip.</b> Bring your laptop and head for the <b>elevator on this floor</b>. Inside the car you'll find a QR code — scan it, answer what it asks, then type the passcode here.</p>" },
 
   { id:"elevator-capture",
     top:"video",
@@ -232,11 +232,11 @@ const NARR = [
     lead:"<p>The beginning and end of your data may have noise that overwhelms the signal in between. Click <b>Crop</b> and drag across the stretch you want to keep — just before the elevator started to just after it stopped. The vertical axis should rescale to what's left. Crop both Going Up and Going Down.</p>",
     feedbackWhen:{"crop":"Both plots need cropping. Click <b>Crop</b>, then drag the amber bounds inward on each one — from just before the elevator moves to just after it stops."} },
 
-  /* The four measurements. Each one turns a number read off a trace into a felt g-factor and then asks
+  /* The four measurements. Each one turns a number read off a trace into the g's you felt and then asks
      which way the g's pushed, and the four answers collapse to TWO — start-up and stop-down are both
      eyeballs-down, stop-up and start-down are both eyeballs-up. That repetition is the lesson, not a
      redundancy: what you feel is set by the acceleration, never by the direction you happen to be
-     travelling. "Eyeballs-in/-out" are live distractors, not filler — Class C taught the convention with
+     traveling. "Eyeballs-in/-out" are live distractors, not filler — Class C taught the convention with
      the Brulle g-tolerance figure, where in vs. down vs. up is the whole point.
      They ask for the G-FACTOR rather than the raw z-double-dot as of 2026-09-03. The arithmetic is one
      divide and one add, they did it once already for their jump, and doing it four more times is what
@@ -262,57 +262,57 @@ const NARR = [
     choices:["No — gravity and the normal force are both acting; they just cancel","Yes — zero acceleration means zero force","No — only gravity is acting, and it is too small to see","Yes, apart from air resistance inside the car"],
     answer:0,
     feedback:"Right — $\\underline{F} = m\\ddot{\\underline{r}}$ is about the <b>net</b> force. Gravity pulls down with $mg$, the floor pushes up with $\\underline{F}_N$ of the same size, and the two cancel. Zero <i>net</i> force, not zero forces — which is also why a bathroom scale in an elevator at steady speed reads exactly your weight.",
-    feedbackWhen:{"wrong":"<b>Discuss for a minute.</b> You are standing on the floor of the car the whole time. Is the floor touching you? Is the Earth still pulling on you? Now: which force does $\\underline{F}$ mean in $\\underline{F} = m\\ddot{\\underline{r}}$?"} },
+    feedbackWhen:{"wrong":"<b>Discuss for a minute.</b> You are standing on the floor of the car the whole time. Is the floor touching you? Is the Earth still pulling on you?"} },
 
   { id:"elevator-up-start",
     checkKind:"gfactor",
     slots:["up","down"],
-    lead:"<p><b>Going up — the start.</b> On the <b>top</b> plot, switch to <b>Average Value</b> and drag across the first bump, where the elevator got moving. Read the average $\\ddot{z}$ out of the green box, then turn it into the <b>g's</b> you felt, the way you did for your jump: $1 + \\ddot{z}/g$, with $g = 9.8$ m/s$^2$.</p>",
-    check:"Starting upward, which way are the g's pushing?",
+    lead:"<p><b>Going up — the start.</b> On the <b>top</b> plot, switch to <b>Average Value</b> and drag across the first bump, where the elevator got moving. Read the average $\\ddot{z}$ out of the green box, then turn it into the <b>g's</b> you felt, the way you did for your jump: $1 + \\ddot{z}/g$. Phyphox's acceleration is good to about $\\pm 0.005$ m/s$^2$, so give your g's to <b>3 decimal places</b> and no more.</p>",
+    check:"Which way are the g's pushing?",
     choices:["Eyeballs-down — pressed toward the floor, blood driven toward your feet","Eyeballs-up — lightened, blood driven toward your head","Eyeballs-in — blood driven toward your back","Eyeballs-out — blood driven toward your chest"],
     answer:0,
     feedback:"Right — the floor has to push <i>harder</i> than your weight to accelerate you upward, so you came out above 1 g and the g's run head-to-toe. Same direction as the push-off phase of your jump.",
-    feedbackWhen:{"empty":"Drag across the first bump on the <b>top</b> plot, read the green box, then enter $1 + \\ddot{z}/g$.","low":"That far below 1 g is a much bigger effect than an elevator can produce. Check you divided by $g$ before adding 1 — and that you dragged the <i>first</i> bump on the top plot.","high":"An elevator never gets past about 1.15 g. That looks like the raw acceleration rather than $1 + \\ddot{z}/g$.","check":"That doesn't match your own plot — the green box reads {avg} m/s$^2$, so $1 + \\ddot{z}/g$ works out to about {expected}.","wrong":"<b>Discuss for a minute.</b> This bump came out <i>above</i> 1 g, so the floor is pushing harder than your weight. Which way does that press your body?"},
+    feedbackWhen:{"empty":"Drag across the first bump on the <b>top</b> plot, read the green box, then enter $1 + \\ddot{z}/g$.","dp":"The green box reads to 2 decimal places and phyphox is good to about $\\pm 0.005$ m/s$^2$, so $1 + \\ddot{z}/g$ is only meaningful to the third decimal. Give it to <b>exactly 3 decimal places</b>.","low":"Your value should be above 1, because you feel heavier during the start of the ride up. Check that you divided by $g$ before adding 1 — and that you dragged the <i>first</i> bump on the top plot.","high":"An elevator never gets past about 1.15 g. That looks like maybe the raw acceleration rather than $1 + \\ddot{z}/g$?","check":"That doesn't match your own plot — the green box reads {avg} m/s$^2$, so $1 + \\ddot{z}/g$ works out to about {expected}.","wrong":"<b>Discuss for a minute.</b> This bump came out <i>above</i> 1 g, so the floor is pushing harder than your weight. Which way does that press your body?"},
     input:"starting up", key:"g_up_start", unit:"g's",
-    range:[0.85,1.15] },
+    range:[0.85,1.15], dp:3 },
 
   { id:"elevator-up-stop",
     checkKind:"gfactor",
     slots:["up","down"],
-    lead:"<p><b>Going up — the stop.</b> Still on the top plot, drag across the second bump, where the elevator slowed to a halt. Same arithmetic: $1 + \\ddot{z}/g$.</p>",
-    check:"Stopping at the top, which way are the g's pushing?",
+    lead:"<p><b>Going up — the stop.</b> Still on the top plot, drag across the second bump, where the elevator slowed to a halt. Same arithmetic: $1 + \\ddot{z}/g$. Same precision: 3 decimal places.</p>",
+    check:"Which way are the g's pushing?",
     choices:["Eyeballs-down — pressed toward the floor, blood driven toward your feet","Eyeballs-up — lightened, blood driven toward your head","Eyeballs-in — blood driven toward your back","Eyeballs-out — blood driven toward your chest"],
     answer:1,
     feedback:"Right — to stop you while you're still moving up, the floor pushes <i>less</i> than your weight, you drop below 1 g, and you go light. Same direction as at the top of your jump.",
-    feedbackWhen:{"empty":"Drag across the second bump on the <b>top</b> plot, read the green box, then enter $1 + \\ddot{z}/g$.","low":"An elevator never gets below about 0.85 g. That looks like the raw acceleration rather than $1 + \\ddot{z}/g$.","high":"This bump slows an upward ride, so its $\\ddot{z}$ is negative and the answer should come out <i>below</i> 1 g. Check the sign you read out of the green box.","check":"That doesn't match your own plot — the green box reads {avg} m/s$^2$, so $1 + \\ddot{z}/g$ works out to about {expected}.","wrong":"<b>Discuss for a minute.</b> This one came out <i>below</i> 1 g — the floor is pushing less than your weight. What does that feel like, and which way does your blood go?"},
+    feedbackWhen:{"empty":"Drag across the second bump on the <b>top</b> plot, read the green box, then enter $1 + \\ddot{z}/g$.","dp":"The green box reads to 2 decimal places and phyphox is good to about $\\pm 0.005$ m/s$^2$, so $1 + \\ddot{z}/g$ is only meaningful to the third decimal. Give it to <b>exactly 3 decimal places</b>.","low":"An elevator never gets below about 0.85 g. That looks like maybe the raw acceleration rather than $1 + \\ddot{z}/g$?","high":"Your value should be below 1, because you feel lighter during the stop at the top. Check that you divided by $g$ before adding 1 — and that you dragged the <i>second</i> bump on the top plot.","check":"That doesn't match your own plot — the green box reads {avg} m/s$^2$, so $1 + \\ddot{z}/g$ works out to about {expected}.","wrong":"<b>Discuss for a minute.</b> This one came out <i>below</i> 1 g — the floor is pushing less than your weight. What does that feel like, and which way does your blood go?"},
     input:"stopping while going up", key:"g_up_stop", unit:"g's",
-    range:[0.85,1.15] },
+    range:[0.85,1.15], dp:3 },
 
   { id:"elevator-down-start",
     checkKind:"gfactor",
     slots:["up","down"],
     lead:"<p><b>Going down — the start.</b> Now the <b>bottom</b> plot. Drag across its first bump, where the elevator started descending, and turn it into g's.</p>",
-    check:"Starting downward, which way are the g's pushing?",
+    check:"Which way are the g's pushing?",
     choices:["Eyeballs-down — pressed toward the floor, blood driven toward your feet","Eyeballs-up — lightened, blood driven toward your head","Eyeballs-in — blood driven toward your back","Eyeballs-out — blood driven toward your chest"],
     answer:1,
-    feedback:"Right — and notice that's the <i>same answer</i> as stopping at the top, even though one ride was going up and this one is going down.",
-    feedbackWhen:{"empty":"Drag across the first bump on the <b>bottom</b> plot, read the green box, then enter $1 + \\ddot{z}/g$.","low":"An elevator never gets below about 0.85 g. That looks like the raw acceleration rather than $1 + \\ddot{z}/g$.","high":"Starting downward means $\\ddot{z}$ is negative, so this should land <i>below</i> 1 g. Check the sign you read out of the green box — and that you are on the bottom plot.","check":"That doesn't match your own plot — the green box reads {avg} m/s$^2$, so $1 + \\ddot{z}/g$ works out to about {expected}.","wrong":"<b>Discuss for a minute.</b> Compare what you just entered with the reading from stopping at the top. They are on the same side of 1 g — so the answer here is the same as it was there."},
+    feedback:"Right — and notice that's the <i>same response</i> you gave for stopping at the top, even though one ride was going up and this one is going down.",
+    feedbackWhen:{"empty":"Drag across the first bump on the <b>bottom</b> plot, read the green box, then enter $1 + \\ddot{z}/g$.","dp":"The green box reads to 2 decimal places and phyphox is good to about $\\pm 0.005$ m/s$^2$, so $1 + \\ddot{z}/g$ is only meaningful to the third decimal. Give it to <b>exactly 3 decimal places</b>.","low":"An elevator never gets below about 0.85 g. That looks like maybe the raw acceleration rather than $1 + \\ddot{z}/g$?","high":"Your value should be below 1, because you feel lighter during the start of the ride down. Check that you divided by $g$ before adding 1 — and that you dragged the <i>first</i> bump on the bottom plot.","check":"That doesn't match your own plot — the green box reads {avg} m/s$^2$, so $1 + \\ddot{z}/g$ works out to about {expected}.","wrong":"<b>Discuss for a minute.</b> Compare what you just entered with the reading from stopping at the top. They are on the same side of 1 g — so the answer here is the same as it was there."},
     input:"starting down", key:"g_down_start", unit:"g's",
-    range:[0.85,1.15] },
+    range:[0.85,1.15], dp:3 },
 
   { id:"elevator-down-stop",
     checkKind:"gfactor",
     slots:["up","down"],
     lead:"<p><b>Going down — the stop.</b> Last one: the second bump on the bottom plot.</p>",
-    check:"Stopping at the bottom, which way are the g's pushing?",
+    check:"Which way are the g's pushing?",
     choices:["Eyeballs-down — pressed toward the floor, blood driven toward your feet","Eyeballs-up — lightened, blood driven toward your head","Eyeballs-in — blood driven toward your back","Eyeballs-out — blood driven toward your chest"],
     answer:0,
     feedback:"Right — four events, two answers. <b>Speeding up going up, or slowing down going down</b>, presses you into the floor; <b>speeding up going down, or slowing down going up</b>, lightens you. Your velocity $\\dot{z}$, and therefore the direction you were traveling, never entered the calculation — only your acceleration $\\ddot{z}$ did.",
-    feedbackWhen:{"empty":"Drag across the second bump on the <b>bottom</b> plot, read the green box, then enter $1 + \\ddot{z}/g$.","low":"Stopping a descent means $\\ddot{z}$ is positive, so this should land <i>above</i> 1 g. Check the sign you read out of the green box.","high":"An elevator never gets past about 1.15 g. That looks like the raw acceleration rather than $1 + \\ddot{z}/g$.","check":"That doesn't match your own plot — the green box reads {avg} m/s$^2$, so $1 + \\ddot{z}/g$ works out to about {expected}.","wrong":"<b>Discuss for a minute.</b> This one came out <i>above</i> 1 g, the same side as starting the upward ride. Two of your four events feel the same; this is one of them."},
+    feedbackWhen:{"empty":"Drag across the second bump on the <b>bottom</b> plot, read the green box, then enter $1 + \\ddot{z}/g$.","dp":"The green box reads to 2 decimal places and phyphox is good to about $\\pm 0.005$ m/s$^2$, so $1 + \\ddot{z}/g$ is only meaningful to the third decimal. Give it to <b>exactly 3 decimal places</b>.","low":"Your value should be above 1, because you feel heavier during the stop at the bottom. Check that you divided by $g$ before adding 1 — and that you dragged the <i>second</i> bump on the bottom plot.","high":"An elevator never gets past about 1.15 g. That looks like maybe the raw acceleration rather than $1 + \\ddot{z}/g$?","check":"That doesn't match your own plot — the green box reads {avg} m/s$^2$, so $1 + \\ddot{z}/g$ works out to about {expected}.","wrong":"<b>Discuss for a minute.</b> This one came out <i>above</i> 1 g, the same side as starting the upward ride. Two of your four events feel the same; this is one of them."},
     input:"stopping while going down", key:"g_down_stop", unit:"g's",
-    range:[0.85,1.15] },
+    range:[0.85,1.15], dp:3 },
 
-  // leadFn: reads the student's own four g-factors back so the question below has something to point at
+  // leadFn: reads the student's own four g's readings back so the question below has something to point at
   // without them scrolling through four steps to find it. Skipped by sync_lead.py (no literal to write).
   // This replaced a step that asked them to pick the biggest of the four and type it in again — a data-
   // entry task where a question belonged.
@@ -320,7 +320,7 @@ const NARR = [
     slots:["up","down"],
     leadFn:a=>{
       const n=v=>Number.isFinite(v)?v.toFixed(2):"—";
-      return "<p><b>Two of the four are heavy.</b> Your four readings, in g's:</p>"
+      return "<p>Your four readings, in g's:</p>"
         +"<ul><li>starting up <b>"+n(a.g_up_start)+"</b> &nbsp;·&nbsp; stopping up <b>"+n(a.g_up_stop)+"</b></li>"
         +"<li>starting down <b>"+n(a.g_down_start)+"</b> &nbsp;·&nbsp; stopping down <b>"+n(a.g_down_stop)+"</b></li></ul>"
         +"<p>The two biggest are almost certainly the <b>start of Going Up</b> and the <b>end of Going Down</b>.</p>";
@@ -331,7 +331,7 @@ const NARR = [
     feedback:"Right — starting an upward ride and stopping a downward one both mean $\\ddot{z} > 0$, and $\\underline{F}_N = m(g + \\ddot{z})$ is bigger than your weight either way. The direction you happened to be <i>traveling</i> never came into it.",
     feedbackWhen:{"wrong":"<b>Discuss for a minute.</b> One of these two events is a ride going up, the other a ride going down — so it isn't about travel direction. Look at the sign of $\\ddot{z}$ in each, and at what $\\underline{F}_N = m(g + \\ddot{z})$ then has to be."} },
 
-  // the punchline: their own jump g-factor against their own biggest elevator one, which is the comparison
+  // the punchline: their own jump g's against their own biggest elevator reading, which is the comparison
   // the whole workshop has been building toward and is far better in their numbers than in ours.
   // slots kept on the elevator: this step reads back their elevator numbers, so dropping the panels
   // to the jump data underneath it was just confusing.
@@ -348,8 +348,8 @@ const NARR = [
       const four=[a.g_up_start,a.g_up_stop,a.g_down_start,a.g_down_stop].filter(v=>Number.isFinite(v));
       const big=four.length?Math.max(...four):NaN;
       return "<p><b>Same story, twice.</b> Your legs launched you at about <b>"+n(a.gfactor)+"</b> g's. "
-        +"The MEC elevator, working about as hard as it ever does, managed <b>"+n(big)+"</b> — a few percent "
-        +"over 1, so slight you only notice it in your stomach for half a second.</p>"
+        +"The MEC elevator managed <b>"+n(big)+"</b>, so slight you only notice it in your stomach "
+        +"for half a second.</p>"
         +"<p>Both are the same physics: the floor pushing on you with something other than your own weight. "
         +"The accelerometer never cared which one was dramatic.</p>"
         +"<p class=\"aside\">This is why a scale in an elevator is such a durable exam question. It feels like "
@@ -364,11 +364,11 @@ const NARR = [
   // that is furthest away by now.
   { id:"normal-launch",
     slots:["up","down"],
-    lead:"<p>Two last ones, to make sure the pairing landed.</p>",
+    lead:"",
     check:"As your legs pushed to launch your jump, and as the Going Up elevator began to move, the normal force applied to your feet was…",
     choices:["Greater than your weight","Equal to your weight","Less than your weight"],
     answer:0,
-    feedback:"Right — both are an <i>upward</i> acceleration, so $\\underline{F}_N = m(g + \\ddot{y}) > mg$. One of them threw you into the air and the other moved you a floor; the physics is identical and only the number changed.",
+    feedback:"Right — both are an <i>upward</i> acceleration, so $\\underline{F}_N = m(g + \\ddot{y}) > mg$. One of them threw you into the air and the other moved you into an upward climb through the elevator shaft.",
     feedbackWhen:{"wrong":"<b>Discuss for a minute.</b> In both cases you start at rest and end up moving upward. Which way does the acceleration point, and what does $\\underline{F}_N = m(g + \\ddot{y})$ then give you?"} },
 
   { id:"normal-land",
@@ -377,7 +377,7 @@ const NARR = [
     check:"As your legs pushed to cushion your landing, and as the Going Down elevator came to rest, the normal force applied to your feet was…",
     choices:["Greater than your weight","Equal to your weight","Less than your weight"],
     answer:0,
-    feedback:"Right — and this is the one that catches people. You were moving <i>down</i> in both, but you were <i>slowing</i>, which is an upward acceleration, so the floor again pushes harder than your weight. Direction of travel never enters it; only $\\ddot{y}$ does.",
+    feedback:"Right. You were moving <i>down</i> in both, but you were <i>slowing</i>, which is an upward acceleration, so the floor pushed harder than your weight, in both cases.",
     feedbackWhen:{"wrong":"<b>Discuss for a minute.</b> You are moving downward in both — but are you speeding up or slowing down? Which way does the acceleration point while you slow?"} },
 
   // copy-out summary (the deliverable): paste into the Canvas post-lab quiz + upload all three raw CSVs
@@ -385,7 +385,7 @@ const NARR = [
     top:"html",
     html:"<div class='bigeq'>Nice work.</div>",
     lead:"<p><b>You're done.</b> Copy the summary below and paste it into the Workshop 1 — Exit Quiz on Canvas, where you'll be asked to upload <b>all three</b> raw phyphox exports — the jump and both elevator rides. That's the whole deliverable — no report.</p><p><b>Everyone submits — not just whoever's laptop is open.</b> If you worked as a pair or a three, each of you pastes the same summary and uploads the same file(s). The quiz is per student.</p>",
-    summary:{ rows:13, lines:["Workshop 1 · Get Air","Jump data: {file}","Time in the air: {tair} s","Jump height — hang time: {y_apex} cm","Jump height — double integration: {h_int} cm","Felt g's at push-off: {gfactor}","Elevator up: {file_up}","Elevator down: {file_down}","g's — starting up: {g_up_start}","g's — stopping while going up: {g_up_stop}","g's — starting down: {g_down_start}","g's — stopping while going down: {g_down_stop}"] } },
+    summary:{ rows:13, lines:["Workshop 1 · Get Air","Jump data: {file}","Time in the air: {tair} s","Jump height — hang time: {y_apex} cm","Jump height — double integration: {y_peak} cm","Felt g's at push-off: {gfactor}","Elevator up: {file_up}","Elevator down: {file_down}","g's — starting up: {g_up_start}","g's — stopping while going up: {g_up_stop}","g's — starting down: {g_down_start}","g's — stopping while going down: {g_down_stop}"] } },
 ];
 </script>
 <script src="../assets/analyzer-engine.js"></script>

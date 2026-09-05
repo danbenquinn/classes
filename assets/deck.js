@@ -13,7 +13,7 @@
     pollOverride: 'auto',
     supabaseUrl: "https://rdbacwwbeyeqdkswwvjt.supabase.co",
     supabaseAnonKey: "sb_publishable_IQNxMMynit0aWtOS3tjiRQ_h5sNo159",
-    remoteBase: "https://danbenquinn.github.io/poll/remote.html?class=",
+    remoteBase: "https://danbenquinn.github.io/classes/poll/remote.html?class=",   // one repo since 2026-09-05 — site-suite/page.py POLL_URL
     remoteVersion: 5,                                // bump when remote.html changes — busts phone caches via the QR URL
     preferredCam: /document|doc.?cam|ipevo|elmo|aver|hue|usb/i
   }, window.DECK_CONFIG || {});
@@ -958,7 +958,7 @@
   // The index the PHONES are allowed to know, and only once the question is sealed. Survey polls
   // (data-survey, data-answer="-1") have no right answer, so they publish null and no phone lights up.
   // Deliberately stricter than the `|| '0'` fallback renderBars uses: a slide that forgot data-answer
-  // should colour nothing on 400 phones, not colour choice A.
+  // should color nothing on 400 phones, not color choice A.
   function publishedAnswer(sec){
     if(sec.hasAttribute('data-survey')) return null;
     const n = parseInt(sec.dataset.answer ?? '', 10);
@@ -1057,7 +1057,7 @@
     if(!el) return;
     el.className = 'rq-status fail';
     el.innerHTML = '<b>The database is running the older schema.</b> Votes and the phone remote work, but' +
-      ' the phones will not colour anyone\'s answer at the reveal.' +
+      ' the phones will not color anyone\'s answer at the reveal.' +
       '<ol><li>Open the <a href="' + DASHBOARD + '" target="_blank" rel="noopener">Supabase dashboard</a>' +
       ' → <b>SQL Editor</b> and re-run <b>poll/supabase-setup.sql</b> in full.</li>' +
       '<li>Reload this deck — the check runs again on open.</li></ol>' +
@@ -1765,7 +1765,7 @@
   // TWO reels, one Spin. Left = who won (perfect scorers); right = what they win. The prize reel is
   // geared to stop at 6 s while the name reel runs 8 s, so the room learns the stakes and then the name.
   // The prize reel is a literal 100-slot cycle: 99 "select a prize" slots + one $20 — a true 1/100.
-  // Every slot is labelled: an unlabelled band was cleaner but unreadable, and the point of the slide
+  // Every slot is labeled: an unlabelled band was cleaner but unreadable, and the point of the slide
   // is that the room understands the odds it is looking at.
   //
   // LANDING SLOT vs TRAVEL — the two are deliberately separate. Which slot wins is the random draw;
@@ -1781,7 +1781,7 @@
         JACKPOT_AT   = 13,    // which slot in the cycle is the $20 (mid-cycle)
         PRIZE_CYCLES = 7,     // cycles built into the DOM (runway past the furthest landing)
         // Which cycle the prize reel may stop in, and so how far it travels. This is the knob that
-        // sets how often the $20 flies past mid-spin — one sighting per cycle travelled — and it has
+        // sets how often the $20 flies past mid-spin — one sighting per cycle traveled — and it has
         // to move whenever PRIZE_CYCLE does: a shorter cycle packs the green slots closer, so the
         // same distance in pixels shows it far more often. Cycle 3–4 gives 3–5 sightings at 1/26.
         PRIZE_LAND   = [3,4],
@@ -1858,7 +1858,7 @@
       }
       // Deliberately silent on a normal load — the pool size is instructor bookkeeping, not something
       // the room needs on the projector. The slot is kept for the two states that DO need explaining:
-      // "loading…", and "no perfect scores yet" (which is why Spin is greyed out).
+      // "loading…", and "no perfect scores yet" (which is why Spin is grayed out).
       countEl.textContent = '';
       spinBtn.disabled = false;
       // Pad to NAME_MIN_SEGS (min 6 reps) so there is room to stop on a randomly chosen repetition.

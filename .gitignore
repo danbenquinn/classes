@@ -1,0 +1,12 @@
+# Local bookkeeping — these describe the state of Daniel's machine, not the site.
+# .canvas-pasted.json records which ?v= he has pasted into Canvas; .build-stamps.json records what
+# a build was made FROM. Neither is served, and both would churn the history on every publish.
+.canvas-pasted.json
+.build-stamps.json
+.DS_Store
+
+# Never, under any circumstances. The salt derives every published folder name (site_build.site_salt)
+# and lives in class-manager/, outside this tree — this line is the belt to that braces. The
+# credential likewise lives one level up, outside the repo, so it cannot be added even by `git add -A`.
+.site-salt
+github-credential.txt

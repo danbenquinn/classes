@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="robots" content="noindex">
+<title>Quick vote</title>
+<style>
+  /* Same palette as the class vote page (slide-suite/poll/vote.html), copied rather than linked
+     because this file is hosted from the poll repo and has no build step. BLUE is neutral chrome
+     and your current selection. GREEN appears only after voting closes and means MOST VOTES — not
+     "correct", which this page has no opinion about; a tie turns every leader green. */
+  :root{ --bg:#0b0c0e; --ink:#f2f2ef; --muted:#9aa0a6; --card:#16181c; --line:#2a2d33;
+         --accent:#5e81b5; --ok:#8fb032; --ink-on-color:#0b0f16; --bad:#eb6235; }
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; height:100%; background:var(--bg); color:var(--ink);
+             font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+             -webkit-tap-highlight-color:transparent; overscroll-behavior:none; }
+  button{ font:inherit; color:inherit; cursor:pointer; }
+  .hidden{ display:none !important; }
+
+  /* ---- student: four buttons, four rows, nothing else ---- */
+  #student{ height:100vh; height:100dvh; display:flex; flex-direction:column;
+            gap:10px; padding:10px 12px calc(10px + env(safe-area-inset-bottom)); }
+  .choice{ flex:1 1 0; min-height:0; width:100%;
+           display:flex; align-items:center; justify-content:center;
+           background:var(--card); border:2px solid var(--line); border-radius:16px;
+           font-size:clamp(2rem, 11vh, 3.4rem); font-weight:650; letter-spacing:.02em;
+           transition:border-color .12s, background .12s, color .12s; }
+  .choice.sel{ border-color:var(--accent); background:#232b38; }
+  .choice[disabled]{ opacity:.6; font-size:clamp(1.1rem, 5.2vh, 1.7rem); font-weight:600; }
+  /* The two buttons that must not dim when voting closes are the student's own choice and the
+     winner — everything else recedes so the room reads the result from across the table. */
+  .choice.sel[disabled]{ opacity:1; border-color:var(--accent); }
+  .choice.win[disabled]{ opacity:1; border-color:var(--ok); background:rgba(143,176,50,.16); }
+  /* Your pick AND the winner: green carries the result, and a thin blue rule inside the border keeps
+     "this was mine" legible rather than making you count backwards from what you remember tapping. */
+  .choice.sel.win[disabled]{ box-shadow:inset 0 0 0 3px rgba(94,129,181,.75); }
+  /* A single quiet line so a student can tell a tap landed, and so "it closed" has words on it.
+     It reserves its height always, so the buttons never jump when it fills in. */
+  #note{ flex:0 0 auto; text-align:center; font-size:.85rem; color:var(--accent); min-height:1.3em; }
+  #note.err{ color:var(--bad); }
+
+  /* ---- instructor ---- */
+  #admin{ max-width:520px; margin:0 auto; padding:26px 18px 40px; }
+  .kicker{ color:var(--accent); font-size:.72rem; letter-spacing:.16em; text-transform:uppercase; }
+  h1{ font-size:1.15rem; margin:.5em 0 1em; font-weight:650; }
+  .row{ display:flex; align-items:baseline; justify-content:space-between; gap:1em;
+        background:var(--card); border:1.5px solid var(--line); border-radius:12px;
+        padding:14px 16px; margin-bottom:10px; font-size:1.15rem; }
+  .row b{ font-weight:650; }
+  .row span{ color:var(--muted); font-variant-numeric:tabular-nums; }
+  .row.win{ border-color:var(--ok); background:rgba(143,176,50,.16); }
+  .row.win span{ color:var(--ok); }
+  .bar{ height:4px; border-radius:2px; background:var(--accent); margin-top:6px; }
+  .row.win .bar{ background:var(--ok); }
+  .total{ color:var(--muted); font-size:.9rem; margin:14px 0 22px; }
+  .act{ width:100%; padding:16px; margin-bottom:12px; border-radius:12px; border:1.5px solid var(--line);
+        background:var(--card); font-size:1.05rem; font-weight:600; }
+  .act.primary{ background:var(--accent); border-color:var(--accent); color:var(--ink-on-color); }
+  .state{ font-size:.9rem; color:var(--muted); min-height:1.3em; }
+  .state.err{ color:var(--bad); }
+</style>
+</head>
+<body>
+
+<div id="student" class="hidden">
+  <button class="choice" data-i="0">A</button>
+  <button class="choice" data-i="1">B</button>
+  <button class="choice" data-i="2">C</button>
+  <button class="choice" data-i="3">D</button>
+  <div id="note"></div>
+</div>
+
+<div id="admin" class="hidden">
+  <div class="kicker">Quick vote</div>
+  <h1 id="atitle">Voting is open</h1>
+  <div id="tally"></div>
+  <div class="total" id="total"></div>
+  <button class="act primary" id="btnclose">Close voting</button>
+  <button class="act" id="btnreset">Reset voting</button>
+  <div class="state" id="astate"></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+(function(){
+  "use strict";
+
+  // Same Supabase project as the class poll. The publishable key is designed to be public: it
+  // grants nothing beyond the three qv_ functions, and closing or wiping a vote needs the key
+  // string below to match the one compiled into qv_is_admin() in quick-vote-setup.sql.
+  const SUPABASE_URL      = "https://rdbacwwbeyeqdkswwvjt.supabase.co";
+  const SUPABASE_ANON_KEY = "sb_publishable_IQNxMMynit0aWtOS3tjiRQ_h5sNo159";
+  const ADMIN_KEY         = "vortex";        // change here AND in qv_is_admin()
+  const LETTERS           = ["A","B","C","D"];
+  const POLL_MS           = 2000;
+
+  const qs    = new URLSearchParams(location.search);
+  const ROOM  = (qs.get("r") || "main").slice(0, 40);
+  const isAdmin = (qs.get("k") || "") === ADMIN_KEY;
+  const secret  = isAdmin ? ADMIN_KEY : "";
+
+  const $ = id => document.getElementById(id);
+  const supa = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+  // Anonymous, per-device, and never leaves this phone except as an opaque string. It is what
+  // stops a second tap counting twice; it is not an identity and nothing maps it to a person.
+  function voterId(){
+    let v = null;
+    try { v = localStorage.getItem("qv-device"); } catch(e){}
+    if (!v) {
+      v = (crypto.randomUUID ? crypto.randomUUID()
+                             : String(Date.now()) + Math.random().toString(36).slice(2));
+      try { localStorage.setItem("qv-device", v); } catch(e){}
+    }
+    return v;
+  }
+  const ME = voterId();
+
+  // Remembered selection, scoped to the room AND the round, so a reset on the instructor's phone
+  // clears the highlight here instead of leaving a vote the database has already deleted.
+  const memKey = "qv-pick-" + ROOM;
+  function loadPick(){ try { return JSON.parse(localStorage.getItem(memKey) || "null"); } catch(e){ return null; } }
+  function savePick(p){ try { localStorage.setItem(memKey, JSON.stringify(p)); } catch(e){} }
+
+  let pick = loadPick();            // {choice, round} or null
+  let state = { is_open:true, vote_round:1, tally:null };
+  let sending = false;
+
+  async function readState(){
+    const { data, error } = await supa.rpc("qv_get", { p_room: ROOM, p_secret: secret });
+    if (error) throw error;
+    const row = Array.isArray(data) ? data[0] : data;
+    return row || { is_open:true, vote_round:1, tally:null };
+  }
+
+  // ---------------- student ----------------
+  const btns = Array.prototype.slice.call(document.querySelectorAll(".choice"));
+
+  function renderStudent(){
+    const closed = !state.is_open;
+    const t = state.tally;
+    // The leader, or leaders — `>=` on the max rather than a single argmax, so a 5-5 split lights
+    // both. Zero votes has no leader: four green buttons would be a result nobody produced.
+    const top = (closed && t && t.some(n => n > 0)) ? Math.max.apply(null, t) : null;
+    btns.forEach((b, i) => {
+      b.disabled = closed;
+      b.textContent = (closed && t) ? (LETTERS[i] + ": " + t[i] + (t[i] === 1 ? " vote" : " votes"))
+                                    : LETTERS[i];
+      b.classList.toggle("sel", !!pick && pick.choice === i && pick.round === state.vote_round);
+      b.classList.toggle("win", top !== null && t[i] === top);
+    });
+    const note = $("note");
+    if (closed)            { note.className = "";    note.textContent = "Voting is closed."; }
+    else if (sending)      { note.className = "";    note.textContent = "Sending…"; }
+    else if (pick && pick.round === state.vote_round)
+                           { note.className = "";    note.textContent = "Vote recorded — tap another to change it."; }
+    else                   { note.className = "";    note.textContent = ""; }
+  }
+
+  async function vote(i){
+    if (!state.is_open || sending) return;
+    sending = true; renderStudent();
+    try {
+      const { data, error } = await supa.rpc("qv_cast", { p_room: ROOM, p_voter: ME, p_choice: i });
+      if (error) throw error;
+      pick = { choice: i, round: (typeof data === "number" ? data : state.vote_round) };
+      state.vote_round = pick.round;
+      savePick(pick);
+      sending = false; renderStudent();
+    } catch (err) {
+      sending = false;
+      const closed = /closed/i.test(err && err.message || "");
+      if (closed) { state.is_open = false; renderStudent(); }
+      else { renderStudent(); $("note").className = "err"; $("note").textContent = "Couldn't send — tap again."; }
+    }
+  }
+  btns.forEach(b => b.addEventListener("click", () => vote(parseInt(b.dataset.i, 10))));
+
+  // ---------------- instructor ----------------
+  function renderAdmin(){
+    const t = state.tally || [0,0,0,0];
+    const total = t.reduce((a,b) => a + b, 0);
+    const max = Math.max(1, Math.max.apply(null, t));
+    $("atitle").textContent = state.is_open ? "Voting is open" : "Voting is closed";
+    // Green only once you have closed it — while the vote is open a leader is a snapshot, and
+    // colouring it would put a thumb on the scale of a room that is still deciding.
+    const top = (!state.is_open && total > 0) ? Math.max.apply(null, t) : null;
+    $("tally").innerHTML = LETTERS.map((L, i) =>
+      '<div class="row' + (top !== null && t[i] === top ? ' win' : '') + '"><div style="flex:1"><b>' + L + '</b>' +
+      '<div class="bar" style="width:' + (t[i] / max * 100).toFixed(1) + '%;' +
+      (t[i] ? '' : 'opacity:.25;') + '"></div></div>' +
+      '<span>' + t[i] + (t[i] === 1 ? " vote" : " votes") + '</span></div>').join("");
+    $("total").textContent = total + (total === 1 ? " response" : " responses") + " so far";
+    $("btnclose").textContent = state.is_open ? "Close voting" : "Reopen voting";
+  }
+
+  async function adminSet(open, wipe, label){
+    $("astate").className = "state"; $("astate").textContent = label + "…";
+    try {
+      const { error } = await supa.rpc("qv_set",
+        { p_room: ROOM, p_open: open, p_wipe: wipe, p_secret: ADMIN_KEY });
+      if (error) throw error;
+      $("astate").textContent = "";
+      await tick();
+    } catch (err) {
+      $("astate").className = "state err";
+      $("astate").textContent = "Failed: " + (err && err.message || "network");
+    }
+  }
+  if (isAdmin) {
+    $("btnclose").addEventListener("click", () => adminSet(!state.is_open, false,
+      state.is_open ? "Closing" : "Reopening"));
+    $("btnreset").addEventListener("click", () => adminSet(true, true, "Resetting"));
+  }
+
+  // ---------------- loop ----------------
+  async function tick(){
+    try {
+      const row = await readState();
+      const before = state.vote_round;
+      state = { is_open: !!row.is_open, vote_round: row.vote_round || 1, tally: row.tally || null };
+      if (pick && pick.round !== state.vote_round) { pick = null; savePick(null); }
+      if (isAdmin) renderAdmin(); else renderStudent();
+      if (isAdmin && before !== state.vote_round) { /* round moved; nothing else to do */ }
+    } catch (err) {
+      if (isAdmin) { $("astate").className = "state err";
+                     $("astate").textContent = "Can't reach the server — retrying."; }
+      else { $("note").className = "err"; $("note").textContent = "Offline — retrying."; }
+    }
+  }
+
+  $(isAdmin ? "admin" : "student").classList.remove("hidden");
+  if (!isAdmin) renderStudent();
+  tick();
+  setInterval(tick, POLL_MS);
+  // A phone that slept through the close should not need a manual refresh to notice.
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) tick(); });
+})();
+</script>
+</body>
+</html>
