@@ -1,7 +1,7 @@
-# Local bookkeeping — these describe the state of Daniel's machine, not the site.
-# .canvas-pasted.json records which ?v= he has pasted into Canvas; .build-stamps.json records what
-# a build was made FROM. Neither is served, and both would churn the history on every publish.
-.canvas-pasted.json
+# Local bookkeeping — describes the state of Daniel's machine, not the site.
+# .build-stamps.json records what a build was made FROM. Not served, and it would churn the history
+# on every publish. (.canvas-pasted.json sat here too, recording which ?v= had been pasted into
+# Canvas; the Canvas Pages were retired 2026-09-07 and the file went with them.)
 .build-stamps.json
 .DS_Store
 
