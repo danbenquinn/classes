@@ -1111,6 +1111,30 @@ function inputIssue(st){
                   {expected:E.g.toFixed(3), avg:E.av.toFixed(2)});
     }
   }
+  if(st.checkKind==="dblintft"){
+    /* The elevator's height by double integration, reported in FEET. Two jobs, both soft on purpose
+       (Daniel, 2026-09-07: "I just want them to think, that's all"):
+
+         · the FIRST input must match the end value the Double Integrate tool is showing, to 10% —
+           enough to prove they dragged the window and did the meters→feet conversion, and nothing more.
+           The callout prints CENTIMETERS, so a student who types the tool's number unconverted lands
+           3.3x off and hears about it; one who types meters lands 3.3x the other way.
+         · the SECOND input (the cinder-block count) is checked only by its declared range, because
+           there is no right answer here that we know better than the person standing in the stairwell.
+
+       Silent with no live integration, like `gfactor` — a student who measured, moved on and came Back
+       should not be re-blocked on a drag they have no reason to still be holding. */
+    const P=active(), I=P&&P.integ, f=fieldsOf(st)[0];
+    const v=f ? S.answers[f.key] : NaN;
+    if(I && I.x && I.x.length && Number.isFinite(v)){
+      const endM = I.x[I.x.length-1], endFt = endM*3.28084;
+      const tol = Math.max(0.5, 0.10*Math.abs(endFt));    // the floor keeps a near-zero end value passable
+      if(Math.abs(v-endFt)>tol)
+        return fbText(st,"check",
+          "That doesn't match the curve — the tool's end value reads {cm} cm, which is {expected} ft.",
+          {expected:endFt.toFixed(1), cm:(endM*100).toFixed(0), label:f.label});
+    }
+  }
   if(st.checkKind==="peaks"){                          // three peaks in a row → times must increase
     const {t1,t2,t3}=S.answers;
     if(!(t1<t2 && t2<t3)) return fbText(st,"check","Your three peak times should increase left to right — pick three peaks in a row and read them in order.");
@@ -1475,8 +1499,14 @@ function renderStep(){
     // down the right), so it fills column-first. Inputs beside a FIGURE are PAIRS read against the
     // picture — (t₁, ẍ₁) is one gold dot on the diagram — so they fill row-first, one peak per row.
     // Column-first there put t₂ under ẍ₁ and started the second column on ẍ₂, splitting every pair.
-    if(fields.length>1 && !st.figure) wrap.style.gridTemplateRows="repeat("+Math.ceil(fields.length/2)+",auto)";
-    if(fields.length>1 && st.figure) wrap.classList.add("byrow");
+    // EXACTLY TWO boxes are a PAIR, wherever they are (2026-09-07). Column-first over two columns puts
+    // one at each end of a 1500px deck, and Get Air's elevator-height step is a comparison — the
+    // accelerometer's estimate against a count of cinder blocks — so the two numbers being read
+    // together IS the step. Same for Workshop 0's amplitude/frequency and its two R² values. Above two
+    // fields the group logic below still rules.
+    const pair = fields.length===2;
+    if(fields.length>1 && !st.figure && !pair) wrap.style.gridTemplateRows="repeat("+Math.ceil(fields.length/2)+",auto)";
+    if(fields.length>1 && (st.figure || pair)) wrap.classList.add("byrow");
     fields.forEach(f=>{
       const row=document.createElement("div"); row.className="inrow";
       row.innerHTML='<label>'+f.label+':</label><input type="number" step="any" style="width:88px"> <span class="unit">'+(f.unit||"")+'</span>';

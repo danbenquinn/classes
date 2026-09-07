@@ -264,6 +264,24 @@ const NARR = [
     feedback:"Right — $\\underline{F} = m\\ddot{\\underline{r}}$ is about the <b>net</b> force. Gravity pulls down with $mg$, the floor pushes up with $\\underline{F}_N$ of the same size, and the two cancel. Zero <i>net</i> force, not zero forces — which is also why a bathroom scale in an elevator at steady speed reads exactly your weight.",
     feedbackWhen:{"wrong":"<b>Discuss for a minute.</b> You are standing on the floor of the car the whole time. Is the floor touching you? Is the Earth still pulling on you?"} },
 
+  // The symmetry with the jump, and the only step in the workshop where the instrument is shown to be
+  // the WRONG tool (added 2026-09-07). Double integration over a 15-second ride drifts to roughly twice
+  // the true floor height — the demo capture lands near 30 ft against a real 15 — which is the same
+  // t-squared error the `drift` step named on a jump lasting a third of a second, now large enough to
+  // see with a tape measure. The stairwell's cinder blocks are the tape measure.
+  // Both gates are deliberately SOFT: the first only proves they dragged the window and converted to
+  // feet, the second only that a plausible number of blocks got counted. No `dp:` on either — the point
+  // is the comparison, not the precision.
+  { id:"elevator-height",
+    checkKind:"dblintft",
+    slots:["up","down"],
+    lead:"<p><b>How high is a floor?</b> As in the jump data, if you double integrate the acceleration you should get position. Switch to <b>Double Integrate</b> and drag across the <b>Going Up</b> ride — from just before the elevator starts accelerating to just after it stops decelerating. The tool's <b>end value</b> is its estimate of the change in $z$ over the ride; enter it below <b>in feet</b>.</p><p>Then count the cinder blocks in the stairwell. Each one is 8 inches tall — about how far did the elevator actually travel?</p>",
+    feedback:"Yes — and notice they probably don't agree. As with your jump, double integration turns small errors into a drift that grows with <b>time squared</b>, and this ride is several seconds long. The accelerometer is not a good tool for measuring floor height.",
+    feedbackWhen:{"empty":"Both boxes: the tool's end value converted to feet on the left, and your cinder-block count on the right.","low":"{label} looks too small — both boxes want <b>feet</b>, and the tool's readout is in centimeters.","high":"{label} looks too large for one floor — check your units; both boxes want <b>feet</b>.","check":"That doesn't match the curve — the tool's end value reads {cm} cm, which is {expected} ft. Convert the number the tool is showing."},
+    inputs:[
+      {label:"$z_\\text{est}$", key:"z_est", unit:"ft", range:[-100,200]},
+      {label:"$z_\\text{act}$", key:"z_act", unit:"ft", range:[10,20]} ] },
+
   { id:"elevator-up-start",
     checkKind:"gfactor",
     slots:["up","down"],
@@ -385,7 +403,7 @@ const NARR = [
     top:"html",
     html:"<div class='bigeq'>Nice work.</div>",
     lead:"<p><b>You're done.</b> Copy the summary below and paste it into the Workshop 1 — Exit Quiz on Canvas, where you'll be asked to upload <b>all three</b> raw phyphox exports — the jump and both elevator rides. That's the whole deliverable — no report.</p><p><b>Everyone submits — not just whoever's laptop is open.</b> If you worked as a pair or a three, each of you pastes the same summary and uploads the same file(s). The quiz is per student.</p>",
-    summary:{ rows:13, lines:["Workshop 1 · Get Air","Jump data: {file}","Time in the air: {tair} s","Jump height — hang time: {y_apex} cm","Jump height — double integration: {y_peak} cm","Felt g's at push-off: {gfactor}","Elevator up: {file_up}","Elevator down: {file_down}","g's — starting up: {g_up_start}","g's — stopping while going up: {g_up_stop}","g's — starting down: {g_down_start}","g's — stopping while going down: {g_down_stop}"] } },
+    summary:{ rows:15, lines:["Workshop 1 · Get Air","Jump data: {file}","Time in the air: {tair} s","Jump height — hang time: {y_apex} cm","Jump height — double integration: {y_peak} cm","Felt g's at push-off: {gfactor}","Elevator up: {file_up}","Elevator down: {file_down}","Elevator rise — double integration: {z_est} ft","Elevator rise — cinder blocks: {z_act} ft","g's — starting up: {g_up_start}","g's — stopping while going up: {g_up_stop}","g's — starting down: {g_down_start}","g's — stopping while going down: {g_down_stop}"] } },
 ];
 </script>
 <script src="../assets/analyzer-engine.js"></script>
