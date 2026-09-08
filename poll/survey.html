@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="robots" content="noindex">
+<title>Course survey</title>
+<!-- The site's own Inter, from the shared assets/ the decks and the analyzer already use — so a
+     student's phone fetches a font it has probably already cached from a lecture deck. The path is
+     relative to poll/, which only resolves on the published site; opening this file locally falls
+     through to system-ui, which is what quick-vote.html uses full time. Nothing breaks either way. -->
+<link rel="stylesheet" href="../assets/fonts.css">
+<style>
+  /* Same palette as vote.html / quick-vote.html, copied rather than linked because this file is
+     hosted from the poll folder and has no build step. One departure from the deck's color grammar,
+     and it is deliberate: this is a SURVEY, so nothing here can be right or wrong. Green and red are
+     the verdict colors — they never appear on this page, on either screen. Blue is the only accent,
+     meaning "your selection" on the phone and "a bar" on the results screen. Same exemption
+     `data-survey` polls already get in the deck. */
+  :root{ --bg:#0b0c0e; --ink:#f2f2ef; --muted:#9aa0a6; --card:#16181c; --raised:#1c1f24;
+         --line:#2a2d33; --accent:#5d9ec7; --sel-bg:#1b2632; --ink-on-color:#0b0f16; --bad:#eb6235; }
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; min-height:100%; background:var(--bg); color:var(--ink);
+             font-family:Inter,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+             -webkit-tap-highlight-color:transparent; }
+  button{ font:inherit; color:inherit; cursor:pointer; }
+
+  .wrap{ max-width:520px; margin:0 auto; min-height:100vh; min-height:100dvh;
+         display:flex; flex-direction:column;
+         padding:22px 16px calc(24px + env(safe-area-inset-bottom)); }
+
+  /* The progress rule is the only chrome at the top of the page — it answers "how much longer is
+     this", which is the question that decides whether a student starts at all. */
+  .prog{ flex:0 0 auto; height:3px; border-radius:2px; background:var(--line); overflow:hidden; }
+  .prog i{ display:block; height:100%; width:0; background:var(--accent); transition:width .25s ease; }
+  .kicker{ color:var(--accent); font-size:.72rem; letter-spacing:.16em; text-transform:uppercase;
+           margin:18px 0 0; min-height:1.1em; }
+
+  main{ flex:1 1 auto; display:flex; flex-direction:column; justify-content:center; padding:8px 0 0; }
+  h1{ font-size:1.5rem; line-height:1.25; font-weight:650; margin:.35em 0 .7em; }
+  .prompt{ font-size:1.22rem; line-height:1.35; font-weight:600; margin:.35em 0 .2em; }
+  .aside{ font-size:.86rem; line-height:1.5; color:var(--muted); margin:.5em 0 0; }
+  p.body{ font-size:1rem; line-height:1.55; margin:0 0 1em; }
+  p.body.dim{ color:var(--muted); font-size:.92rem; }
+
+  .choices{ margin-top:18px; display:flex; flex-direction:column; gap:9px; }
+  .choice{ width:100%; text-align:left; background:var(--card); border:1.5px solid var(--line);
+           border-radius:14px; padding:14px 16px; font-size:1.02rem; font-weight:550;
+           transition:border-color .12s, background .12s; }
+  .choice .sub{ display:block; font-size:.82rem; line-height:1.4; font-weight:400;
+                color:var(--muted); margin-top:3px; }
+  .choice.sel{ border-color:var(--accent); background:var(--sel-bg); }
+
+  .act{ width:100%; padding:16px; margin-top:8px; border-radius:12px;
+        border:1.5px solid var(--line); background:var(--card); font-size:1.05rem; font-weight:600; }
+  .act.primary{ background:var(--accent); border-color:var(--accent); color:var(--ink-on-color); }
+  .act[disabled]{ opacity:.5; }
+  .back{ background:none; border:0; padding:14px 0 0; font-size:.88rem; color:var(--muted);
+         text-decoration:underline; text-underline-offset:3px; align-self:flex-start; }
+  :focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
+
+  textarea{ width:100%; min-height:150px; resize:vertical; margin-top:16px;
+            font:inherit; font-size:1rem; line-height:1.5; color:var(--ink);
+            background:var(--raised); border:1.5px solid var(--line); border-radius:12px; padding:12px; }
+  textarea:focus{ border-color:var(--accent); outline:none; }
+  .note{ font-size:.85rem; color:var(--accent); min-height:1.3em; margin-top:10px; text-align:center; }
+  .note.err{ color:var(--bad); }
+
+  /* ---- results screen (?k=) ---- */
+  .qblock{ margin:0 0 26px; }
+  .qhead{ font-size:.98rem; font-weight:600; line-height:1.35; margin:0 0 10px; }
+  .row{ display:flex; align-items:baseline; justify-content:space-between; gap:1em;
+        background:var(--card); border:1.5px solid var(--line); border-radius:10px;
+        padding:9px 12px; margin-bottom:6px; font-size:.92rem; }
+  .row b{ font-weight:550; }
+  .row span{ color:var(--muted); font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .bar{ height:4px; border-radius:2px; background:var(--accent); margin-top:6px; }
+  .total{ color:var(--muted); font-size:.9rem; margin:6px 0 20px; }
+  .comment{ background:var(--card); border:1.5px solid var(--line); border-left:3px solid var(--accent);
+            border-radius:10px; padding:11px 13px; margin-bottom:8px;
+            font-size:.94rem; line-height:1.5; white-space:pre-wrap; }
+  .state{ font-size:.85rem; color:var(--muted); min-height:1.3em; margin-top:10px; }
+  .state.err{ color:var(--bad); }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <div class="prog"><i id="progbar"></i></div>
+  <div class="kicker" id="kicker"></div>
+  <main id="screen"></main>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+(function(){
+  "use strict";
+
+  // Same Supabase project as vote.html and quick-vote.html; separate tables and sv_-prefixed
+  // functions, so re-running any one setup file cannot disturb the others.
+  const SUPABASE_URL      = "https://rdbacwwbeyeqdkswwvjt.supabase.co";
+  const SUPABASE_ANON_KEY = "sb_publishable_IQNxMMynit0aWtOS3tjiRQ_h5sNo159";
+
+  // NOT the quick-vote key. That one is printed in QUICK-VOTE.md and travels on a wall poster; what
+  // it guards is a tally of four letters. This guards free-text comments students wrote believing
+  // only Daniel would read them. Change here AND in sv_is_admin() in survey-setup.sql.
+  const ADMIN_KEY = "eddy";
+
+  const qs      = new URLSearchParams(location.search);
+  const FORM    = (qs.get("f") || "mae2501-classF").slice(0, 60);
+  const isAdmin = (qs.get("k") || "") === ADMIN_KEY;
+  const COURSE  = "MAE 2501";
+
+  // The eight questions, in order, then the comments box. An option is a plain string, or
+  // [label, sub] when the parenthetical is what makes it unambiguous. Editing this list is the whole
+  // job of changing the survey — nothing else in the file knows how many questions there are or how
+  // many choices each one has.
+  const QUESTIONS = [
+    { q:"In class, I can hear what DQ is saying…",
+      opts:["almost never","sometimes","often enough","usually","almost always"] },
+
+    { q:"In class, I can read what DQ is writing on the board…",
+      opts:["almost never","sometimes","often enough","usually","almost always"] },
+
+    { q:"In class, I find the pacing of new material…",
+      opts:[["way too slow","I am consistently bored"],
+            ["a bit too slow", null],
+            ["just right","I grasp concepts at roughly the rate they are introduced"],
+            ["a bit too fast", null],
+            ["way too fast","I am consistently lost"]] },
+
+    { q:"I wish we solved more example problems in class.",
+      opts:[["Strongly agree","we should mostly be solving example problems"],
+            ["Agree","some more example problems would be nice"],
+            ["Neutral","there's a good balance of example problems and concepts"],
+            ["Disagree","more focus on concepts would be nice"],
+            ["Strongly disagree","we should mostly be discussing concepts"]] },
+
+    { q:"How well do you like the idea of Mondays being a review day with no exit quiz?",
+      opts:[["Not at all","the inconsistency confuses me"],
+            ["Not really","I wish it was more consistent"],
+            ["Neutral", null],
+            ["Somewhat","let's keep trying it"],
+            ["Love it","please keep this"]] },
+
+    { q:"So far, the workshops have been…",
+      opts:[["A waste of time","I learn basically nothing"],
+            ["Not good","I don't learn much"],
+            ["OK", null],
+            ["Pretty good","I learn a few things"],
+            ["A great use of time","I learn a lot"]] },
+
+    { q:"How rude is it that DQ eats his lunch during the workshop?",
+      aside:"He is sorry. He gets very hungry, but he will stop if needed.",
+      opts:["Not at all","Not really","Didn't even notice","Somewhat rude","How dare you"] },
+
+    { q:"In general, I feel like this class is worth my time.",
+      opts:["Strongly disagree","Disagree","Neutral","Agree","Strongly agree"] }
+  ];
+
+  const STEPS   = QUESTIONS.length + 1;          // questions + the comments screen
+  const answers = new Array(QUESTIONS.length).fill(null);
+  let comments  = "";
+  let step      = -1;                            // -1 splash · 0..n-1 questions · n comments
+  let sending   = false;
+
+  const $    = id => document.getElementById(id);
+  const supa = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  const esc  = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+  function show(html){ $("screen").innerHTML = html; window.scrollTo(0,0); }
+  function progress(f){ $("progbar").style.width = Math.max(0, Math.min(1, f)) * 100 + "%"; }
+  function kicker(t){ $("kicker").textContent = t || ""; }
+
+  /* ---------------- student ---------------- */
+
+  // Nothing is written to the phone — no localStorage, no cookie, no id of any kind — so the promise
+  // on this screen is literally true and a reload starts clean. The cost is a half-finished survey
+  // lost to an accidental refresh, which at eight taps is the cheaper side of the trade.
+  function splash(){
+    progress(0); kicker(COURSE);
+    show(
+      '<h1>Anonymous course survey</h1>' +
+      '<p class="body">How is this class going? Your answers are anonymous — no name, no computing ID, ' +
+      'nothing stored on your phone, nothing that ties a response back to you.</p>' +
+      '<p class="body">Eight multiple-choice questions, then a box for anything else you want to say. ' +
+      'About a minute.</p>' +
+      '<button class="act primary" id="go">Start</button>' +
+      '<p class="body dim" style="margin-top:14px">Answer honestly — the point is to change the rest ' +
+      'of the semester.</p>'
+    );
+    $("go").addEventListener("click", function(){ step = 0; render(); });
+  }
+
+  function question(i){
+    const Q = QUESTIONS[i];
+    progress(i / STEPS);
+    kicker("Question " + (i + 1) + " of " + QUESTIONS.length);
+    show(
+      '<div class="prompt">' + esc(Q.q) + '</div>' +
+      (Q.aside ? '<div class="aside">' + esc(Q.aside) + '</div>' : '') +
+      '<div class="choices">' +
+      Q.opts.map(function(o, k){
+        const label = Array.isArray(o) ? o[0] : o;
+        const sub   = Array.isArray(o) ? o[1] : null;
+        return '<button class="choice' + (answers[i] === k ? ' sel' : '') + '" data-k="' + k + '">' +
+               esc(label) + (sub ? '<span class="sub">' + esc(sub) + '</span>' : '') + '</button>';
+      }).join("") +
+      '</div>' +
+      (i > 0 ? '<button class="back" id="back">Back</button>' : '')
+    );
+    // Tap to advance: the selection lights for a beat so the tap is visibly acknowledged, then moves
+    // on. No Next button — on a five-inch screen an extra tap per question is most of the friction
+    // there is, and the Back link covers the one case where it mattered.
+    const btns = Array.prototype.slice.call(document.querySelectorAll(".choice"));
+    btns.forEach(function(b){
+      b.addEventListener("click", function(){
+        answers[i] = parseInt(b.dataset.k, 10);
+        btns.forEach(function(x){ x.classList.remove("sel"); });
+        b.classList.add("sel");
+        setTimeout(function(){ step = i + 1; render(); }, 140);
+      });
+    });
+    if (i > 0) $("back").addEventListener("click", function(){ step = i - 1; render(); });
+  }
+
+  function commentScreen(){
+    progress(QUESTIONS.length / STEPS);
+    kicker("Last one · optional");
+    show(
+      '<div class="prompt">Anything else about the course so far?</div>' +
+      '<div class="aside">Grading policy, in-class mechanics, workshops — anything.</div>' +
+      '<textarea id="cbox" placeholder="Type here…"></textarea>' +
+      '<button class="act primary" id="send">Send anonymously</button>' +
+      '<div class="note" id="note"></div>' +
+      '<button class="back" id="back">Back</button>'
+    );
+    $("cbox").value = comments;
+    $("back").addEventListener("click", function(){
+      comments = $("cbox").value; step = QUESTIONS.length - 1; render();
+    });
+    $("send").addEventListener("click", submit);
+  }
+
+  function submit(){
+    if (sending) return;
+    sending = true;
+    comments = $("cbox").value;
+    $("send").disabled = true;
+    $("note").className = "note"; $("note").textContent = "Sending…";
+    supa.rpc("sv_submit", { p_form: FORM, p_answers: answers, p_comments: comments.slice(0, 4000) })
+      .then(function(r){
+        if (r.error) throw r.error;
+        done();
+      })
+      .catch(function(err){
+        sending = false;
+        $("send").disabled = false;
+        $("note").className = "note err";
+        $("note").textContent = /closed/i.test((err && err.message) || "")
+          ? "This survey has been closed."
+          : "Couldn't send — tap again.";
+      });
+  }
+
+  function done(){
+    progress(1); kicker(COURSE);
+    show(
+      '<h1>Thank you.</h1>' +
+      '<p class="body">Your responses have been submitted anonymously.</p>' +
+      '<p class="body dim">You can close this page.</p>'
+    );
+  }
+
+  function render(){
+    if (step < 0) return splash();
+    if (step < QUESTIONS.length) return question(step);
+    return commentScreen();
+  }
+
+  /* ---------------- results (?k=) ---------------- */
+
+  function results(){
+    progress(1); kicker(COURSE + " · results");
+    show('<div class="state" id="rstate">Loading…</div>');
+    return supa.rpc("sv_results", { p_form: FORM, p_secret: ADMIN_KEY })
+      .then(function(r){
+        if (r.error) throw r.error;
+        renderResults(r.data || {});
+      })
+      .catch(function(err){
+        $("rstate").className = "state err";
+        $("rstate").textContent = "Couldn't load: " + ((err && err.message) || "network");
+      });
+  }
+
+  function renderResults(data){
+    // Pivot the flat {q, c, n} rows the RPC returns into per-question counts. Doing the pivot here
+    // rather than in SQL keeps the function trivial to read and leaves QUESTIONS as the single place
+    // that knows the shape of the survey.
+    const n = data.n || 0;
+    const grid = QUESTIONS.map(function(Q){ return new Array(Q.opts.length).fill(0); });
+    (data.tally || []).forEach(function(t){
+      if (grid[t.q] && t.c >= 0 && t.c < grid[t.q].length) grid[t.q][t.c] = t.n;
+    });
+
+    let html = '<div class="total">' + n + (n === 1 ? " response" : " responses") +
+               (data.is_open === false ? " · closed" : " · open") + '</div>';
+
+    QUESTIONS.forEach(function(Q, i){
+      const counts = grid[i];
+      const tot = counts.reduce(function(a, b){ return a + b; }, 0);
+      const max = Math.max(1, Math.max.apply(null, counts));
+      html += '<div class="qblock"><div class="qhead">' + (i + 1) + '. ' + esc(Q.q) + '</div>' +
+        Q.opts.map(function(o, k){
+          const label = Array.isArray(o) ? o[0] : o;
+          const pct = tot ? Math.round(100 * counts[k] / tot) : 0;
+          return '<div class="row"><div style="flex:1"><b>' + esc(label) + '</b>' +
+                 '<div class="bar" style="width:' + (counts[k] / max * 100).toFixed(1) + '%;' +
+                 (counts[k] ? '' : 'opacity:.2;') + '"></div></div>' +
+                 '<span>' + counts[k] + ' · ' + pct + '%</span></div>';
+        }).join("") + '</div>';
+    });
+
+    const cs = data.comments || [];
+    html += '<div class="qblock"><div class="qhead">Comments (' + cs.length + ')</div>' +
+      (cs.length ? cs.map(function(c){ return '<div class="comment">' + esc(c) + '</div>'; }).join("")
+                 : '<div class="state">None yet.</div>') + '</div>';
+
+    // Closing is what stops a survey collecting stray responses for the rest of the semester; the
+    // wipe is for clearing your own rehearsal before class. Both are checked in Postgres, so an
+    // edited copy of this JavaScript still cannot do either.
+    html += '<button class="act" id="btnclose">' +
+            (data.is_open === false ? "Reopen survey" : "Close survey") + '</button>' +
+            '<button class="act" id="btnwipe">Delete all responses</button>' +
+            '<div class="state" id="rstate2"></div>';
+
+    show(html);
+
+    $("btnclose").addEventListener("click", function(){
+      adminSet(data.is_open === false, false, "Updating");
+    });
+    let armed = false;
+    $("btnwipe").addEventListener("click", function(e){
+      if (!armed) { armed = true; e.target.textContent = "Tap again to delete everything"; return; }
+      adminSet(data.is_open !== false, true, "Deleting");
+    });
+  }
+
+  function adminSet(open, wipe, label){
+    $("rstate2").className = "state"; $("rstate2").textContent = label + "…";
+    supa.rpc("sv_set", { p_form: FORM, p_open: open, p_wipe: wipe, p_secret: ADMIN_KEY })
+      .then(function(r){ if (r.error) throw r.error; return results(); })
+      .catch(function(err){
+        $("rstate2").className = "state err";
+        $("rstate2").textContent = "Failed: " + ((err && err.message) || "network");
+      });
+  }
+
+  if (isAdmin) results(); else render();
+})();
+</script>
+</body>
+</html>
