@@ -144,10 +144,30 @@
   const atHead = (v, slack) => v.currentTime <= headTime(v) + slack;
 
   let mrect = {x:0,y:0,w:0,h:0};
+  // Rec. 709 luminance of a #rgb / #rrggbb / rgb() color; >0.55 counts as light. Used only to pick
+  // the ink for the caption + attribution over a data-mediabg slide, so the threshold is a judgement
+  // call about legibility rather than a standard.
+  function isLightColor(c){
+    c = String(c).trim();
+    let r, g, b;
+    let m = /^#([0-9a-f]{3})$/i.exec(c);
+    if(m){ r = parseInt(m[1][0]+m[1][0],16); g = parseInt(m[1][1]+m[1][1],16); b = parseInt(m[1][2]+m[1][2],16); }
+    else if((m = /^#([0-9a-f]{6})$/i.exec(c))){ r = parseInt(m[1].slice(0,2),16); g = parseInt(m[1].slice(2,4),16); b = parseInt(m[1].slice(4,6),16); }
+    else if((m = /^rgba?\(([^)]+)\)$/i.exec(c))){ const p = m[1].split(',').map(Number); [r,g,b] = p; }
+    else return false;                                   // a name we cannot read: assume dark, change nothing
+    return (0.2126*r + 0.7152*g + 0.0722*b) / 255 > 0.55;
+  }
+
   function contain(el, w, h){
     if(!w || !h) return;
     const LW = layer.clientWidth, LH = layer.clientHeight;
-    const s = Math.min(LW/w, LH/h), dw = w*s, dh = h*s;
+    // A LIGHT media ground gets a margin. Every other slide's media is a 16:9 clip bleeding to the
+    // frame edges on black, where edge-to-edge is invisible. A scanned page on white is a PAGE — run
+    // it to the exact top and bottom pixel and its own bottom line ("FIG. 1" on the patent drawing)
+    // reads as cropped rather than as full-bleed. 4% of the frame height on every side is enough to
+    // say "this is a document sitting on a surface" and costs almost nothing in size.
+    const pad = layer.classList.contains('lightbg') ? Math.round(LH * 0.04) : 0;
+    const s = Math.min((LW - 2*pad)/w, (LH - 2*pad)/h), dw = w*s, dh = h*s;
     const left = (LW-dw)/2, top = (LH-dh)/2;
     el.style.width = dw+'px'; el.style.height = dh+'px';
     el.style.left = left+'px'; el.style.top = top+'px';
@@ -300,6 +320,16 @@
       hideAttrib(); stageNextClip(cur); return; }
     layer.style.display = 'block';
     const d = cur.dataset;
+    // data-mediabg: paint the media layer something other than the house black behind THIS slide's
+    // media. For scanned line art (a patent drawing), black letterboxing around a white page reads as
+    // a mistake. Cleared on every other slide, so #media-layer falls back to the CSS `background:#000`.
+    //
+    // The caption and the attribution badge are white by design, because everything else in this deck
+    // sits on black — so a light media background makes them invisible rather than merely low-contrast.
+    // Rather than ask the author to specify an ink as well, read the luminance of the color they gave
+    // and let CSS flip both to the dark ink under `.lightbg`.
+    layer.style.background = d.mediabg || '';
+    layer.classList.toggle('lightbg', !!d.mediabg && isLightColor(d.mediabg));
     if(d.stack){ configureStack(cur); return; }     // synced/tiled video stack — its own path
     let media = d.media;
     if(d.playlist){                        // multi-clip slide: → plays clip 0, then each → jumps to the next cut
@@ -596,16 +626,30 @@
   //    on its last frame (so the finished graph can be studied); the next → advances. Without data-loop the
   //    first → plays it once, the next → advances.
   //  • data-cover → the walk-in warm-up: two full-width, half-height tiles that just loop.
-  //  • data-axes="mv,mu" labels each strip's momentum axis (mv vertical / mu horizontal); t is time.
+  //  • data-axes="x,y" labels each strip's momentum axis (m ṙ_x / m ṙ_y) and its force axis (F_x / F_y);
+//    t is time. (Until 2026-09-09 the momentum glyph read `mu`/`mv`.)
   const stackwrap = document.getElementById('stackwrap');
   let stackRaf = null;
   function pauseStack(){ stackwrap.querySelectorAll('video').forEach(v => v.pause()); if(stackRaf){ cancelAnimationFrame(stackRaf); stackRaf = null; } }
   function clearStack(){ pauseStack(); stackwrap.style.display = 'none'; stackwrap.innerHTML = ''; }
   function axisSVG(ylabel){                                    // coordinate glyph: y-axis (ylabel) up + time axis (t) right; corner at bottom-left (8%,92%)
     let ytxt;
-    if(ylabel.indexOf('_') >= 0){ const p = ylabel.split('_');
-      ytxt = '<text x="17" y="31" fill="#cfd3da" font-size="38" font-style="italic" font-family="ui-monospace,monospace">' + p[0] + '<tspan font-size="64%" dy="8">' + p[1] + '</tspan></text>';
-    } else { ytxt = '<text x="17" y="31" fill="#cfd3da" font-size="38" font-style="italic" font-family="ui-monospace,monospace">' + ylabel + '</text>'; }
+    const MONO = 'ui-monospace,monospace';
+    // `mrdot_x` / `mrdot_y` — a MOMENTUM COMPONENT, m r-with-an-overdot and the component subscript
+    // (Daniel, 2026-09-09; it replaces the old `mu`/`mv`, which were the last place in the course
+    // still naming a velocity component with its own letter). The overdot is a <circle>, not a
+    // combining accent and not the precomposed U+1E59 — neither is safe to assume in whatever the
+    // browser resolves `ui-monospace` to. Each glyph gets its own <text> at a hand-set x so the
+    // layout does not depend on that font's advance width either; the numbers are tuned against
+    // this function's fixed 100-unit viewBox and 38-unit type size.
+    if(ylabel.indexOf('rdot_') >= 0){ const sub = ylabel.split('_')[1];
+      ytxt = '<text x="17" y="31" fill="#cfd3da" font-size="38" font-style="italic" font-family="' + MONO + '">m</text>'
+           + '<text x="40" y="31" fill="#cfd3da" font-size="38" font-style="italic" font-family="' + MONO + '">r</text>'
+           + '<circle cx="53" cy="7" r="3.4" fill="#cfd3da"/>'
+           + '<text x="62" y="39" fill="#cfd3da" font-size="24" font-style="italic" font-family="' + MONO + '">' + sub + '</text>';
+    } else if(ylabel.indexOf('_') >= 0){ const p = ylabel.split('_');
+      ytxt = '<text x="17" y="31" fill="#cfd3da" font-size="38" font-style="italic" font-family="' + MONO + '">' + p[0] + '<tspan font-size="64%" dy="8">' + p[1] + '</tspan></text>';
+    } else { ytxt = '<text x="17" y="31" fill="#cfd3da" font-size="38" font-style="italic" font-family="' + MONO + '">' + ylabel + '</text>'; }
     return '<svg viewBox="0 0 100 100" width="100%" height="100%" preserveAspectRatio="xMidYMid meet">'
       + '<g stroke="#cfd3da" stroke-width="4" fill="#cfd3da" stroke-linecap="round">'
       + '<line x1="8" y1="92" x2="8" y2="15"/><polygon points="8,3 2,18 14,18" stroke="none"/>'
@@ -685,7 +729,7 @@
         v.addEventListener('loadedmetadata', () => layoutStack(cur), { once: true }); sw.appendChild(v);
         const comp = axes[i];                                  // "x" or "y" → two glyphs (momentum + force); absent → none
         if(comp === 'x' || comp === 'y'){
-          const momEl = document.createElement('div'); momEl.className = 'stack-axis'; momEl.innerHTML = axisSVG('m' + (comp === 'x' ? 'u' : 'v')); stackwrap.appendChild(momEl);
+          const momEl = document.createElement('div'); momEl.className = 'stack-axis'; momEl.innerHTML = axisSVG('mrdot_' + comp); stackwrap.appendChild(momEl);
           const fEl = document.createElement('div'); fEl.className = 'stack-axis'; fEl.innerHTML = axisSVG('F_' + comp); stackwrap.appendChild(fEl);
           axisEls.push({ strip: i, yfrac: ZERO.mom, el: momEl }, { strip: i, yfrac: ZERO.force, el: fEl });
         }
@@ -1020,6 +1064,14 @@
     try { if(window.QRCode) slideAll('section.poll').forEach(p => { const el = p.querySelector('.qrimg');
       if(el) new QRCode(el, { text:p.dataset.url, width:300, height:300, correctLevel:QRCode.CorrectLevel.M }); }); }
     catch(e){ console.warn('QR render failed', e); }
+    // WALK-IN QR CARDS (`.qrcard`, deck.css). The target lives on the CARD's own `data-url`, not the
+    // section's — a poll slide already spends `data-url` on its vote page, and putting both on the
+    // section would make the day someone wants a card ON a poll slide a silent collision instead of a
+    // choice. Same try/catch as above, and for the same reason: one missing element inside a forEach
+    // used to throw out of the whole loop and take every QR after it down with it.
+    try { if(window.QRCode) slideAll('.qrcard[data-url]').forEach(c => { const el = c.querySelector('.qrimg');
+      if(el && !el.childElementCount) new QRCode(el, { text:c.dataset.url, width:300, height:300, correctLevel:QRCode.CorrectLevel.M }); }); }
+    catch(e){ console.warn('QR card render failed', e); }
     try { const el = document.querySelector('#remote-qr .rq-code');   // presenter-remote QR
       if(window.QRCode && el && !el.childElementCount) new QRCode(el, { text:REMOTE_URL, width:300, height:300, correctLevel:QRCode.CorrectLevel.M }); }
     catch(e){ console.warn('remote QR render failed', e); }

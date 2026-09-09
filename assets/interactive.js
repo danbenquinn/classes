@@ -1336,7 +1336,7 @@
       // far too short for the normal-force arrow, which does not. 0.10 s is still "short but finite"
       // and shows both. Halving the peak force for the same Δp is, conveniently, the lesson.
       this.mass = 1; this.tau = 0.10;                 // finite contact time (s)
-      this.vx = 3.0;                                  // ball's horizontal drift speed — the "u" slider (difficulty)
+      this.vx = 3.0;                                  // ball's horizontal drift, PINNED — no control (see DEFLECT_CONTROLS_HTML)
       this.bx0 = 0.8;                                 // ball's start x (world) — the graph's t=0 origin
       this.paddleGain = 0.55;                         // <1 softens the imparted momentum (gentle hits easy) but firm enough to avoid tunneling; pedagogy needs only "impulse changes p"
       this.everPlayed = false; this.running = false; this.paused = false; this.last = 0;
@@ -1560,7 +1560,7 @@
       ctx.strokeStyle = "#3A3A44"; ctx.lineWidth = 1;
       ctx.beginPath(); ctx.moveTo(xStart, pC); ctx.lineTo(xEnd, pC); ctx.stroke();
       ctx.beginPath(); ctx.moveTo(xStart, fC); ctx.lineTo(xEnd, fC); ctx.stroke();
-      this._graphAxis(xStart, pC, L, "mv");    // momentum glyph — corner at the ball's start x, on p=0
+      this._graphAxis(xStart, pC, L, "mrdot_y");  // momentum glyph — corner at the ball's start x, on p=0
       this._graphAxis(xStart, fC, L, "F_y");   // force glyph — corner at the ball's start x, on F=0
       if (this.hist.length > 1) {
         ctx.fillStyle = withAlpha(HOUSE.normal, 0.32); ctx.beginPath(); ctx.moveTo(X(this.hist[0].x), fC);
@@ -1583,7 +1583,19 @@
       ctx.beginPath(); ctx.moveTo(ox + L, oy2); ctx.lineTo(ox + L - L * 0.16, oy2 - L * 0.11); ctx.lineTo(ox + L - L * 0.16, oy2 + L * 0.11); ctx.closePath(); ctx.fill();
       const fs = L * 0.46; ctx.font = "italic " + fs + "px " + HOUSE.fontMono; ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
       const lx = ox + L * 0.20, ly = oy2 - L * 0.56;   // sit the label mid-arrow, clear of the play-area border above
-      if (vlabel.indexOf("_") >= 0) { const p = vlabel.split("_");   // e.g. F_y → base + subscript
+      // `mrdot_y` — a MOMENTUM COMPONENT: m, r with an overdot, then the component subscript
+      // (Daniel, 2026-09-09; replaces the old `mv`). The dot is drawn, not typed, for the same reason
+      // _mrdotLabel draws it — the mono font is whatever the browser resolves, and an accented r is
+      // not safe to assume. Canvas gives us measureText, so the positions are measured, not guessed.
+      if (vlabel.indexOf("rdot_") >= 0) { const sub = vlabel.split("_")[1];
+        ctx.fillText("m", lx, ly);
+        const rx = lx + ctx.measureText("m").width, rw = ctx.measureText("r").width;
+        ctx.fillText("r", rx, ly);
+        ctx.beginPath(); ctx.arc(rx + rw * 0.5, ly - fs * 0.72, fs * 0.07, 0, TAU); ctx.fill();
+        ctx.font = "italic " + (fs * 0.66) + "px " + HOUSE.fontMono;
+        ctx.fillText(sub, rx + rw, ly + fs * 0.22);
+        ctx.font = "italic " + fs + "px " + HOUSE.fontMono;
+      } else if (vlabel.indexOf("_") >= 0) { const p = vlabel.split("_");   // e.g. F_y → base + subscript
         ctx.fillText(p[0], lx, ly); const bw = ctx.measureText(p[0]).width;
         ctx.font = "italic " + (fs * 0.66) + "px " + HOUSE.fontMono; ctx.fillText(p[1], lx + bw, ly + fs * 0.22);
         ctx.font = "italic " + fs + "px " + HOUSE.fontMono;
@@ -1593,11 +1605,16 @@
     }
   }
 
+  // Play only. The horizontal drift is PINNED at DeflectGame's own `vx` (3 m/s) and has no control
+  // (2026-09-06). It used to be a slider, and it was the source of the game's only real glitchiness:
+  // `vx` is read live by _advance() while a round is running, so nudging it mid-flight moved the ball's
+  // x without moving the graph's x-origin with it, and the force pulse landed under the wrong part of
+  // the curve. Difficulty was never the point of the control — the bats are — so the fix is to remove it
+  // rather than to freeze it at Play.
   const DEFLECT_CONTROLS_HTML = `
       <canvas class="simcanvas"></canvas>
       <div class="simctrls">
         <button class="simbtn play">▶ Play</button>
-        <label><span class="var"><i>ẋ</i>:</span> <input type="range" class="s-u" min="2" max="5" step="0.5"><input type="number" class="n-u" step="0.5"><span class="u">m/s</span></label>
       </div>`;
   function mountDeflect(section) {
     if (!section.querySelector(".simcanvas")) section.insertAdjacentHTML("beforeend", DEFLECT_CONTROLS_HTML);
@@ -1606,15 +1623,6 @@
     const q = s => section.querySelector(s);
     const readonly = window.self !== window.top;
     const playBtn = q(".play");
-    // ẋ slider: the ball's horizontal drift — slower is easier, faster is harder (3 = middle). Labeled
-    // as the signed component `ẋ` rather than the magnitude `|ṙ|` (Daniel, 2026-09-04): everything else
-    // on this slide is component algebra (the graph reads p and F_y), so the control should be too.
-    const su = q(".s-u"), nu = q(".n-u"), clampU = v => Math.max(+su.min, Math.min(+su.max, v));
-    su.value = sim.vx; nu.value = sim.vx;
-    const applyU = () => { sim.vx = +su.value; };
-    su.addEventListener("input", () => { nu.value = su.value; applyU(); });
-    nu.addEventListener("input", () => { const v = parseFloat(nu.value); if (isNaN(v)) return; su.value = clampU(v); applyU(); });
-    nu.addEventListener("change", () => { const v = parseFloat(nu.value); nu.value = isNaN(v) ? su.value : clampU(v); su.value = nu.value; applyU(); });
     // Play only. It disables while the round is live; when the round ends it re-enables as "Play again".
     const refreshPlay = () => {
       if (sim.running) { playBtn.disabled = true; playBtn.textContent = "Playing…"; }
@@ -1622,7 +1630,7 @@
     };
     sim.refreshPlayBtn = refreshPlay;
     playBtn.addEventListener("click", () => { if (!sim.running) { sim.play(); refreshPlay(); } });
-    if (readonly) { canvas.style.pointerEvents = "none"; playBtn.disabled = true; [su, nu].forEach(e => { if (e) e.disabled = true; }); const c = q(".simctrls"); if (c) c.style.opacity = ".4"; }
+    if (readonly) { canvas.style.pointerEvents = "none"; playBtn.disabled = true; const c = q(".simctrls"); if (c) c.style.opacity = ".4"; }
     let raf = null, prev = sim.running;
     sim.start = () => { if (raf) return; const loop = (now) => { sim.step(now); if (sim.running !== prev) { prev = sim.running; refreshPlay(); } raf = requestAnimationFrame(loop); }; raf = requestAnimationFrame(loop); };
     sim.stop = () => { if (raf) { cancelAnimationFrame(raf); raf = null; } };
@@ -1632,16 +1640,28 @@
 
   // ============================================================================================
   // Circular (data-sim="circle") — constant-speed circular motion, centripetal force, and a rotating
-  // momentum inset. Speed (hence |p|) is constant, but v's DIRECTION turns, so p changes → there must
-  // be a force. The inset's momentum vector holds its length and sweeps a full circle once per orbit
-  // (T = 2πr/v); the swept circumference 2π|p| over T gives |F| = pv/r = mv²/r. Sliders: v and r; the
-  // readout shows the centripetal force only.
+  // momentum inset. Speed (hence |m ṙ|) is constant, but ṙ's DIRECTION turns, so m ṙ changes → there
+  // must be a force. The inset's momentum vector holds its length and sweeps a full circle once per
+  // orbit.
+  //
+  // PARAMETRIZED BY FREQUENCY AND AMPLITUDE, not speed and radius (Daniel, 2026-09-09). The opening
+  // narrative is now the one the pre-baked clips set up:
+  //     r = A ⟨sin 2πft, cos 2πft⟩   ⇒   r̈ = −A(2πf)² ⟨sin 2πft, cos 2πft⟩ = −(2πf)² r
+  // so the acceleration points back at the center with magnitude A(2πf)² — read straight off the
+  // position by differentiating twice, with no need to talk about speed at all. The sliders are
+  // therefore the two things in that formula, f and A; speed is a DERIVED quantity here
+  // (v = 2πfA, the `v` getter) and |F| = mA(2πf)² follows, which is the familiar mv²/A rearranged.
+  // The readout shows the centripetal force only.
   // ============================================================================================
+  // Slider limits live here AND in CIRC_V_MAX, which scales the momentum inset so the arrow still
+  // tops out at 1.5 frame-units. Change a range and change this: 2π · f_max · A_max.
+  const CIRC_F_MAX = 0.5, CIRC_A_MAX = 3, CIRC_V_MAX = TAU * CIRC_F_MAX * CIRC_A_MAX;
   class Circular extends SimBase {
     constructor(canvas, opts = {}) {
       super(canvas);
       this.discMinPx = 1.5;                                        // this sim draws in screen coords (identity sx/sy)
-      this.mass = 1; this.v = opts.v ?? 4; this.a = opts.a ?? 3;   // a = radius (constant); r stays the position vector
+      // f (Hz) and a (the amplitude A, meters) are the ONLY free parameters — see the class comment.
+      this.mass = 1; this.f = opts.f ?? 0.2; this.a = opts.a ?? 3;
       this.theta = 0; this.everPlayed = false; this.running = false; this.paused = false;
       this.released = false; this.frozenTheta = 0; this.freeX = 0; this.freeY = 0; this.freeVX = 0; this.freeVY = 0;
       this.posHist = []; this.now = 0;                // true recent positions → motion-blur reflects the real path
@@ -1660,7 +1680,11 @@
       this.render();
     }
     sx(x) { return x; }  sy(y) { return y; }   // this sim computes screen coords directly → identity for the shared _disc
-    get Fc() { return this.mass * this.v * this.v / this.a; }   // centripetal force, m=1
+    // Derived from (f, a). `v` stays a getter rather than a field so the momentum inset and the
+    // Zero-Force tangent keep reading a speed without knowing the sim is driven by frequency.
+    get omega() { return TAU * this.f; }
+    get v() { return this.a * this.omega; }                      // |ṙ| = 2πfA
+    get Fc() { return this.mass * this.a * this.omega * this.omega; }   // m A (2πf)², m=1
     _ballScreen() { return { x: this.ccx + this.a * this.orbScale * Math.cos(this.theta), y: this.ccy - this.a * this.orbScale * Math.sin(this.theta) }; }
     play() { this.running = true; this.paused = false; this.everPlayed = true; this.last = performance.now(); }
     reset() { this.running = false; this.paused = false; this.released = false; this.theta = 0; this.posHist = []; this.render(); }
@@ -1683,7 +1707,7 @@
           this.freeX += this.freeVX * dt; this.freeY += this.freeVY * dt;
           if (this.freeX < -300 || this.freeX > this.W + 300 || this.freeY < -300 || this.freeY > this.H + 300) this.running = false;  // gone; stays off until Reset
         } else {
-          this.theta += (this.v / this.a) * dt;        // ω = v/a, CCW
+          this.theta += this.omega * dt;               // ω = 2πf, CCW
         }
         const bp = this.released ? { x: this.freeX, y: this.freeY } : this._ballScreen();
         this._recordPos(bp.x, bp.y, now);        // record the true path (circle, then straight after release)
@@ -1736,7 +1760,7 @@
     }
     _momentumInset() {
       const ctx = this.ctx, s = this.scale, ox = this.insX, oy = this.insY;
-      const pScale = (s * 1.5) / 6, pLen = this.v * pScale;     // |m ṙ| = v (m=1); v ≤ 6 → arrow ≤ 1.5 frame-units
+      const pScale = (s * 1.5) / CIRC_V_MAX, pLen = this.v * pScale;   // |m ṙ| = v (m=1) → arrow ≤ 1.5 frame-units
       ctx.save(); ctx.strokeStyle = "rgba(255,255,255,0.28)"; ctx.lineWidth = 1;
       ctx.beginPath(); ctx.moveTo(ox - s * 1.7, oy); ctx.lineTo(ox + s * 1.7, oy);
       ctx.moveTo(ox, oy + s * 1.7); ctx.lineTo(ox, oy - s * 1.7); ctx.stroke();
@@ -1764,20 +1788,20 @@
         <button class="simbtn play">▶ Play</button>
         <button class="simbtn zerof">Zero Force</button>
         <button class="simbtn reset">↺ Reset</button>
-        <label><span class="var">|<i>ṙ</i>|:</span> <input type="range" class="s-v" min="1" max="6" step="0.5"><input type="number" class="n-v" step="0.5"><span class="u">m/s</span></label>
-        <label><span class="var"><i>ℓ</i>:</span> <input type="range" class="s-a" min="1.5" max="3" step="0.1"><input type="number" class="n-a" step="0.1"><span class="u">m</span></label>
+        <label><span class="var"><i>f</i>:</span> <input type="range" class="s-f" min="0.1" max="0.5" step="0.05"><input type="number" class="n-f" step="0.05"><span class="u">Hz</span></label>
+        <label><span class="var"><i>A</i>:</span> <input type="range" class="s-a" min="1.5" max="3" step="0.1"><input type="number" class="n-a" step="0.1"><span class="u">m</span></label>
       </div>`;
   function mountCircle(section) {
     if (!section.querySelector(".simcanvas")) section.insertAdjacentHTML("beforeend", CIRCLE_CONTROLS_HTML);
     const d = section.dataset;
     const canvas = section.querySelector(".simcanvas");
-    const sim = new Circular(canvas, { v: d.v !== undefined ? +d.v : 4, a: d.a !== undefined ? +d.a : 3 });
+    const sim = new Circular(canvas, { f: d.f !== undefined ? +d.f : 0.2, a: d.a !== undefined ? +d.a : 3 });
     const q = s => section.querySelector(s);
     const readonly = window.self !== window.top;
-    const rng = { v: q(".s-v"), a: q(".s-a") }, num = { v: q(".n-v"), a: q(".n-a") };
+    const rng = { f: q(".s-f"), a: q(".s-a") }, num = { f: q(".n-f"), a: q(".n-a") };
     const clamp = (el, v) => Math.max(+el.min, Math.min(+el.max, v));
-    const apply = () => { sim.v = +rng.v.value; sim.a = +rng.a.value; sim.render(); };
-    rng.v.value = sim.v; rng.a.value = sim.a;
+    const apply = () => { sim.f = +rng.f.value; sim.a = +rng.a.value; sim.render(); };
+    rng.f.value = sim.f; rng.a.value = sim.a;
     Object.keys(rng).forEach(k => { const s = rng[k], n = num[k]; n.value = s.value;
       s.addEventListener("input", () => { n.value = s.value; apply(); });
       n.addEventListener("input", () => { const v = parseFloat(n.value); if (isNaN(v)) return; s.value = clamp(s, v); apply(); });

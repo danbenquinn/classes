@@ -142,8 +142,43 @@
                 z-index:6; pointer-events:none;
                 opacity:.92; filter:drop-shadow(0 2px 14px rgba(0,0,0,.85)); }
 
+  /* WALK-IN QR CARD (.qrcard) — a QR any slide can carry, for a page students open on their own
+     phones while the room fills: the anonymous course survey (slide-suite/poll/SURVEY.md) is the
+     first one. Deliberately NOT the poll's `.poll .qr`, which is furniture of the poll slide type and
+     pinned top-right beside the choices; this is a corner card that sits over whatever the slide is
+     already showing.
+
+     BOTTOM-RIGHT, and that corner is not arbitrary: `#attrib` and `#slidecap` are pinned lower-LEFT
+     (placeAttrib/placeCap), the exit-quiz overlay is lower-left, and `.coursestrip` owns the top edge.
+     Bottom-right is the one corner of a warm-up slide with nothing in it.
+
+     White panel for the same reason the poll's is white — a QR wants a light quiet zone, and a code
+     rendered onto house black is a code a phone will not read from the third row.
+
+     `publish_deck.py` strips the whole card from the published deck (see QRCARD there): the page it
+     points at is open for one class hour, so on the site the same markup is a dead link. That strip is
+     LINE-BASED, which is why the card is written as a single line in the deck HTML. */
+  .reveal .slides section .qrcard{ position:absolute; right:3%; bottom:5%; z-index:7;
+                background:#fff; padding:12px 14px 8px; border-radius:12px; text-align:center;
+                box-shadow:0 4px 22px rgba(0,0,0,.55); }
+  .reveal .slides section .qrcard .qc-title{ color:#111; font-size:.4em; font-weight:600;
+                line-height:1.25; max-width:240px; margin:0 auto 9px; }
+  .reveal .slides section .qrcard .qrimg{ width:240px; height:240px; }
+  .reveal .slides section .qrcard .qrimg img{ width:240px !important; height:240px !important;
+                display:block; max-width:none; max-height:none; margin:0; border:0; box-shadow:none; }
+  .reveal .slides section .qrcard .qrimg canvas{ display:none; }
+  .reveal .slides section .qrcard .scan{ color:#111; opacity:.7; font-size:.34em; margin-top:7px; }
+
   /* Shared full-viewport media layer (outside reveal's scaled slides) */
   #media-layer{ position:absolute; inset:0; z-index:5; background:#000; display:none; overflow:hidden; cursor:pointer; }
+  /* data-mediabg with a LIGHT color (deck.js reads its luminance): the caption and the attribution
+     badge are white everywhere else because everything else sits on black, so on a white media
+     ground they vanish. Flip both to the deck's dark ink. Only the text — the badge's logo is a
+     bitmap and is left as it is.
+     NOT .capfixed — that variant already carries its own dark pill, so its white text is correct on
+     any ground and flipping it would be dark-on-dark. */
+  .reveal:has(#media-layer.lightbg) #slidecap:not(.capfixed),
+  .reveal:has(#media-layer.lightbg) #attrib .u{ color:#14141a; text-shadow:none; }
   #starfield{ position:absolute; inset:0; display:none; pointer-events:none; }   /* toggled on by data-stars slides */
   #starfield span{ position:absolute; border-radius:50%; background:#fff; }
   /* Exit-quiz overlay (final slide): revealed on advance, bottom-left, above the media layer */
