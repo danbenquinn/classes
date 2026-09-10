@@ -59,6 +59,10 @@
   --arrow-min-stem-k: 0.0;
   --crosshair-half: 0.02;
 
+  /* axes */
+  --axes-arm: 0.14;
+  --axes-label-gap: 0.028;
+
   /* drawn spring coil (OBJECTS 'Spring') — read by the canvas sim */
   --spring-coils: 14;
   --spring-coils-min: 10;

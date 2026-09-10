@@ -158,6 +158,28 @@
     return (0.2126*r + 0.7152*g + 0.0722*b) / 255 > 0.55;
   }
 
+  // data-mediax: where a LETTERBOXED clip sits across the frame — `left`, `center` (the default),
+  // `right`, or a percentage, read like the x half of CSS `object-position`. The number is a fraction
+  // of the pillarbox SLACK, so it does nothing at all to a clip that already fills the width, and a
+  // slide without the attribute is byte-identical to before.
+  //
+  // It exists for the walk-in QR card (deck.css `.qrcard`), which is pinned bottom-right because that
+  // is the one corner the other furniture leaves free — and then sat on top of Class F's 4:3
+  // spray-paint clip, which is the one thing in the frame worth looking at. Pushing that clip `left`
+  // moves the whole pillarbox to the other side and the card lands on black. There is no vertical
+  // twin on purpose: everything that collides with media lives in the bottom corners, and lifting a
+  // clip to dodge it would cost the same pixels it saves.
+  function mediaXFrac(){
+    const cur = Reveal.getCurrentSlide();
+    const v = cur && cur.dataset.mediax;
+    if(!v) return 0.5;
+    if(v === 'left')   return 0;
+    if(v === 'center') return 0.5;
+    if(v === 'right')  return 1;
+    const pct = parseFloat(v);
+    return isNaN(pct) ? 0.5 : Math.max(0, Math.min(1, pct / 100));
+  }
+
   function contain(el, w, h){
     if(!w || !h) return;
     const LW = layer.clientWidth, LH = layer.clientHeight;
@@ -168,7 +190,7 @@
     // say "this is a document sitting on a surface" and costs almost nothing in size.
     const pad = layer.classList.contains('lightbg') ? Math.round(LH * 0.04) : 0;
     const s = Math.min((LW - 2*pad)/w, (LH - 2*pad)/h), dw = w*s, dh = h*s;
-    const left = (LW-dw)/2, top = (LH-dh)/2;
+    const left = pad + (LW - 2*pad - dw) * mediaXFrac(), top = (LH-dh)/2;
     el.style.width = dw+'px'; el.style.height = dh+'px';
     el.style.left = left+'px'; el.style.top = top+'px';
     mrect = {x:left, y:top, w:dw, h:dh};

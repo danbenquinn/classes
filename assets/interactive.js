@@ -105,6 +105,11 @@
     get sizeSubtitle() { return cnum("--size-subtitle", 0.055); },
     get sizeBody()     { return cnum("--size-body",     0.04);  },
     get sizeCaption()  { return cnum("--size-caption",  0.03);  },
+    // The coordinate glyph (OBJECTS.md 'Coordinate axes'): arm length and label offset as fractions
+    // of frame height. Everything else it draws — arrowhead, stroke, label type, ink — is the house's
+    // ordinary arrow and label, on purpose.
+    get axesArm()      { return cnum("--axes-arm",       0.14);  },
+    get axesLabelGap() { return cnum("--axes-label-gap", 0.028); },
     // initial-velocity CUE (the draggable idle-sim velocity handle) — house tokens (tokens.json 'interaction')
     get velWorldPerMS() { return cnum("--vel-scale", 0.2);   },   // arrow length: world units per (m/s) of v0 (a wide-frame sim may override per its own framing)
     get velCueDash()    { return cnum("--cue-dash",  0.011); },   // dashed-shaft on-length, fraction of frame height (px = frac × canvas-height)
@@ -234,6 +239,42 @@
     }
     // House Crosshair (OBJECTS.md): a small pearl `+` at a fixed point (circle center, attractor, pivot).
     // Token half-length, pearl, 2 px. SCREEN center (cx, cy). The ONE crosshair — sims must not hand-roll it.
+    // COORDINATE AXES (OBJECTS.md). A small POSITIVE-ONLY pair of arrows from an origin, one word or
+    // symbol at each tip, and nothing else: no negative arms, no ticks, no numbers. It says which way
+    // the quantities go without pretending to be a plot — a glyph that has to be READ is a graph, and
+    // a graph is a different object.
+    //
+    // Promoted here on 2026-09-10 from render/energygraph.py, which had drawn it alone since 2026-08.
+    // `labels` are drawn ITALIC when they are single-letter symbols (x, y, t) and upright when they
+    // are words (time, energy) — the Label convention, italic reads as maths.
+    // Screen coordinates in, because the sims that want it do not agree about world coordinates.
+    _axesGlyph(ox, oy, xLabel, yLabel) {
+      // arm/gap are frame-HEIGHT fractions (the glyph's own tokens); the arrowhead and stroke are the
+      // house arrow's, which are WORLD units and scale with `this.scale` like every other arrow here.
+      const ctx = this.ctx, arm = HOUSE.axesArm * this.H, gap = HOUSE.axesLabelGap * this.H;
+      const hl = HOUSE.arrowHeadLen * this.scale, hw = HOUSE.arrowHeadHW * this.scale;
+      ctx.save();
+      ctx.strokeStyle = HOUSE.ink; ctx.fillStyle = HOUSE.ink;
+      ctx.lineWidth = Math.max(1.5, HOUSE.arrowStroke * this.scale);
+      ctx.lineCap = "butt"; ctx.lineJoin = "miter";
+      const stem = (dx, dy) => {
+        ctx.beginPath(); ctx.moveTo(ox, oy);
+        ctx.lineTo(ox + dx * (arm - hl * 0.9), oy + dy * (arm - hl * 0.9)); ctx.stroke();
+        const tx = ox + dx * arm, ty = oy + dy * arm, bx = tx - dx * hl, by = ty - dy * hl;
+        ctx.beginPath(); ctx.moveTo(tx, ty);
+        ctx.lineTo(bx - dy * hw, by + dx * hw); ctx.lineTo(bx + dy * hw, by - dx * hw);
+        ctx.closePath(); ctx.fill();
+      };
+      stem(1, 0); stem(0, -1);
+      const italic = t => (t && t.length === 1 ? "italic " : "");
+      ctx.font = italic(xLabel) + (HOUSE.sizeCaption * this.H) + "px " + HOUSE.fontSans;
+      ctx.textAlign = "center"; ctx.textBaseline = "top";
+      if (xLabel) ctx.fillText(xLabel, ox + arm, oy + gap);
+      ctx.font = italic(yLabel) + (HOUSE.sizeCaption * this.H) + "px " + HOUSE.fontSans;
+      ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      if (yLabel) ctx.fillText(yLabel, ox - gap * 0.55, oy - arm);
+      ctx.restore();
+    }
     _crosshairAt(cx, cy) {
       const ctx = this.ctx, ch = HOUSE.crosshairHalf * this.scale;
       ctx.save(); ctx.strokeStyle = HOUSE.mass; ctx.globalAlpha = 0.9; ctx.lineWidth = 2;
@@ -2198,6 +2239,10 @@
       // and hidden on purpose — the three regimes depend on zeta ALONE, and a student who can reach k
       // will reach for it instead of answering the question the board just posed.
       this.damped = !!opts.damped; this.zeta = opts.zeta ?? 0;
+      // The letter this sim's coordinate goes by in the readout. Default "x", because that is what
+      // every deck said before Class F moved its boardwork into y (2026-09-09) — a slide opts in with
+      // data-axis="y" rather than the engine changing under classes that did not ask.
+      this.axis = opts.axis || "x";
       this.d = 0;                       // displacement about the (gravity-shifted) equilibrium, meters
       this.v = 0;                       // damped variant only: integrated velocity, m/s
       this.amp = 0; this.phase = 0; this.oscillating = false; this.dragging = false;
@@ -2368,7 +2413,14 @@
         ? [`ζ = ${this.zeta.toFixed(2)}`, this.regime,
            this.zeta < 1 ? `√(ω²−γ²) = ${this.omegaD.toFixed(2)} rad/s` : `no oscillation`]
         : [`f = ${this.freq.toFixed(2)} Hz`, `ω = ${this.omega.toFixed(2)} rad/s`];
-      if (this.hasGravity) lines.push(`x_eq = ${this.xeq.toFixed(2)} m`);
+      // The initial condition, which is the whole reason this panel exists in Class F: with omega read
+      // off the trace and this read off the mass, the general solution is fully determined and the
+      // room can write down the function governing the actual video. It is the RELEASE amplitude once
+      // the mass is oscillating and the live displacement while it is being dragged, so the number
+      // means "where you let go from" at every moment either way.
+      const a = this.axis;
+      lines.push(`${a}\u2080 = ${(this.oscillating ? this.amp : this.d).toFixed(2)} m`);
+      if (this.hasGravity) lines.push(`${a}_eq = ${this.xeq.toFixed(2)} m`);
       ctx.save(); ctx.font = fs + "px " + HOUSE.fontMono; ctx.textBaseline = "top";
       const pad = this.scale * 0.22; let w = 0; lines.forEach(l => w = Math.max(w, ctx.measureText(l).width));
       const lh = this.scale * 0.4, bx = this.W - w - pad * 2 - Math.max(this.scale * 1.6, 84), by = this.scale * 0.35;
@@ -2414,7 +2466,8 @@
     const d = section.dataset;
     const canvas = section.querySelector(".simcanvas");
     const sim = new Oscillator(canvas, { k: d.k !== undefined ? +d.k : (grav ? 11 : 20), mass: d.mass !== undefined ? +d.mass : (grav ? 0.4 : 1), gravity: grav, g: 0,
-                                         damped: damp, zeta: damp ? +d.zeta : 0 });
+                                         damped: damp, zeta: damp ? +d.zeta : 0,
+                                         axis: d.axis });
     const q = s => section.querySelector(s);
     const readonly = window.self !== window.top;
     const rng = {}, num = {};
@@ -2791,6 +2844,136 @@
     if (readonly) { canvas.style.pointerEvents = "none"; [playBtn, q(".reset"), slo, rt, rng.u, rng.v, num.u, num.v].forEach(el => { if (el) el.disabled = true; }); const c = q(".simctrls"); if (c) c.style.opacity = ".4"; }
     let raf = null, prev = sim.running;
     sim.start = () => { if (raf) return; const loop = (now) => { sim.step(now); if (sim.running !== prev) { prev = sim.running; refreshPlay(); } raf = requestAnimationFrame(loop); }; raf = requestAnimationFrame(loop); };
+    sim.stop = () => { if (raf) { cancelAnimationFrame(raf); raf = null; } };
+    window.addEventListener("resize", () => { sim.resize(); sim.render(); });
+    return sim;
+  }
+
+  // ============================================================================================
+  // Grab (data-sim="grab") — the bare 2-D attractor: drag the mass, let go, watch it oscillate.
+  //
+  // WHY A SEPARATE PRESET AND NOT AN OPTION ON Attractor2D (2026-09-09). This one is deliberately
+  // impoverished. It is shown in Class F BEFORE the equation is solved, between the vector statement
+  // F = -k r = m r¨ and the reduction to scalar components, and its entire job is to make the room
+  // expect an OSCILLATING solution before any algebra argues for one. Everything Attractor2D offers —
+  // sliders, Play, Reset, slow motion, the numeric readout, the dashed predicted ellipse — is either a
+  // parameter nobody has met yet or an answer to the question being asked. So: no controls, no
+  // numbers, no prediction. A mass, a crosshair, a green arrow, and a pointer.
+  //
+  // Released from REST, so the motion is a straight line through the center (x = x₀cos ωt,
+  // y = y₀cos ωt). That is the honest solution for a release from rest, and it is the one that reads
+  // as "oscillation" rather than as "orbit" — the circle is Class F's practice problem now, and
+  // meeting it here would give the answer away three slides early. It is also why there is no white
+  // trail: the house rule is that the trail is drawn on CURVED paths only (STYLE.md, "Body & motion"),
+  // and on a straight one the motion blur already carries the speed.
+  //
+  // A pointerdown ANYWHERE grabs. Not a hit test on the mass: this is driven live, at a lectern, on a
+  // projector, at whatever size the room's screen is, and a grab radius that feels generous on a
+  // laptop is a missed grab in front of thirty people. The mass comes to the pointer, which also makes
+  // "let go somewhere new" one gesture instead of two.
+  class Grab extends SimBase {
+    constructor(canvas, opts = {}) {
+      super(canvas);
+      this.discMinPx = 2;
+      this.k = opts.k ?? 4; this.mass = opts.mass ?? 1;
+      // AT THE ORIGIN, at rest, with a force arrow of zero length — the slide opens on nothing
+      // happening, which is the honest starting picture: no displacement, no force. The first thing
+      // the room sees is Daniel dragging it away and the green arrow growing out of the origin behind
+      // his cursor, which is the sentence -k*r makes.
+      this.x0d = opts.x0 ?? 0; this.y0d = opts.y0 ?? 0;
+      this.x0 = this.x0d; this.y0 = this.y0d;
+      this.held = false; this.running = false;
+      // THE ENGINE'S SIM CONTRACT (deck.js handleSim / smartNext): stop · reset · everPlayed · resize ·
+      // render · start, with play() optional. `everPlayed` starts TRUE because there is nothing here to
+      // play — the slide is live the moment it appears. Left false, deck.js swallows the first → as
+      // "play the sim" and the arrow key appears dead in front of the room, which is exactly what it
+      // did on the first run of this preset.
+      this.everPlayed = true;
+      this.t = 0; this.last = 0; this.now = 0; this.L = null; this.posHist = [];
+      this.resize(); this._bindGrab();
+    }
+    play() {}                                   // nothing to start; the contract wants the method
+    reset() { this.held = false; this.running = false; this.t = 0; this.posHist = [];
+              this.x0 = this.x0d; this.y0 = this.y0d; this.render(); }
+    get omega() { return Math.sqrt(Math.max(1e-6, this.k / this.mass)); }
+    get radius() { return HOUSE.baseRadius; }
+    resize() {
+      const dpr = window.devicePixelRatio || 1, w = this.c.clientWidth || this.c.width, h = this.c.clientHeight || this.c.height;
+      this.c.width = Math.round(w * dpr); this.c.height = Math.round(h * dpr);
+      this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      this.W = w; this.H = h;
+      this.cx = w * 0.5; this.cy = h * 0.5;              // centered, unlike Attractor2D — no readout to leave room for
+      this.scale = (h * 0.32) / 3;                       // px/meter, same as Attractor2D so the two look alike
+      this.render();
+    }
+    sx(x) { return this.cx + x * this.scale; }
+    sy(y) { return this.cy - y * this.scale; }
+    _pos(t) { const L = this.L, w = L.omega, c = Math.cos(w * t); return { x: L.x0 * c, y: L.y0 * c }; }
+    release() {
+      this.L = { x0: this.x0, y0: this.y0, omega: this.omega };
+      this.t = 0; this.posHist = []; this.running = true; this.last = performance.now();
+    }
+    step(now) {
+      this.now = now;
+      if (this.running && !this.held) {
+        const dt = Math.min((now - this.last) / 1000, 0.05); this.last = now; this.t += dt;
+      }
+      this.render();
+    }
+    render() {
+      const ctx = this.ctx; ctx.clearRect(0, 0, this.W, this.H);
+      // The house coordinate glyph at the origin — small, positive-only, labeled. It is here rather
+      // than a Crosshair because a crosshair marks a POINT (an equilibrium, a pivot) and this origin
+      // is what the vector r is measured FROM: the beat is that one equation carries directions.
+      this._axesGlyph(this.cx, this.cy, "x", "y");
+      const active = this.running && !this.held;
+      const p = active ? this._pos(this.t) : { x: this.x0, y: this.y0 };
+      if (active) this._motionBlur(this.radius, k => { const tk = this.t - k * HOUSE.blurDt; return tk < 0 ? null : this._pos(tk); });
+      this._disc(p.x, p.y, this.radius, HOUSE.mass, 1);
+      // The restoring force, ENDING on the crosshair — its length is the distance from equilibrium, so
+      // F = -k r is legible as a picture before it is solved as an equation. Same call, same token, as
+      // the baked clips and Attractor2D.
+      this._forceToPointPx(this.sx(p.x), this.sy(p.y), this.cx, this.cy, HOUSE.spring, 1);
+    }
+    _bindGrab() {
+      const toWorld = (ev) => {
+        const r = this.c.getBoundingClientRect();
+        const px = (ev.clientX - r.left) / r.width * this.W, py = (ev.clientY - r.top) / r.height * this.H;
+        return { x: (px - this.cx) / this.scale, y: (this.cy - py) / this.scale };
+      };
+      const grabTo = (ev) => {
+        const w = toWorld(ev);
+        // Clamped to the frame so a drag off the edge cannot park the mass somewhere it will come
+        // back from at a speed nobody can follow.
+        this.x0 = Math.max(-5.6, Math.min(5.6, w.x));
+        this.y0 = Math.max(-3.2, Math.min(3.2, w.y));
+        this.render();
+      };
+      this.c.addEventListener("pointerdown", (ev) => {
+        this.held = true; this.c.setPointerCapture?.(ev.pointerId); grabTo(ev);
+      });
+      this.c.addEventListener("pointermove", (ev) => { if (this.held) grabTo(ev); });
+      const letGo = () => { if (!this.held) return; this.held = false; this.release(); };
+      this.c.addEventListener("pointerup", letGo);
+      this.c.addEventListener("pointercancel", letGo);
+      window.addEventListener("pointerup", letGo);
+    }
+  }
+
+  function mountGrab(section) {
+    // Canvas only. There is no controls row to build, which is the point of the preset.
+    if (!section.querySelector(".simcanvas")) section.insertAdjacentHTML("beforeend", '<canvas class="simcanvas"></canvas>');
+    const d = section.dataset;
+    const canvas = section.querySelector(".simcanvas");
+    const sim = new Grab(canvas, {
+      k:    d.k    !== undefined ? +d.k    : 4,
+      mass: d.mass !== undefined ? +d.mass : 1,
+      x0:   d.x0   !== undefined ? +d.x0   : undefined,
+      y0:   d.y0   !== undefined ? +d.y0   : undefined
+    });
+    if (window.self !== window.top) canvas.style.pointerEvents = "none";   // speaker-view copy: read-only
+    let raf = null;
+    sim.start = () => { if (raf) return; const loop = (now) => { sim.step(now); raf = requestAnimationFrame(loop); }; raf = requestAnimationFrame(loop); };
     sim.stop = () => { if (raf) { cancelAnimationFrame(raf); raf = null; } };
     window.addEventListener("resize", () => { sim.resize(); sim.render(); });
     return sim;
@@ -4674,7 +4857,7 @@
     "projectile", "elevator", "handlift", "normal", "handlift-energy", "handliftenergy",
     "projectile2d", "2d", "projectile2d-pair", "pair2d",
     "deflect", "game", "circle", "circular", "oscillator", "spring",
-    "oscillator-game", "springgame", "attractor2d", "attractor", "launcher", "launchergame",
+    "oscillator-game", "springgame", "attractor2d", "attractor", "grab", "launcher", "launchergame",
     "platformbounce", "frictionramp", "coupledmass"
   ]);
 
@@ -4703,6 +4886,7 @@
     if (kind === "oscillator" || kind === "spring") return mountOscillator(section);
     if (kind === "oscillator-game" || kind === "springgame") return mountSpringGame(section);
     if (kind === "attractor2d" || kind === "attractor") return mountAttractor2D(section);
+    if (kind === "grab") return mountGrab(section);
     if (kind === "launcher" || kind === "launchergame") return mountLauncherGame(section);
     if (kind === "platformbounce") return mountPlatformBounce(section);
     if (kind === "frictionramp") return mountFrictionRamp(section);
@@ -4875,5 +5059,5 @@
     return sim;
   }
 
-  window.Interactive = { Projectile, Projectile2D, HandLift, HandLiftEnergy, DeflectGame, Circular, Oscillator, SpringGame, Attractor2D, LauncherGame, PlatformBounce, FrictionRamp, CoupledMass, mount, HOUSE, betaOf, dragStep, dragAdvance, histAt };
+  window.Interactive = { Projectile, Projectile2D, HandLift, HandLiftEnergy, DeflectGame, Circular, Oscillator, SpringGame, Attractor2D, Grab, LauncherGame, PlatformBounce, FrictionRamp, CoupledMass, mount, HOUSE, betaOf, dragStep, dragAdvance, histAt };
 })();

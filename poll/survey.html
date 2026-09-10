@@ -51,6 +51,19 @@
                 color:var(--muted); margin-top:3px; }
   .choice.sel{ border-color:var(--accent); background:var(--sel-bg); }
 
+  /* CHECK-ALL-THAT-APPLY rows. Every other question advances on tap, so a row that merely TOGGLES
+     has to announce itself BEFORE it is touched — an empty box on the left does that, and the Next
+     button underneath says the screen is waiting for more than one answer. The tick is drawn from
+     two borders rather than typed, so it needs no glyph from a font that may not have loaded. */
+  .choice.check{ display:flex; align-items:flex-start; gap:12px; }
+  .choice.check .box{ position:relative; flex:0 0 auto; width:20px; height:20px; margin-top:2px;
+           border:1.5px solid var(--line); border-radius:6px; background:var(--raised); }
+  .choice.check.sel .box{ border-color:var(--accent); background:var(--accent); }
+  .choice.check.sel .box::after{ content:""; position:absolute; left:6px; top:2px;
+           width:4px; height:9px; border:solid var(--ink-on-color); border-width:0 2px 2px 0;
+           transform:rotate(45deg); }
+  .choice.check .txt{ flex:1 1 auto; }
+
   .act{ width:100%; padding:16px; margin-top:8px; border-radius:12px;
         border:1.5px solid var(--line); background:var(--card); font-size:1.05rem; font-weight:600; }
   .act.primary{ background:var(--accent); border-color:var(--accent); color:var(--ink-on-color); }
@@ -69,6 +82,7 @@
   /* ---- results screen (?k=) ---- */
   .qblock{ margin:0 0 26px; }
   .qhead{ font-size:.98rem; font-weight:600; line-height:1.35; margin:0 0 10px; }
+  .qnote{ font-weight:400; color:var(--muted); font-size:.86rem; }
   .row{ display:flex; align-items:baseline; justify-content:space-between; gap:1em;
         background:var(--card); border:1.5px solid var(--line); border-radius:10px;
         padding:9px 12px; margin-bottom:6px; font-size:.92rem; }
@@ -111,10 +125,15 @@
   const isAdmin = (qs.get("k") || "") === ADMIN_KEY;
   const COURSE  = "MAE 2501";
 
-  // The eight questions, in order, then the comments box. An option is a plain string, or
-  // [label, sub] when the parenthetical is what makes it unambiguous. Editing this list is the whole
-  // job of changing the survey — nothing else in the file knows how many questions there are or how
-  // many choices each one has.
+  // The questions, in order, then the comments box. An option is a plain string, or [label, sub]
+  // when the parenthetical is what makes it unambiguous. Editing this list is the whole job of
+  // changing the survey — nothing else in the file knows how many questions there are or how many
+  // choices each one has.
+  //
+  // `multi: true` makes a question CHECK-ALL-THAT-APPLY. Its stored answer is a bitmask (bit k set
+  // = option k ticked), which is still one smallint per question, so the table, sv_submit and
+  // sv_results are untouched by it — the results screen unpacks the mask. Bit 0 is the first
+  // option, so adding an option to the END of a multi question is safe and reordering one is not.
   const QUESTIONS = [
     { q:"In class, I can hear what DQ is saying…",
       opts:["almost never","sometimes","often enough","usually","almost always"] },
@@ -143,16 +162,26 @@
             ["Somewhat","let's keep trying it"],
             ["Love it","please keep this"]] },
 
+    { q:"How would you prefer we handle workshop groups?",
+      opts:[["Let us keep choosing","I'd like to keep choosing our own workshop groups"],
+            ["Assign them","I'd like to be assigned a random workshop group each week"]] },
+
+    { q:"Which workshop times would you be willing to attend?",
+      aside:"The workshops are currently sparser than they need to be, so we may reshuffle them. " +
+            "Check every session you could make — if the one you are signed up for is the only one " +
+            "that works, just check that one.",
+      multi:true,
+      opts:["Mondays 12\u20132pm","Tuesdays 12\u20132pm","Wednesdays 12\u20132pm"] },
+
+    // The last two are the summing-up, one for the workshops and one for the course, and they sit
+    // here on purpose: every question above asks about a piece of the thing, so a verdict asked
+    // first would be a verdict given before the student had been walked through what it is about.
     { q:"So far, the workshops have been…",
       opts:[["A waste of time","I learn basically nothing"],
             ["Not good","I don't learn much"],
             ["OK", null],
             ["Pretty good","I learn a few things"],
             ["A great use of time","I learn a lot"]] },
-
-    { q:"How rude is it that DQ eats his lunch during the workshop?",
-      aside:"He is sorry. He gets very hungry, but he will stop if needed.",
-      opts:["Not at all","Not really","Didn't even notice","Somewhat rude","How dare you"] },
 
     { q:"In general, I feel like this class is worth my time.",
       opts:["Strongly disagree","Disagree","Neutral","Agree","Strongly agree"] }
@@ -183,7 +212,7 @@
       '<h1>Anonymous course survey</h1>' +
       '<p class="body">How is this class going? Your answers are anonymous — no name, no computing ID, ' +
       'nothing stored on your phone, nothing that ties a response back to you.</p>' +
-      '<p class="body">Eight multiple-choice questions, then a box for anything else you want to say. ' +
+      '<p class="body">Nine quick questions, then a box for anything else you want to say. ' +
       'About a minute.</p>' +
       '<button class="act primary" id="go">Start</button>' +
       '<p class="body dim" style="margin-top:14px">Answer honestly — the point is to change the rest ' +
@@ -221,6 +250,47 @@
         setTimeout(function(){ step = i + 1; render(); }, 140);
       });
     });
+    if (i > 0) $("back").addEventListener("click", function(){ step = i - 1; render(); });
+  }
+
+  // A `multi` question cannot borrow the tap-to-advance above: the tap means "toggle", so the screen
+  // has to wait, and something has to say when the student is done. Next stays disabled until at
+  // least one box is ticked — the question is "which of these could you make", and no answer at all
+  // is not one of the things it is asking.
+  function multiQuestion(i){
+    const Q = QUESTIONS[i];
+    progress(i / STEPS);
+    kicker("Question " + (i + 1) + " of " + QUESTIONS.length);
+    let mask = answers[i] || 0;
+    show(
+      '<div class="prompt">' + esc(Q.q) + '</div>' +
+      (Q.aside ? '<div class="aside">' + esc(Q.aside) + '</div>' : '') +
+      '<div class="choices">' +
+      Q.opts.map(function(o, k){
+        const label = Array.isArray(o) ? o[0] : o;
+        const sub   = Array.isArray(o) ? o[1] : null;
+        const on    = (mask >> k) & 1;
+        return '<button class="choice check' + (on ? ' sel' : '') + '" data-k="' + k + '" ' +
+               'aria-pressed="' + (on ? 'true' : 'false') + '"><span class="box"></span>' +
+               '<span class="txt">' + esc(label) +
+               (sub ? '<span class="sub">' + esc(sub) + '</span>' : '') + '</span></button>';
+      }).join("") +
+      '</div>' +
+      '<button class="act primary" id="next"' + (mask ? '' : ' disabled') + '>Next</button>' +
+      (i > 0 ? '<button class="back" id="back">Back</button>' : '')
+    );
+    Array.prototype.slice.call(document.querySelectorAll(".choice")).forEach(function(b){
+      b.addEventListener("click", function(){
+        const k = parseInt(b.dataset.k, 10);
+        mask ^= (1 << k);
+        const on = (mask >> k) & 1;
+        b.classList.toggle("sel", !!on);
+        b.setAttribute("aria-pressed", on ? "true" : "false");
+        answers[i] = mask;
+        $("next").disabled = !mask;
+      });
+    });
+    $("next").addEventListener("click", function(){ if(mask){ step = i + 1; render(); } });
     if (i > 0) $("back").addEventListener("click", function(){ step = i - 1; render(); });
   }
 
@@ -274,7 +344,7 @@
 
   function render(){
     if (step < 0) return splash();
-    if (step < QUESTIONS.length) return question(step);
+    if (step < QUESTIONS.length) return (QUESTIONS[step].multi ? multiQuestion : question)(step);
     return commentScreen();
   }
 
@@ -300,8 +370,22 @@
     // that knows the shape of the survey.
     const n = data.n || 0;
     const grid = QUESTIONS.map(function(Q){ return new Array(Q.opts.length).fill(0); });
+    // How many people ANSWERED each question, which is not `n`. A question appended to the end of
+    // the list gets no value at all from responses collected before it existed, so its percentages
+    // have to be taken over its own answers rather than over the total — otherwise adding a question
+    // makes every EARLIER one look under-answered. (Appending is the only safe edit to a live list;
+    // SURVEY.md has the rule.)
+    const answered = QUESTIONS.map(function(){ return 0; });
     (data.tally || []).forEach(function(t){
-      if (grid[t.q] && t.c >= 0 && t.c < grid[t.q].length) grid[t.q][t.c] = t.n;
+      const Q = QUESTIONS[t.q];
+      if (!Q) return;
+      answered[t.q] += t.n;
+      if (Q.multi) {
+        // `c` is one respondent's BITMASK, so a single row feeds every option they ticked.
+        for (let k = 0; k < Q.opts.length; k++) if ((t.c >> k) & 1) grid[t.q][k] += t.n;
+      } else if (t.c >= 0 && t.c < Q.opts.length) {
+        grid[t.q][t.c] = t.n;
+      }
     });
 
     let html = '<div class="total">' + n + (n === 1 ? " response" : " responses") +
@@ -309,9 +393,13 @@
 
     QUESTIONS.forEach(function(Q, i){
       const counts = grid[i];
-      const tot = counts.reduce(function(a, b){ return a + b; }, 0);
+      // On a multi question the counts overlap, so their sum is a count of TICKS and dividing by it
+      // would make three boxes ticked by everyone read as 33% each. The denominator is people.
+      const tot = Q.multi ? answered[i] : counts.reduce(function(a, b){ return a + b; }, 0);
       const max = Math.max(1, Math.max.apply(null, counts));
-      html += '<div class="qblock"><div class="qhead">' + (i + 1) + '. ' + esc(Q.q) + '</div>' +
+      const note = Q.multi ? ' <span class="qnote">check all that apply · % of ' + answered[i] +
+                             (answered[i] === 1 ? ' answer' : ' answers') + '</span>' : '';
+      html += '<div class="qblock"><div class="qhead">' + (i + 1) + '. ' + esc(Q.q) + note + '</div>' +
         Q.opts.map(function(o, k){
           const label = Array.isArray(o) ? o[0] : o;
           const pct = tot ? Math.round(100 * counts[k] / tot) : 0;
