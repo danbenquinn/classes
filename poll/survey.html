@@ -89,6 +89,17 @@
   .row b{ font-weight:550; }
   .row span{ color:var(--muted); font-variant-numeric:tabular-nums; white-space:nowrap; }
   .bar{ height:4px; border-radius:2px; background:var(--accent); margin-top:6px; }
+  /* The coverage panel under a check-all question. Indented and quieter than the option rows
+     above it: those are the data, this is an answer computed FROM the data. */
+  .cover{ margin:14px 0 2px 0; padding:12px 14px; border-radius:10px;
+          background:rgba(255,255,255,.035); }
+  .cover .ch{ font-size:.86rem; font-weight:600; color:var(--muted); letter-spacing:.02em;
+              margin:0 0 8px; }
+  .cover .ch + .ch{ margin-top:16px; }
+  .cover .row{ padding:4px 0; border:0; }
+  .cover .row b{ font-weight:500; }
+  .cover .best b{ font-weight:650; }
+  .cover .lose{ color:var(--muted); }
   .total{ color:var(--muted); font-size:.9rem; margin:6px 0 20px; }
   .comment{ background:var(--card); border:1.5px solid var(--line); border-left:3px solid var(--accent);
             border-radius:10px; padding:11px 13px; margin-bottom:8px;
@@ -382,6 +393,64 @@
       });
   }
 
+  // WHAT A CHECK-ALL QUESTION IS ACTUALLY FOR. "Which workshop times could you attend?" is not asked
+  // to learn that 60% could do Mondays; it is asked to decide whether three sessions can become two.
+  // Per-option percentages cannot answer that — they overlap, and the overlap is the whole question.
+  // What answers it is: for each shortlist of days, how many people can still make AT LEAST ONE, and
+  // how many are left with none. That is a property of the combinations, and the combinations are
+  // exactly what the bitmask preserves.
+  //
+  // Shown for every shortlist one or two options SHORTER than the full set — "drop one", "drop two" —
+  // which for three options is the three pairs and the three singles, and for a longer question stays
+  // a readable table rather than every subset of a power set.
+  function coverageRows(Q, counts){
+    const k = Q.opts.length;
+    const name = function(o){ return Array.isArray(o) ? o[0] : o; };
+    let tot = 0, none = 0;
+    for (const m in counts) { tot += counts[m]; if (Number(m) === 0) none += counts[m]; }
+    const out = [];
+    for (let sub = 1; sub < (1 << k) - 1; sub++) {
+      let size = 0;
+      for (let b = 0; b < k; b++) if ((sub >> b) & 1) size++;
+      if (size < k - 2) continue;
+      let cov = 0;
+      for (const m in counts) if (Number(m) & sub) cov += counts[m];
+      out.push({ sub: sub, size: size, cov: cov,
+                 label: Q.opts.filter(function(_, b){ return (sub >> b) & 1; }).map(name).join(" + ") });
+    }
+    // Best coverage first, and among equals the SMALLER shortlist — fewer sessions for the same
+    // reach is strictly better, and that is the decision being made.
+    out.sort(function(a, b){ return b.cov - a.cov || a.size - b.size; });
+    return { rows: out, tot: tot, none: none };
+  }
+
+  function coverageBlock(Q, counts){
+    const c = coverageRows(Q, counts);
+    if (!c.tot) return "";
+    const name = function(o){ return Array.isArray(o) ? o[0] : o; };
+    let h = '<div class="cover"><div class="ch">If we kept only these — who could still make one</div>';
+    h += c.rows.map(function(r, i){
+      const lost = c.tot - r.cov;
+      return '<div class="row' + (i === 0 ? ' best' : '') + '"><b>' + esc(r.label) + '</b>' +
+             '<span>' + r.cov + ' of ' + c.tot +
+             (lost ? ' · <span class="lose">' + lost + ' left out</span>' : ' · everyone') +
+             '</span></div>';
+    }).join("");
+
+    // The raw combinations, because the table above is a summary and this is what it was computed
+    // from — and because "eight people can ONLY do Tuesday" is the kind of fact that changes a
+    // decision and is invisible in any percentage.
+    const combos = Object.keys(counts).map(Number).sort(function(a, b){ return counts[b] - counts[a]; });
+    h += '<div class="ch">Exactly what people ticked</div>';
+    h += combos.map(function(m){
+      const label = m === 0 ? "nothing ticked"
+        : Q.opts.filter(function(_, b){ return (m >> b) & 1; }).map(name).join(" + ");
+      const only = m && (m & (m - 1)) === 0 ? " only" : "";
+      return '<div class="row"><b>' + esc(label + only) + '</b><span>' + counts[m] + '</span></div>';
+    }).join("");
+    return h + '</div>';
+  }
+
   function renderResults(data){
     // Pivot the flat {q, c, n} rows the RPC returns into per-question counts. Doing the pivot here
     // rather than in SQL keeps the function trivial to read and leaves QUESTIONS as the single place
@@ -394,6 +463,14 @@
     // makes every EARLIER one look under-answered. (Appending is the only safe edit to a live list;
     // SURVEY.md has the rule.)
     const answered = QUESTIONS.map(function(){ return 0; });
+    // The per-respondent BITMASKS of a check-all question, kept rather than only summed. The tally
+    // already arrives as one row per distinct mask, so the joint answer — who ticked Mondays AND
+    // Wednesdays, as opposed to how many ticked each — is in hand and the old display simply threw
+    // it away. For one question, a distribution over masks IS the complete information: seeing the
+    // individual rows would tell you nothing more, which is why this needs no new SQL and no loss of
+    // anonymity. (What it CANNOT show is a correlation between two questions; the tally is
+    // per-question and deliberately so.)
+    const masks = QUESTIONS.map(function(){ return {}; });
     (data.tally || []).forEach(function(t){
       const Q = QUESTIONS[t.q];
       if (!Q) return;
@@ -401,6 +478,7 @@
       if (Q.multi) {
         // `c` is one respondent's BITMASK, so a single row feeds every option they ticked.
         for (let k = 0; k < Q.opts.length; k++) if ((t.c >> k) & 1) grid[t.q][k] += t.n;
+        masks[t.q][t.c] = (masks[t.q][t.c] || 0) + t.n;
       } else if (t.c >= 0 && t.c < Q.opts.length) {
         grid[t.q][t.c] = t.n;
       }
@@ -425,7 +503,7 @@
                  '<div class="bar" style="width:' + (counts[k] / max * 100).toFixed(1) + '%;' +
                  (counts[k] ? '' : 'opacity:.2;') + '"></div></div>' +
                  '<span>' + counts[k] + ' · ' + pct + '%</span></div>';
-        }).join("") + '</div>';
+        }).join("") + (Q.multi ? coverageBlock(Q, masks[i]) : "") + '</div>';
     });
 
     const cs = data.comments || [];
