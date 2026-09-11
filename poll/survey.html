@@ -197,6 +197,20 @@
   const supa = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   const esc  = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 
+  // WHY AN ERROR HAS A KIND. "Couldn't send — tap again" is the right thing to say when the phone
+  // lost signal for a second, and exactly the wrong thing to say when the database function does not
+  // exist: the student taps again forever and the page never tells anyone what is actually wrong.
+  // That is not hypothetical — on 2026-09-11 the survey was live, taken all the way to the last
+  // screen, and failing with "tap again" because `survey-setup.sql` had never been run against the
+  // project. PostgREST says so plainly in `code`; the page just was not listening.
+  function kindOf(err){
+    const code = (err && err.code) || "";
+    const msg  = (err && err.message) || "";
+    if (code === "PGRST202" || /schema cache|function .* does not exist/i.test(msg)) return "nobackend";
+    if (/closed/i.test(msg)) return "closed";
+    return "transient";
+  }
+
   function show(html){ $("screen").innerHTML = html; window.scrollTo(0,0); }
   function progress(f){ $("progbar").style.width = Math.max(0, Math.min(1, f)) * 100 + "%"; }
   function kicker(t){ $("kicker").textContent = t || ""; }
@@ -326,10 +340,14 @@
       .catch(function(err){
         sending = false;
         $("send").disabled = false;
+        const k = kindOf(err);
         $("note").className = "note err";
-        $("note").textContent = /closed/i.test((err && err.message) || "")
-          ? "This survey has been closed."
-          : "Couldn't send — tap again.";
+        $("note").textContent =
+          k === "closed"    ? "This survey has been closed." :
+          k === "nobackend" ? "This survey isn't set up to receive answers yet — nothing you did "
+                            + "caused this. Please let Daniel know."
+                            : "Couldn't send — tap again.";
+        if (k === "nobackend") $("send").disabled = true;
       });
   }
 
@@ -445,7 +463,35 @@
       });
   }
 
-  if (isAdmin) results(); else render();
+  // THE PREFLIGHT. One round trip at load, with an empty answers array — `sv_submit` validates before
+  // it touches a table (see survey-setup.sql), so this writes nothing and creates no form. It exists
+  // so that a survey whose backend is missing says so on the FIRST screen rather than on the last,
+  // after a student has answered every question and has nothing to show for it.
+  function preflight(){
+    return supa.rpc("sv_submit", { p_form: FORM, p_answers: [], p_comments: "" })
+      .then(function(r){ return kindOf(r.error); })
+      .catch(function(err){ return kindOf(err); });
+  }
+
+  function notSetUp(){
+    progress(0); kicker(COURSE);
+    show(
+      '<h1>Not accepting answers yet</h1>' +
+      '<p class="body">This survey is published but its database is not set up, so nothing you '
+      + 'typed could be saved. Please tell Daniel — there is no point filling it in until it is fixed.</p>' +
+      (isAdmin ? '<p class="body dim">Daniel: run <code>slide-suite/poll/survey-setup.sql</code> in '
+               + 'the Supabase SQL Editor. The <code>sv_*</code> functions are missing from the project.</p>'
+               : '')
+    );
+  }
+
+  // 'transient' covers "the probe itself could not reach the network", which is not a reason to
+  // refuse to show the survey — the phone may well have signal again by the last screen, and submit
+  // has its own error path. Only a definite "the function is not there" stops the page.
+  preflight().then(function(k){
+    if (k === "nobackend") return notSetUp();
+    if (isAdmin) results(); else render();
+  });
 })();
 </script>
 </body>
