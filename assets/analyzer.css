@@ -22,6 +22,7 @@
     --trace-dim:#3a4a57;                     /* the signal OUTSIDE a crop — same hue, dropped well back */
     --edge:var(--mma-amber);                 /* dashed context lines: selection ends, crop bounds, a point's vertical rule */
     --band:rgba(143,176,50,.09);             /* double-integrate area fill (faint green) */
+    --band-area:rgba(143,176,50,.45);         /* integrate in AREA mode (CONFIG.integrate:"area") — solid enough to read as the measured quantity */
     --band-amber:rgba(225,156,36,.07);       /* average band fill (transparent amber — lighter; amber reads hotter than green) */
   }
   *{box-sizing:border-box;}
@@ -81,6 +82,10 @@
   #stepbody .deck-prose{flex:1 1 40%;min-width:0;}
   #stepbody .deck-choices{flex:1 1 60%;min-width:0;display:grid;grid-template-columns:1fr 1fr;gap:8px;align-content:start;}
   #stepbody .deck-choices .choice{margin:0;}
+  /* a step that measures AND asks (boxes sit in the prose column above the question — see renderStep):
+     the prose column is doing two jobs, so it gets the larger share and the choices the smaller. */
+  #stepbody .deck-main.measure-ask .deck-prose{flex-basis:56%;}
+  #stepbody .deck-main.measure-ask .deck-choices{flex-basis:44%;}
   /* A deck figure is a SUPPORTING diagram, not the top region — it belongs under the prose that
      explains it, at the width of the prose column. `width:100%` alone made that true only on a step
      whose prose HAD a second column beside it (a question's choices); on a step whose prose ran the
@@ -252,6 +257,10 @@
      wide panel throws away a third of the height, and `center` takes half of that off the TOP, which is
      exactly where a jump happens. Anchoring up spends the whole loss on the floor instead. */
   #topmedia video.titlebg.cover.covertop{object-position:50% 0%;}
+  /* the same two fits on a plain `top: video` step: fill the panel, crop the overflow (top-anchored for
+     cover-top). Default stays contain. */
+  #topmedia video.topvid.cover{width:100%;height:100%;max-width:none;max-height:none;object-fit:cover;}
+  #topmedia video.topvid.cover.covertop{object-position:50% 0%;}
   #topmedia .titleslide.overvid{position:relative;z-index:1;
     background:radial-gradient(ellipse at center,rgba(19,19,24,.55),rgba(19,19,24,.82));width:100%;height:100%;}
   #topmedia .titleslide.overvid .wstitle{text-shadow:0 2px 12px rgba(0,0,0,.85);}

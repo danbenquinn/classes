@@ -163,7 +163,8 @@ function makePanel(def,i){
   P.selEl.addEventListener("change",e=>{ S.activeIdx=i; P.sigH=e.target.value;
     if((S.tool==="dblint"||S.tool==="integrate")&&P.sel) doIntegrate(series(P),P);
     if(S.tool==="fitsine"&&P.sel) doFitSine(series(P),P);
-    updateCtx(); resize(); setReadout(); });
+    updateCtx(); resize(); setReadout();
+    if(typeof refreshNext==="function") refreshNext(); });   // a `gate:"abs"` step passes on this choice
   wirePointer(P);
   return P;
 }
@@ -260,7 +261,7 @@ function ingestParsed(parsed,P){
   const axes=nums.filter(h=>/acceleration\s*[xyz]\b|\b[xyz]\s*\(/i.test(h));
   let pick = axes.length ? axes.reduce((b,h)=>varOf(h)>varOf(b)?h:b)
                          : (nums.find(h=>/absolute/i.test(h)) || nums[0]);
-  if(S.reqAxis){ const want=nums.find(h=>new RegExp("acceleration\\s*"+S.reqAxis+"\\b","i").test(h)); if(want) pick=want; }
+  if(S.reqAxis){ const want=nums.find(h=>axisRe(S.reqAxis).test(h)); if(want) pick=want; }
   P.sigH = pick; sel.value=P.sigH;
   applyAxisLock();                          // a fresh upload rebuilds the options; re-apply the step's lock
   P.point=null; P.sel=null; P.integ=null; P.crop=null; P._bias=null; P._biasFor=null;
@@ -309,6 +310,16 @@ function series(P){
   for(let i=0;i<t.length;i++){ if(Number.isFinite(t[i])&&Number.isFinite(a[i])){T.push(t[i]);A.push(a[i]);} }
   return T.length?{t:T,a:A}:null;
 }
+// A named column out of a named slot, as {t,a} — for validators that check against SUPPLIED data.
+function slotCol(key, re){
+  const P=panelByKey(key); if(!P||!P.ds) return null;
+  const h=P.ds.headers.find(x=>x!==P.ds.timeH && re.test(x)); if(!h) return null;
+  const t=P.ds.cols[P.ds.timeH], a=P.ds.cols[h], T=[],A=[];
+  for(let i=0;i<t.length;i++){ if(Number.isFinite(t[i])&&Number.isFinite(a[i])){T.push(t[i]);A.push(a[i]);} }
+  return T.length?{t:T,a:A}:null;
+}
+function meanBetween(s,t0,t1){ const i0=nearest(s,Math.min(t0,t1)), i1=nearest(s,Math.max(t0,t1)); let sum=0; for(let i=i0;i<=i1;i++) sum+=s.a[i]; return sum/(i1-i0+1); }
+function integrateBetween(s,t0,t1){ const i0=nearest(s,Math.min(t0,t1)), i1=nearest(s,Math.max(t0,t1)); let v=0; for(let i=i0+1;i<=i1;i++) v+=(s.a[i]+s.a[i-1])/2*(s.t[i]-s.t[i-1]); return v; }
 function nearest(s,tq){ let lo=0,hi=s.t.length-1; if(tq<=s.t[0])return 0; if(tq>=s.t[hi])return hi;
   while(hi-lo>1){const m=(lo+hi)>>1; if(s.t[m]<tq)lo=m; else hi=m;} return (tq-s.t[lo]<s.t[hi]-tq)?lo:hi; }
 function selRange(s,P){ P=P||active(); if(!P||!P.sel) return null;
@@ -342,8 +353,22 @@ function doIntegrate(s,P){
   const t=[s.t[i0]],V=[v],X=[x]; let peak=x, peakT=s.t[i0], peakK=0, k=0;
   for(let i=i0+1;i<=i1;i++){ const dt=s.t[i]-s.t[i-1]; const am=(s.a[i]+s.a[i-1])/2 - bias;
     const pv=v; v+=am*dt; x+=(pv+v)/2*dt; t.push(s.t[i]);V.push(v);X.push(x); k++; if(x>peak){peak=x;peakT=s.t[i];peakK=k;} }
+  // `CONFIG.integrate:"end-rest"` (Impulsive Behavior, 2026-09-11): the integration constant is chosen so the
+  // velocity is ZERO AT THE END of the window instead of the start. A chair that has hit a wall, a car that
+  // has crashed — what is known is that they finished at rest, so the green curve reads directly as the
+  // object's velocity through the collision: it starts at the pre-impact speed and ends at zero. The
+  // manifest has to say so (a student who dragged Get Air's tool expects the other convention). Only the
+  // single integral is shifted; `dblint` is not meaningful under this convention and is not offered.
+  if(zeroAtEnd(P)){ const vEnd=V[V.length-1]; for(let i=0;i<V.length;i++) V[i]-=vEnd; }
   P.integ={t,v:V,x:X,peak,peakT,peakK,i0,i1};
 }
+// `CONFIG.integrate:"from-click"` (settled 2026-09-11, replacing a fixed "end-rest"): the velocity is zero
+// WHERE THE STUDENT CLICKED FIRST. Drag right and it is Get Air's tool; click after the chair has stopped
+// and drag LEFT, and the curve ends at zero and starts at the pre-impact speed. One rule, said in one
+// sentence, and a student who overshoots leftward sees the whole velocity history — which is the point.
+function fromClick(){ return typeof CONFIG!=="undefined" && CONFIG.integrate==="from-click"; }
+function zeroAtEnd(P){ P=P||active(); return fromClick() && !!(P&&P.sel) && P.sel.a > P.sel.b; }
+function endRest(P){ return zeroAtEnd(P); }
 
 /* Estimate the sensor's constant zero-offset: the mean of the QUIETEST half-second anywhere in the
    recording, found by sliding a window and taking the one with the least variance.
@@ -397,7 +422,17 @@ function r2sine(t,a,amp,f,phase){
   for(let i=0;i<t.length;i++){ const pred=amp*Math.sin(w0*t[i]+phase); ssRes+=(a[i]-pred)**2; ssTot+=(a[i]-mean)**2; }
   return ssTot>0 ? 1-ssRes/ssTot : 0;
 }
-function axisOK(){ return !S.reqAxis || new RegExp("acceleration\\s*"+S.reqAxis+"\\b","i").test(S.sigH||""); }
+// `requireAxis:` names a signed axis (`x`/`y`/`z`) or, since 2026-09-10, `abs` — phyphox's "Absolute
+// acceleration" column. Impulsive Behavior's crash-dummy section switches the head slot to the magnitude
+// mid-deck, because a head-fixed x axis that has flexed 90° is not a direction any more (see the manifest).
+function axisRe(ax){ return ax==="abs" ? /absolute/i : new RegExp("acceleration\\s*"+ax+"\\b","i"); }
+function axisName(ax){ return ax==="abs" ? "absolute acceleration" : "the "+ax+"-axis"; }
+function axisOK(){ return !S.reqAxis || axisRe(S.reqAxis).test(S.sigH||""); }
+// `gate:"abs"` (2026-09-13): the step passes only when every visible plot's Signal is on phyphox's
+// "Absolute acceleration". Unlike `requireAxis:"abs"` it neither pre-selects nor locks — the switch IS
+// the step. Impulsive Behavior's head-intro: the deck has read ẍ for twenty steps, the head is the one
+// place that axis stops meaning anything, and the student should be the one to change it.
+function onAbs(P){ return !!(P.ds && /absolute/i.test(P.sigH||"")); }
 // If a step requires an axis, select it — on EVERY visible slot, not just the active one. The elevator
 // section requires z on both rides, and a student who has to hunt the dropdown twice has been given a
 // chore, not a measurement.
@@ -405,7 +440,7 @@ function preferAxis(){
   if(!S.reqAxis) return;
   (visiblePanels().length?visiblePanels():S.panels).forEach(P=>{
     if(!P.ds) return;
-    const want=P.ds.headers.find(h=>h!==P.ds.timeH && new RegExp("acceleration\\s*"+S.reqAxis+"\\b","i").test(h));
+    const want=P.ds.headers.find(h=>h!==P.ds.timeH && axisRe(S.reqAxis).test(h));
     if(want && want!==P.sigH){ P.sigH=want; if(P.selEl) P.selEl.value=want; }
   });
 }
@@ -418,9 +453,9 @@ function applyAxisLock(){
   (S.panels||[]).forEach(P=>{
     const sel=P.selEl; if(!sel) return;
     const has = !!(S.reqAxis && P.ds && P.ds.headers.some(h=>h!==P.ds.timeH &&
-                   new RegExp("acceleration\\s*"+S.reqAxis+"\\b","i").test(h)));
+                   axisRe(S.reqAxis).test(h)));
     sel.disabled = has;
-    sel.title = has ? "locked to the "+S.reqAxis+"-axis for this step"
+    sel.title = has ? "locked to "+axisName(S.reqAxis)+" for this step"
                     : "what to plot (time is always the horizontal axis)";
   });
 }
@@ -536,7 +571,7 @@ function updatePlotReadout(P){
     if(!P.fit){ show('<span class="ro-hint">drag to select a few cycles</span>'); return; }
     const ph=((P.fit.phase%(2*Math.PI))+2*Math.PI)%(2*Math.PI);
     const axisWarn = (S.challenge && !axisOK())
-      ? '<span class="ro-hint"> — switch <b>Signal</b> to the '+S.reqAxis+'-axis to score</span>' : '';
+      ? '<span class="ro-hint"> — switch <b>Signal</b> to '+axisName(S.reqAxis)+' to score</span>' : '';
     show('<span class="formula"><i>a</i> = '+P.fit.amp.toFixed(2)+'·sin(2π·'+P.fit.freq.toFixed(2)+'·<i>t</i> + '+ph.toFixed(2)+')</span>'
       +'<span class="r2" tabindex="0"><i>R</i>² = '+P.fit.r2.toFixed(3)
       +'<span class="r2pop">Fraction of the variance in your selection the fit explains — 1 = perfect, 0 = no better than a flat line, &lt;0 = worse than a flat line</span></span>'+axisWarn);
@@ -558,8 +593,17 @@ function updatePlotReadout(P){
     const lo=Math.min(P.crop.a,P.crop.b), hi=Math.max(P.crop.a,P.crop.b);
     const tdc = timeDecimals(s);
     show('<span class="ro-ctx">'+lo.toFixed(tdc)+'–'+hi.toFixed(tdc)+' s</span>');
+  } else if(S.tool==="integrate" && areaMode()){
+    // `CONFIG.integrate:"area"` — the integral reads as AREA UNDER THE CURVE (Impulsive Behavior, 2026-09-10).
+    // Get Air integrates acceleration to get somewhere (a velocity curve, then a position); an impulse
+    // workshop integrates to get a NUMBER, and the number is the shaded area. So: a solid green fill, the
+    // value in the green readout like every other tool, and no running-integral curve to distract.
+    if(!P.integ){ show('<span class="ro-hint">drag across the trace to measure the area under it</span>'); return; }
+    const v=P.integ.v[P.integ.v.length-1];
+    show('<span class="ro">area under <i>'+A.ddot+'</i> = '+v.toFixed(2)+' m/s<span class="ro-ctx"> over '+Math.abs(P.sel.b-P.sel.a).toFixed(timeDecimals(s))+' s</span></span>');
   } else { R.style.display="none"; R.innerHTML=""; }   // integrate → on-curve callouts only
 }
+function areaMode(){ return typeof CONFIG!=="undefined" && CONFIG.integrate==="area"; }
 // Every visible panel repaints its own readout; the legacy no-arg call sites now mean "all of them",
 // which is what they have to mean once two plots are on screen at once.
 function setReadout(){ visiblePanels().forEach(updatePlotReadout); }
@@ -614,7 +658,7 @@ function renderPanel(P){
   if(!s){ ctx.fillStyle=getCss("--muted"); ctx.font=font(14); ctx.textAlign="center"; ctx.textBaseline="middle";
     ctx.fillText(P.label ? ("Load the “"+P.label+"” export with the picker above.")
                          : "Load your phyphox .zip (top-left) to plot acceleration against time.", W/2, H/2); return; }
-  const A=axisInfo(P.sigH), showX = S.tool==="dblint" && !!P.integ, showV = S.tool==="integrate" && !!P.integ;
+  const A=axisInfo(P.sigH), showX = S.tool==="dblint" && !!P.integ, showV = S.tool==="integrate" && !!P.integ && !areaMode();
   // Stacked panels share one time axis, so only the BOTTOM one carries the `t (s)` title — the convention
   // for a column of plots, and here also the only way to fit it: a half-height panel has no room to give.
   const vis=visiblePanels(), isLast = !vis.length || vis[vis.length-1]===P;
@@ -635,7 +679,17 @@ function renderPanel(P){
   const T=niceTicks(s.t[0], s.t[s.t.length-1], 6);
   const cr=cropRange(s,P);
   const inA=s.a.slice(cr[0],cr[1]+1);
-  const Ay=niceTicks(Math.min.apply(null,inA), Math.max.apply(null,inA), 5);
+  let aLo=Math.min.apply(null,inA), aHi=Math.max.apply(null,inA);
+  // `matchY:` step wiring (2026-09-12): every visible panel shares one vertical range — the union of what
+  // each would have drawn alone — so two stacked traces can be compared by eye. Built for the crash section's
+  // A-vs-B pairs, where the 9 g and 12 g sleds (and the 15 g and 42 g heads) each auto-scaled to fill their
+  // own plot and looked the same height. The time axis is already shared; this is its vertical twin.
+  if(NARR[S.step] && NARR[S.step].matchY){
+    visiblePanels().forEach(Q=>{ if(Q===P) return; const qs=series(Q); if(!qs) return;
+      const qc=cropRange(qs,Q); const qa=qs.a.slice(qc[0],qc[1]+1);
+      aLo=Math.min(aLo,Math.min.apply(null,qa)); aHi=Math.max(aHi,Math.max.apply(null,qa)); });
+  }
+  const Ay=niceTicks(aLo, aHi, 5);
   const tx=t=>mL+(t-T.lo)/(T.hi-T.lo)*px;
   const ay=a=>mT+(Ay.hi-a)/(Ay.hi-Ay.lo)*ph;
   P.G=G={mL,mR,tLo:T.lo,tHi:T.hi};
@@ -674,7 +728,7 @@ function renderPanel(P){
   // is drawn as a solid green curve on the right axis (below, in the showV block).
   if(S.tool==="integrate" && P.sel && P.integ){
     const r=selRange(s,P), y0=ay(0);
-    ctx.fillStyle=getCss("--band"); ctx.beginPath(); ctx.moveTo(tx(s.t[r[0]]),y0);
+    ctx.fillStyle=getCss(areaMode()?"--band-area":"--band"); ctx.beginPath(); ctx.moveTo(tx(s.t[r[0]]),y0);
     for(let i=r[0];i<=r[1];i++) ctx.lineTo(tx(s.t[i]),ay(s.a[i]));
     ctx.lineTo(tx(s.t[r[1]]),y0); ctx.closePath(); ctx.fill();
   }
@@ -748,18 +802,37 @@ function renderPanel(P){
     if(dr.hi>0) scale=Math.min(scale, upPx*padF/dr.hi);
     if(dr.lo<0) scale=Math.min(scale, downPx*padF/(-dr.lo));
     if(!isFinite(scale)||scale<=0) scale=1;
-    const xy=v=> y0 - v*scale;
+    // House rule: the result curve shares the signal's y=0 line. In END-AT-REST mode that rule can squash
+    // the curve into a sliver — a crash pulse is all negative, so its zero line sits near the top, while
+    // the velocity it integrates to is all POSITIVE (the sled's 8.5 m/s → 0 had a tenth of the plot). When
+    // sharing would leave the curve under a quarter of the height, give it its own zero, low in the plot,
+    // and let the green right-axis ticks say where that zero is. (2026-09-11)
+    let vy0=y0;
+    if(endRest(P)){
+      const span=(dr.hi-dr.lo)*scale;
+      if(span < 0.25*ph){
+        const own=(ph*padF)/Math.max(dr.hi-dr.lo,1e-9);
+        scale=own; vy0 = (mT+ph) - (0-dr.lo)*own - (ph*(1-padF))/2;
+      }
+    }
+    const xy=v=> vy0 - v*scale;
     ctx.strokeStyle=getCss("--result"); ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(rx,mT); ctx.lineTo(rx,mT+ph); ctx.stroke();
-    const vTop=(y0-mT)/scale, vBot=(y0-(mT+ph))/scale;
+    const vTop=(vy0-mT)/scale, vBot=(vy0-(mT+ph))/scale;
     const Ry=niceTicks(Math.min(vTop,vBot), Math.max(vTop,vBot), 5);
     ctx.fillStyle=getCss("--result"); ctx.textAlign="left"; ctx.textBaseline="middle"; ctx.font=font(11);
     Ry.ticks.forEach(v=>{ const y=xy(v); if(y<mT-1||y>mT+ph+1) return; ctx.fillText(fmt(v), rx+8, y); });
-    axisTitleV(W-15, mT+ph/2, "∫ "+A.ddot+" dt", "(m/s)", "--result");   // operation italic, unit roman
+    axisTitleV(W-15, mT+ph/2, endRest(P) ? A.dot : "∫ "+A.ddot+" dt", "(m/s)", "--result");   // operation italic, unit roman
     polyline(I.t.map(tx), I.v.map(xy), "--result", num("--stroke-result"));
-    const lastK=I.v.length-1, endVal=I.v[lastK];
-    const ex=tx(I.t[lastK]), ey=xy(endVal);
-    ctx.fillStyle=getCss("--result"); ctx.textBaseline="alphabetic"; ctx.font=font(12); ctx.textAlign="right";
-    ctx.fillText("end point = "+endVal.toFixed(2)+" m/s", Math.min(rx-4,ex-4), Math.max(mT+12,ey-7));
+    ctx.fillStyle=getCss("--result"); ctx.textBaseline="alphabetic"; ctx.font=font(12);
+    if(endRest(P)){
+      // ends at rest by construction, so the number worth reading is where the curve STARTS
+      const sv=I.v[0], sx=tx(I.t[0]), sy=xy(sv);
+      ctx.textAlign="left"; ctx.fillText("start point = "+sv.toFixed(2)+" m/s", Math.max(mL+4,sx+6), Math.max(mT+12,sy-7));
+    } else {
+      const lastK=I.v.length-1, endVal=I.v[lastK];
+      const ex=tx(I.t[lastK]), ey=xy(endVal);
+      ctx.textAlign="right"; ctx.fillText("end point = "+endVal.toFixed(2)+" m/s", Math.min(rx-4,ex-4), Math.max(mT+12,ey-7));
+    }
   }
   // point marker: amber dashed vertical rule (context) + solid GREEN dot (the measured point)
   if(S.tool==="point" && P.point!=null){ const i=nearest(s,P.point), x=tx(s.t[i]), y=ay(s.a[i]);
@@ -770,7 +843,14 @@ function renderPanel(P){
   if((S.tool==="avg"||S.tool==="dblint"||S.tool==="integrate"||S.tool==="fitsine") && P.sel){ const r=selRange(s,P);
     ctx.strokeStyle=getCss("--edge"); ctx.lineWidth=num("--stroke-mark"); ctx.setLineDash([4,4]);
     [r[0],r[1]].forEach(i=>{ const x=tx(s.t[i]);
-      ctx.beginPath(); ctx.moveTo(x,mT); ctx.lineTo(x,mT+ph); ctx.stroke(); }); ctx.setLineDash([]); ctx.lineWidth=1; }
+      ctx.beginPath(); ctx.moveTo(x,mT); ctx.lineTo(x,mT+ph); ctx.stroke(); }); ctx.setLineDash([]); ctx.lineWidth=1;
+    // The bounds' TIMES, in the same amber, at the foot of each rule (2026-09-11) — so a window dragged for
+    // Integrate or Average Value can be read off without switching to Select Point and re-finding it.
+    if(S.tool==="integrate"||S.tool==="avg"){
+      const td=timeDecimals(s); ctx.fillStyle=getCss("--edge"); ctx.font=font(11); ctx.textBaseline="bottom";
+      ctx.textAlign="right"; ctx.fillText(s.t[r[0]].toFixed(td)+" s", tx(s.t[r[0]])-3, mT+ph-3);
+      ctx.textAlign="left";  ctx.fillText(s.t[r[1]].toFixed(td)+" s", tx(s.t[r[1]])+3, mT+ph-3);
+    } }
   // crop bounds: dashed amber rules with a grip at the top, drawn whenever a crop EXISTS — not only
   // while the Crop tool is active, because the whole reason to crop is to then go and measure inside it,
   // and a window whose edges vanish the moment you pick up the ruler is not a window.
@@ -914,11 +994,16 @@ function setTop(st){                                    // top region: analyzer 
   if(mode==="video"){
     // keep a looping clip playing UNINTERRUPTED across consecutive steps that show the same video
     // (e.g. the three units questions over the Pong clip) — don't rebuild it, or it restarts each Next.
+    // `fit:"cover"` / `fit:"cover-top"` work here as they do on a title step (2026-09-13): fill the panel's
+    // width and crop the overflow, anchored to the top for cover-top. Impulsive Behavior's two-test sled
+    // clip is 2.5:1 in a ~2.7:1 panel, so contain left side bars; cover-top fills the width and spends the
+    // loss on the floor and the lab's white credit block, never on THOR's head.
+    const fitCls = st.fit==="cover" ? " cover" : st.fit==="cover-top" ? " cover covertop" : "";
     const cur=tm.querySelector("video.topvid");
-    if(cur && cur.dataset.src===st.media){ tm.style.display="flex"; return; }
+    if(cur && cur.dataset.src===st.media){ cur.className="topvid"+fitCls; tm.style.display="flex"; return; }
     tm.style.display="flex";
     tm.innerHTML='<div class="media-ph">Looping demo video plays here once added:<br>'+st.media+'</div>'
-      +'<video class="topvid" data-src="'+st.media+'" src="'+st.media+'" autoplay loop muted playsinline onerror="this.style.display=\'none\'"></video>';
+      +'<video class="topvid'+fitCls+'" data-src="'+st.media+'" src="'+st.media+'" autoplay loop muted playsinline onerror="this.style.display=\'none\'"></video>';
   } else if(mode==="figure"){
     tm.style.display="flex";
     tm.innerHTML='<img src="'+st.media+'" alt="">';
@@ -1173,6 +1258,115 @@ function inputIssue(st){
     return _statIssue(st, [A.Jp1,A.Jp2,A.Jp3], A.Jp_mean, A.Jp_std, "impulse (human)", 0)
         || _statIssue(st, [A.Jw1,A.Jw2,A.Jw3], A.Jw_mean, A.Jw_std, "impulse (wall)", 0);
   }
+  /* Impulsive Behavior (Workshop 2, rebuilt 2026-09-09): one collision, one chain of numbers. Each validator
+     checks the step's answer against the numbers the student typed EARLIER in the chain — never against the
+     live plot, so Back never re-blocks a finished step — and quotes the expected value back as {expected}.
+     Tolerances are loose on purpose (10% with an absolute floor): these are arithmetic checks, not scoring. */
+  /* Impulsive Behavior (Workshop 2, rebuilt 2026-09-09, reordered 2026-09-11): one collision, one chain of
+     numbers — speed before impact (read off the end-at-rest integral), then the momentum change with a mass
+     the student has to go and weigh, then force two ways and the g's. Each validator checks a step against
+     numbers typed EARLIER in the chain (never the live plot, so Back never re-blocks a finished step) and
+     quotes the expected value as {expected}. The chair's mass is never given: `chairMass()` is whatever the
+     student's own momentum/speed pair implies, so the later checks follow THEIR chair. */
+  const chairMass = ()=>{ const A=S.answers; const m=Number.isFinite(A.imp_x)&&A.v_before>0 ? Math.abs(A.imp_x)/A.v_before : NaN; return Number.isFinite(m)&&m>0 ? m : 9.07; };
+  if(st.checkKind==="wallspeed"){                      // the start point of the end-at-rest integral, if a drag is live
+    const A=S.answers, P=active(), I=P&&P.integ;
+    if(I && I.v && I.v.length && Number.isFinite(A.v_before)){
+      // The pre-impact speed is the velocity curve's value where the spike BEGINS — not the window's start
+      // point, because the instruction is to drag left and a student who overshoots into the shove sees the
+      // whole speed history (deliberately). Find the biggest negative spike in the window and walk back to
+      // where the trace was still quiet relative to it.
+      let exp;
+      if(endRest(P)){
+        const sr=series(P); let k=I.i0; for(let i=I.i0;i<=I.i1;i++) if(sr.a[i]<sr.a[k]) k=i;
+        let j=k; while(j>I.i0 && sr.a[j] < 0.25*sr.a[k]) j--;
+        exp = I.v[j-I.i0];
+      } else exp = -I.v[I.v.length-1];
+      if(Math.abs(A.v_before-exp)>Math.max(0.03,0.10*Math.abs(exp)))
+        return fbText(st,"check","That doesn't match your own plot — the green curve starts at about {expected} m/s.",{expected:exp.toFixed(2)});
+    }
+  }
+  if(st.checkKind==="wallmomentum"){                   // m·(0 − v_before), with a mass that has to be a chair's
+    const A=S.answers;
+    if(Number.isFinite(A.imp_x)&&Number.isFinite(A.v_before)&&A.v_before>0){
+      const m=-A.imp_x/A.v_before;
+      if(m<4||m>20) return fbText(st,"check","Not quite — Δ(m·ẋ) = m·(0 − ẋ_before). Your number implies a chair of about {mass} kg. Weigh it.",{mass:m.toFixed(1),expected:"—"});
+    }
+  }
+  if(st.checkKind==="wallforce"){                      // F_avg = impulse / (t_end − t_start)
+    const A=S.answers;
+    if(Number.isFinite(A.t_hit0)&&Number.isFinite(A.t_hit1)&&A.t_hit1<=A.t_hit0)
+      return fbText(st,"check","The collision has to END after it STARTS — read the two times again.",{expected:"—"});
+    const tau=A.t_hit1-A.t_hit0, exp=A.imp_x/tau;
+    if(Number.isFinite(exp) && Number.isFinite(A.F_avg) && Math.abs(A.F_avg-exp)>Math.max(2,0.10*Math.abs(exp)))
+      return fbText(st,"check","Not quite — impulse divided by duration. With your times that is about {expected} N.",{expected:exp.toFixed(0)});
+  }
+  if(st.checkKind==="wallg"){                          // g's = |F_avg| / (m g), on the impulse-over-duration force
+    const A=S.answers, exp=Math.abs(A.F_avg)/(chairMass()*G_STD);
+    if(Number.isFinite(exp) && Number.isFinite(A.g_wall) && Math.abs(A.g_wall-exp)>Math.max(0.02,0.10*exp))
+      return fbText(st,"check","Not quite — the force divided by the weight, m·g, is about {expected} g's.",{expected:exp.toFixed(2)});
+  }
+
+  if(st.checkKind==="wallgpeak"){                      // the deepest point of the collision spike, from the chair's own data
+    const A=S.answers, sr=slotCol("main",/acceleration\s*x/i)||series(active());
+    if(sr && Number.isFinite(A.g_peak)){ let pk=0; for(const v of sr.a) if(Math.abs(v)>Math.abs(pk)) pk=v;
+      const exp=Math.abs(pk)/G_STD;
+      if(Math.abs(A.g_peak-exp)>Math.max(0.2,0.10*exp))
+        return fbText(st,"check","Not quite — the tallest spike reads about {peak} m/s², which is {expected} g's in size. Click right on its tip.",{expected:exp.toFixed(1),peak:pk.toFixed(2)}); }
+  }
+  /* The crash-test section (rebuilt 2026-09-11 around TWO sled tests, A = S0992 and B = S0944). Every
+     expected value is a fact about the SUPPLIED data, computed here from the slot's own column, so a student
+     on the wrong plot, the wrong signal or the wrong window hears which. `pulseOf()` finds the sled pulse
+     (the contiguous stretch below −0.5 g around the deepest point); `plateauOf()` its flat top (samples
+     within 75% of the deepest); `worstWindow()` the largest average over a fixed-width window — HIC's own
+     definition. */
+  const pulseOf=(sr)=>{ let k=0; for(let i=1;i<sr.a.length;i++) if(sr.a[i]<sr.a[k]) k=i;
+    let i0=k, i1=k; while(i0>0 && sr.a[i0-1] < -0.5*G_STD) i0--; while(i1<sr.a.length-1 && sr.a[i1+1] < -0.5*G_STD) i1++; return [i0,i1,k]; };
+  const plateauOf=(sr)=>{ const [i0,i1,k]=pulseOf(sr); let sum=0,n=0; for(let i=i0;i<=i1;i++) if(sr.a[i] <= 0.75*sr.a[k]){ sum+=sr.a[i]; n++; } return n? sum/n : sr.a[k]; };
+  const worstWindow=(sr,width)=>{ let best=-Infinity; for(let i=0;i<sr.a.length;i++){ const j=nearest(sr,sr.t[i]+width); if(sr.t[j]-sr.t[i] < 0.8*width) break; let sum=0; for(let q=i;q<=j;q++) sum+=sr.a[q]; best=Math.max(best,sum/(j-i+1)); } return best; };
+  const perTest=(st, key, fn)=>{ for(const [tag,slot] of [["a","sledA"],["b","sledB"]]) { const r=fn(tag,slot); if(r) return r; } return null; };
+
+  if(st.checkKind==="sledv2"){                         // km/h straight from the end point of the integral over the pulse
+    const A=S.answers;
+    for(const [tag,slot] of [["a","sledA"],["b","sledB"]]){ const sr=slotCol(slot,/acceleration\s*x/i), k=A["kph_"+tag];
+      if(sr && Number.isFinite(k)){ const [i0,i1]=pulseOf(sr); let dv=0; for(let i=i0+1;i<=i1;i++) dv+=(sr.a[i]+sr.a[i-1])/2*(sr.t[i]-sr.t[i-1]); const exp=-dv*3.6;
+        if(Math.abs(k-exp)>Math.max(1.5,0.10*exp)) return fbText(st,"check","Not quite — {label}: the green curve's end point over the whole pulse is about {mps} m/s, which is {expected} kph. Make sure the drag covers the pulse from before it starts to after it ends.",{expected:exp.toFixed(1),mps:(-dv).toFixed(2),label:"test "+tag.toUpperCase()}); } }
+  }
+  if(st.checkKind==="sledmom2"){                       // Δ(m·ẋ) = m × (0 − speed), m = 76.6 kg, speed from their km/h
+    const A=S.answers;
+    for(const tag of ["a","b"]){ const k=A["kph_"+tag], J=A["mom_"+tag];
+      if(Number.isFinite(k)&&Number.isFinite(J)){ const exp=-76.6*k/3.6;
+        if(Math.abs(J-exp)>Math.max(15,0.10*Math.abs(exp))) return fbText(st,"check","Not quite — {label}: 76.6 kg times (0 − {v} m/s) is about {expected} kg·m/s. Convert kph to m/s first.",{expected:exp.toFixed(0),v:(k/3.6).toFixed(2),label:"test "+tag.toUpperCase()}); } }
+  }
+  if(st.checkKind==="sledforce2"){                     // F_avg = Δ(m·ẋ) / τ, τ typed from the amber bound labels
+    const A=S.answers;
+    for(const tag of ["a","b"]){ const J=A["mom_"+tag], tau=A["tau_"+tag], F=A["F_"+tag];
+      if(Number.isFinite(tau)&&(tau<0.06||tau>0.2)) return fbText(st,"check","Not quite — {label}: {detail}",{expected:"—",label:"test "+tag.toUpperCase(),detail:"a "+(tau*1000).toFixed(0)+" ms pulse? These pulses last roughly a tenth of a second. Read the two amber times at the foot of your Integrate window and subtract."});
+      if(Number.isFinite(J)&&Number.isFinite(tau)&&Number.isFinite(F)&&tau>0){ const exp=J/tau;
+        if(Math.abs(F-exp)>Math.max(150,0.10*Math.abs(exp))) return fbText(st,"check","Not quite — {label}: {detail}",{expected:exp.toFixed(0),label:"test "+tag.toUpperCase(),detail:"your momentum change divided by your "+tau+" s is about "+exp.toFixed(0)+" N."}); } }
+  }
+  if(st.checkKind==="sledgf2"){                        // average g's = |F_avg| / (m g)
+    const A=S.answers;
+    for(const tag of ["a","b"]){ const F=A["F_"+tag], gg=A["g_"+tag];
+      if(Number.isFinite(F)&&Number.isFinite(gg)){ const exp=Math.abs(F)/(76.6*G_STD);
+        if(Math.abs(gg-exp)>Math.max(0.5,0.10*exp)) return fbText(st,"check","Not quite — {label}: the force divided by THOR's weight, 76.6 kg × g, is about {expected} g.",{expected:exp.toFixed(1),label:"test "+tag.toUpperCase()}); } }
+  }
+  if(st.checkKind==="headpk2"){                        // the top of each head |r̈| trace, in g
+    const A=S.answers;
+    for(const [tag,slot] of [["a","headA"],["b","headB"]]){ const sr=slotCol(slot,/absolute/i), v=A["gpk_"+tag];
+      if(sr && Number.isFinite(v)){ let pk=0; for(const x of sr.a) pk=Math.max(pk,x); const exp=pk/G_STD;
+        if(Math.abs(v-exp)>Math.max(0.5,0.06*exp)) return fbText(st,"check","Not quite — {label}: the top of the absolute-acceleration trace reads about {peak} m/s², which is {expected} g's. Is that plot's Signal set to Absolute acceleration?",{expected:exp.toFixed(1),peak:pk.toFixed(2),label:"test "+tag.toUpperCase()}); } }
+  }
+  if(st.checkKind==="hic2"){                           // HIC15 = (worst 15 ms average of |r̈| in g)^2.5 × 0.015, checked
+    const A=S.answers;                                   // straight against the data (the average box was dropped 2026-09-13
+    for(const [tag,slot] of [["a","headA"],["b","headB"]]){ const sr=slotCol(slot,/absolute/i), h=A["hic_"+tag];
+      if(sr && Number.isFinite(h)){ const av=worstWindow(sr,0.015)/G_STD, exp=Math.pow(av,2.5)*0.015;
+        // 10% slack on the average is ~25% on HIC after the 2.5 power; a window centered on the peak
+        // rather than slid to the worst spot, or read to the nearest tenth of a g, lands well inside that.
+        if(Math.abs(h-exp)>Math.max(3,0.25*exp)) return fbText(st,"check","Not quite — {label}: {detail}",{label:"test "+tag.toUpperCase(),expected:exp.toFixed(0),detail:"the largest 15 ms average on that trace is about "+av.toFixed(1)+" g, and "+av.toFixed(1)+"^2.5 × 0.015 ≈ "+exp.toFixed(0)+". Keep the window about 0.015 s wide on the peak, and convert the average to g's before the 2.5 power."}); } }
+  }
+
+
   return null;
 }
 // A step may combine gates (e.g. the load step gates on BOTH a data file and a mass input), so every
@@ -1186,6 +1380,7 @@ function stepComplete(i){
   if(st.code && S.answers["code"+i]!==true) return false;                 // passcode / access code
   if(st.gate==="data" && !allVisible(P=>!!P.ds)) return false;            // must have loaded a phyphox file
   if(st.gate==="crop" && !allVisible(isCropped)) return false;            // must have trimmed the view
+  if(st.gate==="abs"  && !allVisible(onAbs))      return false;            // must have switched Signal to absolute
   if((st.check||st.checkFn) && S.answers["q"+i]==null) return false;     // set only on a correct pick
   // Typed answers. The VALUES always have to be sane (`inputIssue`, the length floor). The extra
   // requirement — that the student pressed Enter and read what came back — applies only on a step that
@@ -1331,6 +1526,8 @@ function blockReason(i){
                              : "Load your phyphox export (top-left) before moving on.");
   if(st.gate==="crop" && !allVisible(isCropped)) return fbText(st,"crop",
     "Click <b>Crop</b> and drag the amber bounds inward"+(visiblePanels().length>1?" on both plots":"")+" before moving on.");
+  if(st.gate==="abs" && !allVisible(onAbs)) return fbText(st,"abs",
+    "Switch <b>Signal</b> to <b>Absolute acceleration</b>"+(visiblePanels().length>1?" on both plots":"")+" before moving on.");
   if((st.input||st.inputs) && inputIssue(st)!==null) return inputIssue(st);   // already honours hint.input
   if(wantsSubmit(st) && S.answers["ok"+i]!==true){
     if(st.input||st.inputs) return "Press <b>Enter</b> to check your answer.";
@@ -1383,7 +1580,26 @@ function renderStep(){
   setSlots(st);                                     // which data slots this step shows (default: the first)
   setTop(st);
   S.reqAxis = st.requireAxis || null;               // a step may require a signal axis (default-select, lock, gate scoring)
+  // `preload:` — a step that hands the class a dataset instead of asking for one (2026-09-10). Names the
+  // slots to fill from the baked `DEMO_CSVS` map, for EVERY student, the first time the step renders. Built
+  // for the crash-dummy section of Impulsive Behavior: nobody records a sled test, so the file picker is the
+  // wrong gesture — the data is part of the deck the way a figure is. Teacher mode's "Load sample data"
+  // button is the same mechanism behind a gate; this is it with the gate removed, per slot, on purpose.
+  if(st.preload && typeof DEMO_CSVS!=="undefined" && DEMO_CSVS){
+    let any=false;
+    [].concat(st.preload).forEach(k=>{ const P=panelByKey(k);
+      if(P && !P.ds && DEMO_CSVS[k]){ P.fileName="("+(P.label||k)+" — supplied)"; try{ ingestParsed(parseCSV(DEMO_CSVS[k]),P); any=true; }catch(e){}
+        // A supplied slot has no file picker: the data is part of the deck the way a figure is, and a
+        // "Choose File · No file chosen" beside it reads as an instruction to upload something (Daniel, 2026-09-12).
+        P.supplied=true; if(P.file){ P.file.style.display="none"; } } });
+    if(any){ render(); setReadout(); }
+  }
   if(S.reqAxis) preferAxis();
+  // An abs-gated step opens on ẍ — the axis the rest of the deck reads — the first time each plot meets
+  // it, so the student sees the same-looking trace and then makes the change. Re-visits keep their choice.
+  if(st.gate==="abs") visiblePanels().forEach(P=>{ if(!P.ds || P._absSeeded) return; P._absSeeded=true;
+    const x=P.ds.headers.find(h=>h!==P.ds.timeH && axisRe("x").test(h));
+    if(x && x!==P.sigH){ P.sigH=x; if(P.selEl) P.selEl.value=x; P.point=null; P.sel=null; P.integ=null; } });
   applyAxisLock();
   // Fit Sine step config: pin the tool, and optionally lock amp/freq to a target (the challenge)
   if(st.tool==="fitsine"){
@@ -1551,7 +1767,8 @@ function renderStep(){
     // the inputs last put the question between the instruction and the box it was asking about — you read
     // "which way are the g's pushing?", then hit a field labeled "average z̈", and have to scroll back up
     // to work out which one you were meant to do first. Do the measurement, then answer about it.
-    else if(qEl){ prose.insertBefore(wrap,qEl); if(goRow) prose.insertBefore(goRow,qEl); }
+    else if(qEl){ prose.insertBefore(wrap,qEl); if(goRow) prose.insertBefore(goRow,qEl);
+                  main.classList.add("measure-ask"); }   // prose column carries boxes too → give it more width (analyzer.css)
     else { prose.appendChild(wrap); if(goRow) prose.appendChild(goRow); }
     if(goRow && S.answers["ok"+S.step]===true) setFb(passFb(st));   // a step you already cleared
   }
