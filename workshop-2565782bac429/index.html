@@ -123,18 +123,18 @@ const NARR = [
     checkKind:"wallforce",
     lead:"<p><b>Average force.</b> Impulse is force integrated over time, so the <i>average</i> force over the collision is the impulse divided by how long the collision lasted, $\\Delta t$: $F_{x,\\text{avg}} = \\Delta(m\\dot{x})/\\Delta t$. Record the start and end times of the interval over which you calculated $\\Delta(m\\dot{x})$, then estimate $F_{x,\\text{avg}}$ rounded to the nearest $N$.</p>",
     feedback:"Yes that is the wall's average push on the chair over the collision — a few pounds of force, spread over a fraction of a second.",
-    feedbackWhen:{"empty": "You need impulse divided by time difference.", "dp": "The capture is 100 Hz, so a time off this trace is good to a hundredth of a second — give both to <b>exactly 2 decimal places</b>. The force divides a tenth-of-a-N·s impulse by a hundredth of a second, which is good to a few newtons, so give it to the nearest newton, <b>no decimals</b>.", "low": "{label} is out of range. The force should be negative (the wall pushes back against travel) but a hand-launched chair should not see that much <i>average</i> force — check that $\\Delta t$ is in seconds.", "high": "$F_{x,\\text{avg}}$ should be negative, because the impulse is negative. The wall pushes against the direction of travel.", "check": "Not quite. $F_{x,\\text{avg}} = \\Delta(m\\dot{x})/(t_\\text{end} - t_\\text{start})$. Check that end comes after start."},
+    feedbackWhen:{"empty": "You need impulse divided by time difference.", "dp": "The capture is 100 Hz, so a time off this trace is good to a hundredth of a second — give both to <b>exactly 2 decimal places</b>. The force divides a tenth-of-a-N·s impulse by a hundredth of a second, which is good to a few newtons, so give it to the nearest newton, <b>no decimals</b>.", "low": "{label} is a bigger <i>average</i> force than a hand-shoved chair can see. The sign is right; check that $\\Delta t$ is in seconds and runs from the start of the collision to its end, not a single sample.", "high": "{label} should be negative (or zero), because the impulse is negative: the wall pushes against the direction of travel.", "check": "Not quite. $F_{x,\\text{avg}} = \\Delta(m\\dot{x})/(t_\\text{end} - t_\\text{start})$. Check that end comes after start."},
     inputs:[
       {label:"collision start", key:"t_hit0", unit:"s", range:[0,30], dp:2},
       {label:"collision end", key:"t_hit1", unit:"s", range:[0,30], dp:2},
-      {label:"average force $F_{x,\\text{avg}}$", key:"F_avg", unit:"N", range:[-500,0], dp:0} ] },
+      {label:"average force $F_{x,\\text{avg}}$", key:"F_avg", unit:"N", range:[-6000,0], dp:0} ] },
 
   { id:"gforce",
     checkKind:"wallg",
     lead:"<p><b>Average g's.</b> So far we've only discussed \"g's\" for vertical motion, so we've used $\\frac{F_N}{mg}=1 + \\ddot{y}/g$, where the $1$ comes from the weight term. Engineers generalize the same idea to <i>any</i> contact force: the g's you feel are the <b>contact force divided by your weight</b>, $F/mg$. Here the contact force is the wall's average push on the chair, so the average g's over the collision is $|F_{x,\\text{avg}}|/mg$. Give it to 2 decimal places.</p>",
     feedback:"A fraction of a g, averaged over the collision.",
     feedbackWhen:{"empty": "Divide the average force by the chair's weight, $mg$. Positive — it is a magnitude.", "dp": "Your force is good to a few newtons out of about ninety of weight, so this is meaningful to the second decimal. Give it to <b>exactly 2 decimal places</b>.", "low": "Under 0.01 g would be a collision you could not feel. Check that you divided by $mg$, not by $m$ alone.", "high": "Over 5 g averaged across a whole collision is a car crash. Check that you divided the <i>force</i> by the <i>weight</i> — both in newtons.", "negative": "g's are a size — use the magnitude of the force, so the answer is positive.", "check": "Not quite — $|F_{x,\\text{avg}}|/(mg)$ with your average force and your chair's mass is about {expected} g's. Remember to look up $g$ and to use the weight, not the mass."},
-    input:"average g's over the collision", key:"g_wall", unit:"g's", range:[0.01,5], dp:2 },
+    input:"average g's over the collision", key:"g_wall", unit:"g's", range:[0.01,40], dp:2 },
 
   { id:"g-peak",
     checkKind:"wallgpeak",

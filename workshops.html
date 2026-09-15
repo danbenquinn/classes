@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-build="f44e1409"><head><meta charset="utf-8">
+<html lang="en" data-build="50923a7f"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MAE 2501 · Applied Physics I · Workshops</title>
 <link rel="stylesheet" href="assets/fonts.css">
@@ -17,13 +17,22 @@ li:last-child{border-bottom:1px solid #23232a}
 a{display:flex;gap:1rem;align-items:baseline;padding:.85em .2em;color:var(--ink);text-decoration:none}
 a:hover{background:#0e0e13}
 .k{color:var(--accent);font-weight:600;min-width:5.5rem}
+/* A class row carries TWO links: the lecture deck (the whole row) and its practice problems (a
+   quieter tag on the right). The row stays one row because the two belong to one class — a student
+   looking for practice is looking for Class B's practice, not for a separate list to cross-reference
+   against this one. Muted until hover so the page still reads as a list of lectures at a glance. */
+li{display:flex;align-items:stretch}
+li > a:first-child{flex:1;min-width:0}
+a.pp{flex:0 0 auto;align-items:center;padding:.85em 1em;color:var(--muted,#8a8a99);font-size:.85em;
+     letter-spacing:.06em;text-transform:uppercase;white-space:nowrap}
+a.pp:hover{color:var(--accent);background:#0e0e13}
 </style></head>
 <body>
   <h1>MAE 2501 · Applied Physics I<br>Workshops</h1>
   <ul id="items">
     <li><a href="workshop-0c4582e195270/?v=88af49ad"><span class="k">Workshop 0</span><span>Hello World</span></a></li>
     <li><a href="workshop-1b83c04b6ff44/?v=0b1cd6cd"><span class="k">Workshop 1</span><span>Get Air</span></a></li>
-    <li><a href="workshop-2565782bac429/?v=ea83de8d"><span class="k">Workshop 2</span><span>Impulsive Behavior</span></a></li>
+    <li><a href="workshop-2565782bac429/?v=b02cb75c"><span class="k">Workshop 2</span><span>Impulsive Behavior</span></a></li>
   </ul>
 <script id="pending" type="text/plain"></script>
 <script>
@@ -42,7 +51,10 @@ a:hover{background:#0e0e13}
       a.href = c.s;
       var k = document.createElement('span'); k.className = 'k'; k.textContent = c.k;
       var t = document.createElement('span'); t.textContent = c.t;
-      a.appendChild(k); a.appendChild(t); li.appendChild(a); ul.appendChild(li);
+      a.appendChild(k); a.appendChild(t); li.appendChild(a);
+      if (c.p) { var pa = document.createElement('a'); pa.className = 'pp';
+                  pa.href = c.p; pa.textContent = 'Practice'; li.appendChild(pa); }
+      ul.appendChild(li);
       added = true; return false;
     });
     // Appended rows land at the end, which is wrong the moment one opens while the tab is already
