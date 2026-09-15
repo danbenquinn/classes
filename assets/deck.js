@@ -65,7 +65,17 @@
     // 83 = S. Belt and braces: the binding comes FROM the notes plugin, so not registering the plugin
     // already disables it — but publish also drops the plugin's <script> tag, and a null binding is a
     // clearer statement of intent than an absence.
-    keyboard: PUBLISHED ? { 83: null } : {},
+    // 32 / 13 = Space, Enter — PUBLISHED COPIES ONLY. `smartNext` is the function that reveals a
+    // quiz answer before it advances, and it was bound to → and PgDn alone. That is right in the
+    // room, where Daniel drives with → or the phone remote, and wrong everywhere a student reads:
+    // press Space on a question slide and Reveal advances straight past the answer. It was nearly
+    // harmless while the only published question slides were the four exit-quiz slides at the end of
+    // a lecture deck. It is not harmless in a Practice Problems deck, which is ten question slides
+    // and nothing else — and where the worked problems (ordinary fragments, which Space DOES open)
+    // would reveal while the multiple-choice ones silently would not, in the same deck, on the same
+    // key. The presenting copy is left alone on purpose: which key does what in front of a room is
+    // Daniel's call, not something to change underneath him.
+    keyboard: PUBLISHED ? { 83: null, 32: () => smartNext(), 13: () => smartNext() } : {},
     // Referenced only when it is loaded: publish strips the notes plugin's script tag, so naming
     // RevealNotes unconditionally here would be a ReferenceError on every student copy.
     plugins: PUBLISHED ? [] : [ RevealNotes ]
@@ -804,6 +814,13 @@
       return;
     }
     const cur = Reveal.getCurrentSlide();
+    // A tap on a published question slide reveals the answer. On a phone this is the only gesture a
+    // reader has that reaches smartNext at all — Reveal's own swipe handler calls Reveal.next()
+    // directly, so a swipe still skips the key. Tap is the natural reading gesture anyway, and this
+    // costs one branch. In the room, click goes on meaning play/pause and nothing else.
+    if(PUBLISHED && cur && cur.classList.contains('quiz') && !cur.classList.contains('revealed')){
+      cur.classList.add('revealed'); return;
+    }
     if(!activeVideo || !cur || !cur.classList.contains('vid')) return;
     if(player.paused){ if(player.ended) player.currentTime = 0; player.play().catch(()=>{}); }
     else { player.pause(); }

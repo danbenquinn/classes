@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-build="4ef6d383"><head><meta charset="utf-8">
+<html lang="en" data-build="c1b423b2"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MAE 2501 · Applied Physics I · Lecture Slides</title>
 <link rel="stylesheet" href="assets/fonts.css">
@@ -17,17 +17,27 @@ li:last-child{border-bottom:1px solid #23232a}
 a{display:flex;gap:1rem;align-items:baseline;padding:.85em .2em;color:var(--ink);text-decoration:none}
 a:hover{background:#0e0e13}
 .k{color:var(--accent);font-weight:600;min-width:5.5rem}
+/* A class row carries TWO links: the lecture deck (the whole row) and its practice problems (a
+   quieter tag on the right). The row stays one row because the two belong to one class — a student
+   looking for practice is looking for Class B's practice, not for a separate list to cross-reference
+   against this one. Muted until hover so the page still reads as a list of lectures at a glance. */
+li{display:flex;align-items:stretch}
+li > a:first-child{flex:1;min-width:0}
+a.pp{flex:0 0 auto;align-items:center;padding:.85em 1em;color:var(--muted,#8a8a99);font-size:.85em;
+     letter-spacing:.06em;text-transform:uppercase;white-space:nowrap}
+a.pp:hover{color:var(--accent);background:#0e0e13}
 </style></head>
 <body>
   <h1>MAE 2501 · Applied Physics I<br>Lecture Slides</h1>
   <ul id="items">
-    <li><a href="class-aa8969e476e85/?v=66941d8e"><span class="k">Class A</span><span>Force = Mass × Acceleration</span></a></li>
-    <li><a href="class-b82fef31d6741/?v=1620f8e9"><span class="k">Class B</span><span>Constant Force</span></a></li>
-    <li><a href="class-c57a405c5ff09/?v=eb36b8ad"><span class="k">Class C</span><span>Normal Force</span></a></li>
-    <li><a href="class-d5db81e511d4b/?v=31e2ca2f"><span class="k">Class D</span><span>Projectile Motion</span></a></li>
-    <li><a href="class-e9e03994621f9/?v=15bace31"><span class="k">Class E</span><span>Impulse and Momentum</span></a></li>
+    <li><a href="class-aa8969e476e85/?v=13ef08d5"><span class="k">Class A</span><span>Force = Mass × Acceleration</span></a><a class="pp" href="practice-a30858b469852/?v=13ef08d5">Practice</a></li>
+    <li><a href="class-b82fef31d6741/?v=fd62e804"><span class="k">Class B</span><span>Constant Force</span></a><a class="pp" href="practice-b5fc6f4660754/?v=fd62e804">Practice</a></li>
+    <li><a href="class-c57a405c5ff09/?v=e3146e15"><span class="k">Class C</span><span>Normal Force</span></a><a class="pp" href="practice-c4e08264c1b8e/?v=e3146e15">Practice</a></li>
+    <li><a href="class-d5db81e511d4b/?v=d2277b2b"><span class="k">Class D</span><span>Projectile Motion</span></a><a class="pp" href="practice-d89ca8cd89709/?v=d2277b2b">Practice</a></li>
+    <li><a href="class-e9e03994621f9/?v=b143c34d"><span class="k">Class E</span><span>Impulse and Momentum</span></a><a class="pp" href="practice-e8bd68708eb6b/?v=b143c34d">Practice</a></li>
+    <li><a href="class-f59119fac2d43/?v=72692ef4"><span class="k">Class F</span><span>Harmonic Motion</span></a><a class="pp" href="practice-feca96be9da6e/?v=72692ef4">Practice</a></li>
   </ul>
-<script id="pending" type="text/plain">W3sicyI6ICJjbGFzcy1mNTkxMTlmYWMyZDQzLz92PTRiZWVlMTZjIiwgImsiOiAiQ2xhc3MgRiIsICJ0IjogIkhhcm1vbmljIE1vdGlvbiIsICJyIjogMTc4OTE0MjQwMDAwMH1d</script>
+<script id="pending" type="text/plain"></script>
 <script>
 (function(){
   var raw = document.getElementById('pending').textContent.trim();
@@ -44,7 +54,10 @@ a:hover{background:#0e0e13}
       a.href = c.s;
       var k = document.createElement('span'); k.className = 'k'; k.textContent = c.k;
       var t = document.createElement('span'); t.textContent = c.t;
-      a.appendChild(k); a.appendChild(t); li.appendChild(a); ul.appendChild(li);
+      a.appendChild(k); a.appendChild(t); li.appendChild(a);
+      if (c.p) { var pa = document.createElement('a'); pa.className = 'pp';
+                  pa.href = c.p; pa.textContent = 'Practice'; li.appendChild(pa); }
+      ul.appendChild(li);
       added = true; return false;
     });
     // Appended rows land at the end, which is wrong the moment one opens while the tab is already

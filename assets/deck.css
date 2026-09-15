@@ -301,6 +301,20 @@
   .practice .eval{ color:var(--muted); }
   .practice .soln{ font-size:calc(var(--size-body) * 720px); margin-top:.2em; border-left:3px solid var(--accent); padding-left:.8em; }
   .practice .soln .ans{ color:var(--muted); font-size:calc(var(--size-body) * 720px); }
+  /* A solution under a MULTIPLE-CHOICE question gets the caption tier, not the body tier. It is the
+     same element doing the same job, but it never has the same room: a practice slide spends its
+     frame on one prompt and the working, while a question slide has already spent four option rows
+     before the solution starts. Class B's B-4 is the case — a three-line prompt, four choices, a
+     two-line derivation and an answer line — and at body size the answer ran off the bottom of the
+     frame. A tier, not a per-slide pin, because the crowding is a property of the slide TYPE. */
+  .quiz .soln{ font-size:calc(var(--size-caption) * 720px); margin-top:.2em; border-left:3px solid var(--accent); padding-left:.8em; }
+  .quiz .soln .ans{ color:var(--muted); font-size:calc(var(--size-caption) * 720px); }
+  /* A question slide in a Practice Problems deck carries its worked solution, opened by the SAME
+     advance that turns the correct choice green — one click, one reveal, whatever kind of slide the
+     problem started life as. Inert in a teacher deck: no `quiz` slide there has a `.soln`, because a
+     poll's solution fields never render outside the gathered deck (practice_build.py). */
+  .quiz .soln{ display:none; }
+  .quiz.revealed .soln{ display:block; }
 
   /* Definition / finale text slide */
   .defn{ text-align:center; width:100%; }
