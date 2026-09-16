@@ -2506,6 +2506,246 @@
   }
 
   // ============================================================================================
+  // Driven (data-sim="driven") — Class G. THE QUASI-STEADY DRIVEN OSCILLATOR, ON ONE SLIDER.
+  // A mass hangs from a spring anchored off the top of the frame and is pushed by F0·cos(ω_d t).
+  // Exactly one control: the frequency ratio r = ω_d/ω, 0 → 3. Everything else is fixed and hidden,
+  // for the reason the damped Oscillator variant hides k and m — the slide asks ONE question and a
+  // student who can reach a second slider will reach for it instead of answering.
+  //
+  // NO TRANSIENTS, ON PURPOSE. Off resonance this draws the PARTICULAR solution and nothing else:
+  //   A = (F0/k) / (1 − r²)                    x(t) = A·cos φ
+  // so the mass is always already in its steady state for whatever r the slider says. That is what
+  // makes it draggable in front of a class — you are sliding along the response curve, not watching a
+  // system chase it. The board states this amplitude; this is that formula, moved.
+  //
+  // PHASE IS INTEGRATED (φ += ω_d·dt), never evaluated as cos(ω_d·t). Same reason the free Oscillator
+  // does it: ω_d changes LIVE under the slider, and cos(ω_d·t) jumps every time it moves. Integrating
+  // the phase means only the AMPLITUDE responds to the slider, which is the whole illusion.
+  //
+  // RESONANCE IS A DIFFERENT MODE, and the tension is real and worth saying out loud in class: at
+  // r = 1 there IS no steady state, so "quasi-steady" stops being available. The slider detents onto
+  // 1.00 (±RES_SNAP) and the sim switches to the secular solution, amplitude climbing linearly from
+  // zero at F0/(2mω) — the same runaway `anim-resonance` shows, and the board's third line happening.
+  // It resets itself once it is absurd (RESET_AMP, well off-frame), because the absurdity is the point
+  // and cutting it short teaches less than letting it run.
+  //
+  // BOTH FORCE ARROWS ARE ON ONE SCALE (force/k · pxPerM — the spring arrow's own), so they are
+  // directly comparable: at r = 0 the light-blue drive and the green restoring force are equal and
+  // opposite (static balance), and as r → 1 the spring arrow grows without the drive arrow changing
+  // at all. That comparison is free here and impossible in a baked clip.
+  // ============================================================================================
+  class Driven extends SimBase {
+    constructor(canvas, opts = {}) {
+      super(canvas);
+      this.discMinPx = 2;
+      // EVERY NUMBER HERE IS THE BAKED SCENE'S (ClassG/gen/forced_hanging.py). This slide has to read
+      // as the pre-baked ringing clip with forcing added on top, so the mass, the coil, the equilibrium
+      // line and the scrolling strip must land in the SAME PLACE at the SAME SIZE. Keep them equal.
+      this.k = opts.k ?? 25; this.mass = opts.mass ?? 1;     // omega = 5 rad/s
+      this.F0 = opts.F0 ?? 20;                               // = F_STEADY, so r = 0.50 / 0.85 / 2.00
+                                                             // reproduce anim-low / -near / -high exactly
+      this.r = opts.r ?? 0.1;      // slider floor: below ~0.1 the picture stops changing
+      this.resetAmp = opts.resetAmp ?? 16;                   // world units = 4x the frame half-height (4).
+                                                             // Deliberately far off-screen: Daniel wants it
+                                                             // to look thoroughly broken before it restarts.
+      this.d = 0; this.phase = 0; this.simT = 0; this.last = 0;
+      this.ampShown = this.statik;        // see AMP_TAU
+      this.resonant = false; this.resAmp = 0;
+      this.resPendingSince = null;         // see setR / RES_DWELL
+      // Slo-mo is back (2026-09-16): at the top of the slider the drive is 2x the natural frequency and
+      // the mass is a small fast blur, which is exactly where you want to slow it down to point at the
+      // phase. It was cut as clutter and that was wrong — Pause freezes, it does not let you WATCH slowly.
+      this.slomo = false; this.slomoFactor = 0.3;
+      this.trace = [];
+      this.running = true; this.paused = false; this.everPlayed = true;
+      this.resize();
+    }
+    get omega()  { return Math.sqrt(Math.max(1e-6, this.k / this.mass)); }
+    get omegaD() { return this.r * this.omega; }
+    get statik() { return this.F0 / this.k; }                        // A at r = 0
+    // SIGNED (negative above resonance), and CLAMPED, because r is allowed to BE exactly 1 while the
+    // slider is only passing through it: unclamped this returns Infinity, which then poisons ampShown
+    // and the trace. The clamp is resetAmp, already far off-frame, so nothing visible is lost.
+    get amp() {
+      const a = this.statik / (1 - this.r * this.r);
+      return Math.max(-this.resetAmp, Math.min(this.resetAmp, a));
+    }
+    get growth() { return this.F0 / (2 * this.mass * this.omega); }  // m/s, the secular envelope rate
+    // The displayed amplitude chases the formula's amplitude over AMP_TAU instead of snapping to it.
+    // COSMETIC, and worth the small dishonesty: the phase is continuous but A is not, so an instant
+    // change puts a vertical step in the trace and kicks the mass whenever cos(phase) is near +-1 —
+    // which is most of the time you are dragging. 0.25 s is short enough to still read as "the steady
+    // answer for wherever the slider is" and long enough that a sweep of the slider looks swept.
+    // FLAT, not cbrt(m/0.4) like the other sims: physanim's PointMass takes a fixed MASS_RADIUS
+    // (0.0225 x frame_h = 0.18 world) and does NOT scale it with mass, so the mass-scaled version drew
+    // this disc 36% oversized next to the very clip it exists to match. Daniel caught it by eye.
+    get radius() { return HOUSE.baseRadius; }
+    resize() {
+      const dpr = window.devicePixelRatio || 1, w = this.c.clientWidth || this.c.width, h = this.c.clientHeight || this.c.height;
+      this.c.width = Math.round(w * dpr); this.c.height = Math.round(h * dpr);
+      this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      this.W = w; this.H = h;
+      this.scale = Math.min(w / HOUSE.frameW, h / HOUSE.frameH);
+      // World -> screen, origin-centered, exactly as physanim frames it. The four constants are
+      // forced_hanging.py's MASSX / X_LEFT / ANCHOR_Y / WINDOW; change one there and change it here.
+      this.pxPerM = this.scale;                        // 1 world unit, as in the scene
+      this.massX  = w / 2 + 4.5 * this.scale;          // MASSX    =  4.5
+      this.xLeft  = w / 2 - 7.0 * this.scale;          // X_LEFT   = -7.0
+      this.anchorY = h / 2 - 5.5 * this.scale;         // ANCHOR_Y =  5.5 (off the top edge; top is +4)
+      this.eqY0   = h / 2;                             // equilibrium is world y = 0 - frame center
+      this.paperSpeed = (this.massX - this.xLeft) / 5.0;    // WINDOW = 5 s across the strip
+      this.render();
+    }
+    sx(x) { return x; } sy(y) { return y; }
+    _massScreenY(d) { return this.eqY0 - d * this.pxPerM; }
+    play() {}
+    reset() { this.d = 0; this.phase = 0; this.simT = 0; this.trace = []; this.resPendingSince = null;
+              this.resAmp = 0; this.ampShown = this.resonant ? 0 : this.amp;
+              this.running = true; this.paused = false; this.render(); }
+    // The slider hands r in here so entering/leaving resonance is ONE place, not scattered through
+    // the input handlers. Entering restarts the runaway from rest (matching anim-resonance, which
+    // also starts at rest) rather than continuing from an off-frame quasi-steady amplitude.
+    // ENTERING RESONANCE IS DESTRUCTIVE — it restarts the runaway from rest and clears the strip — so
+    // it must be triggered by INTENT, not by the slider touching 1 on its way past. It used to switch
+    // the instant r hit 1, and since the detent pulls anything within 0.02 onto 1.00, a quick drag
+    // through resonance landed on it for a single frame and wiped the sim: 94 trace points to 0, the
+    // clock back to zero, amplitude restarting from nothing (Daniel, 2026-09-16; reproduced with a
+    // scripted 20-event sweep). Dragging TO 1 and leaving it there always behaved, which is the tell —
+    // the difference is dwell, not position. So: arm here, commit in step() only after the slider has
+    // SETTLED on 1 for RES_DWELL. A pass-through never settles and now sails straight through, drawing
+    // the (clamped, far off-frame) quasi-steady amplitude on the way, which is what it should look like.
+    setR(r) {
+      const res = Math.abs(r - 1) < 1e-6;
+      this.r = r;
+      if (!res) {
+        if (this.resonant) this.ampShown = this.resAmp;   // leave resonance from where it actually is
+        this.resonant = false; this.resPendingSince = null;
+      } else if (!this.resonant && this.resPendingSince === null) {
+        this.resPendingSince = performance.now();
+      }
+    }
+    step(now) {
+      if (this.running && !this.paused) {
+        const dt = Math.max(0, Math.min((now - this.last) / 1000, 0.05)) * (this.slomo ? this.slomoFactor : 1);
+        this.last = now; this.simT += dt;
+        const RES_DWELL = 250;   // ms the slider must REST on 1.00 before the runaway starts — see setR
+        if (this.resPendingSince !== null && now - this.resPendingSince >= RES_DWELL) {
+          this.resPendingSince = null; this.resonant = true;
+          this.resAmp = 0; this.phase = 0; this.trace = []; this.simT = 0;   // the runaway starts at rest
+        }
+        if (this.resonant) {
+          this.phase += this.omega * dt;
+          this.resAmp += this.growth * dt;
+          if (this.resAmp > this.resetAmp) { this.resAmp = 0; this.trace = []; }   // let it get ridiculous first
+          this.d = this.resAmp * Math.sin(this.phase);
+        } else {
+          this.phase += this.omegaD * dt;          // integrated, so the slider never jogs the mass
+          const AMP_TAU = 0.25;
+          this.ampShown += (this.amp - this.ampShown) * (1 - Math.exp(-dt / AMP_TAU));
+          this.d = this.ampShown * Math.cos(this.phase);
+        }
+        this.trace.push({ t: this.simT, d: this.d });
+        while (this.trace.length > 1 && this.massX - (this.simT - this.trace[0].t) * this.paperSpeed < this.xLeft - 4) this.trace.shift();
+      } else { this.last = now; }
+      this.render();
+    }
+    _drive() { return this.resonant ? this.F0 * Math.cos(this.phase) : this.F0 * Math.cos(this.phase); }
+    _spring(topY) {
+      const ctx = this.ctx, x = this.massX, y0 = this.anchorY, y1 = topY;
+      const width = HOUSE.springWidth * this.scale, leadM = HOUSE.springLead * this.scale;
+      const coils = HOUSE.springCoils;
+      const ya = y0, yb = y1 - leadM, span = yb - ya;
+      ctx.save(); ctx.strokeStyle = HOUSE.boundary; ctx.lineWidth = Math.max(this.scale * 0.045, 3);
+      ctx.lineCap = "round"; ctx.lineJoin = "round";
+      ctx.beginPath(); ctx.moveTo(x, y0);
+      if (span > 0) for (let i = 1; i < 2 * coils; i++) {
+        const yy = ya + span * i / (2 * coils), xx = x + ((i % 2 === 1) ? width / 2 : -width / 2); ctx.lineTo(xx, yy); }
+      ctx.lineTo(x, yb); ctx.lineTo(x, y1); ctx.stroke(); ctx.restore();
+    }
+    render() {
+      const ctx = this.ctx; ctx.clearRect(0, 0, this.W, this.H);
+      const my = this._massScreenY(this.d), r = this.radius;
+      // DashedLink(MASS_CORE, alpha .4, dashes 4/5) from X_LEFT to MASSX - the baked scene's own line
+      ctx.save(); ctx.strokeStyle = "rgba(240,240,245,0.4)"; ctx.setLineDash([4, 5]); ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(this.xLeft, this.eqY0); ctx.lineTo(this.massX, this.eqY0); ctx.stroke();
+      ctx.setLineDash([]); ctx.restore();
+      this._spring(my - r * this.scale);
+      if (this.trace.length > 1) {
+        ctx.save(); ctx.strokeStyle = HOUSE.velocity; ctx.lineWidth = Math.max(this.scale * 0.05, 2);
+        ctx.lineCap = "round"; ctx.lineJoin = "round"; ctx.beginPath();
+        let started = false;
+        for (let i = this.trace.length - 1; i >= 0; i--) {
+          const s = this.trace[i], X = this.massX - (this.simT - s.t) * this.paperSpeed, Y = this._massScreenY(s.d);
+          if (X < this.xLeft - 4) break; if (!started) { ctx.moveTo(X, Y); started = true; } else ctx.lineTo(X, Y); }
+        ctx.stroke(); ctx.restore();
+      }
+      this._disc(this.massX, my, r, HOUSE.mass, 1);
+      // green restoring force: tip lands ON the equilibrium line, so its length IS the displacement
+      this._forceToPointPx(this.massX, my, this.massX, this.eqY0, HOUSE.spring, 1);
+      // light-blue applied push, on the SAME N→px scale (force/k · pxPerM) — so at r = 0 the two
+      // arrows are equal and opposite, and near resonance the green one grows while this one does not
+      const fd = this._drive(), lenPx = (fd / this.k) * this.pxPerM;
+      if (Math.abs(lenPx) > 1.2) this._arrow(this.massX, my, 0, -lenPx, HOUSE.applied, 1);
+    }
+  }
+
+  // One slider and it is deliberately WIDE: it is the only control, it spans 0-2, and the whole lesson
+  // lives in the 0.85-1.15 neighborhood, so resolution near 1 is worth the width (Daniel, 2026-09-16).
+  const DRIVEN_CONTROLS_HTML = `
+      <canvas class="simcanvas"></canvas>
+      <div class="simctrls">
+        <button class="simbtn play">⏸ Pause</button>
+        <button class="simbtn reset">↺ Reset</button>
+        <button class="simbtn slomo" title="Slow motion">🐢</button>
+        <label><span class="var"><i>ω<sub>d</sub></i>/<i>ω</i>:</span> <input type="range" class="s-r" min="0.1" max="2" step="0.01" style="width:min(36vw,470px)"><input type="number" class="n-r" step="0.01"></label>
+      </div>`;
+
+  function mountDriven(section) {
+    if (!section.querySelector(".simcanvas")) section.insertAdjacentHTML("beforeend", DRIVEN_CONTROLS_HTML);
+    const d = section.dataset;
+    const canvas = section.querySelector(".simcanvas");
+    const sim = new Driven(canvas, { k: d.k !== undefined ? +d.k : 25, mass: d.mass !== undefined ? +d.mass : 1,
+                                     F0: d.f0 !== undefined ? +d.f0 : 20,
+                                     resetAmp: d.resetAmp !== undefined ? +d.resetAmp : 16,
+                                     r: d.r !== undefined ? +d.r : 0.1 });
+    const q = s => section.querySelector(s);
+    const readonly = window.self !== window.top;
+    const rng = q(".s-r"), num = q(".n-r");
+    // The detent. A continuous slider cannot be landed on exactly 1.000 while you are talking to a
+    // room, and r = 1 is the one value this slide exists to reach, so anything within RES_SNAP is
+    // pulled onto it. Nothing is lost: at r = 0.98 the amplitude is already 25× the static deflection
+    // and the mass is far off-frame, so the snapped-over values have no picture of their own.
+    const RES_SNAP = 0.02;
+    const snap = v => (Math.abs(v - 1) <= RES_SNAP ? 1 : v);
+    const clamp = v => Math.max(+rng.min, Math.min(+rng.max, v));
+    // --fill is the CSS track's filled fraction; WebKit cannot style a range's own progress, so the
+    // percentage is pushed onto the element here on every input. See deck.css, the PROTOTYPE block.
+    const paint = () => { const lo = +rng.min, hi = +rng.max;
+                          rng.style.setProperty("--fill", ((+rng.value - lo) / (hi - lo) * 100).toFixed(1) + "%"); };
+    const apply = () => { const v = snap(+rng.value); rng.value = v; num.value = v.toFixed(2);
+                          paint(); sim.setR(v); sim.render(); };
+    rng.value = sim.r; num.value = (+sim.r).toFixed(2);
+    rng.addEventListener("input", apply);
+    num.addEventListener("input", () => { const v = parseFloat(num.value); if (isNaN(v)) return; rng.value = clamp(snap(v)); apply(); });
+    num.addEventListener("change", () => { const v = parseFloat(num.value); num.value = isNaN(v) ? rng.value : clamp(snap(v)); rng.value = num.value; apply(); });
+    const playBtn = q(".play");
+    const refreshPlay = () => { playBtn.textContent = sim.paused ? "▶ Play" : "⏸ Pause"; };
+    sim.refreshPlayBtn = refreshPlay;
+    playBtn.addEventListener("click", () => { sim.paused = !sim.paused; if (!sim.paused) sim.last = performance.now(); refreshPlay(); });
+    q(".reset").addEventListener("click", () => { sim.reset(); refreshPlay(); });
+    const slo = q(".slomo");
+    if (slo) { slo.classList.toggle("on", sim.slomo);
+               slo.addEventListener("click", () => { sim.slomo = !sim.slomo; slo.classList.toggle("on", sim.slomo); }); }
+    apply();
+    if (readonly) { canvas.style.pointerEvents = "none"; [playBtn, q(".reset"), slo, rng, num].forEach(el => { if (el) el.disabled = true; }); const c = q(".simctrls"); if (c) c.style.opacity = ".4"; }
+    let raf = null;
+    sim.start = () => { sim.everPlayed = true; if (raf) return; const loop = (now) => { sim.step(now); raf = requestAnimationFrame(loop); }; sim.last = performance.now(); raf = requestAnimationFrame(loop); };
+    sim.stop = () => { if (raf) { cancelAnimationFrame(raf); raf = null; } };
+    window.addEventListener("resize", () => { sim.resize(); sim.render(); });
+    return sim;
+  }
+
+  // ============================================================================================
   // SpringGame (data-sim="oscillator-game") — Class F, the gamified spring (plays right after sim-spring).
   // A DISTANCE game, not a win/lose puzzle. The mass sits on the LEFT (max time to read the field and time a
   // release); its x(t) history trails off the left edge. Small red squares drift in from the right — a SCARCE,
@@ -4858,7 +5098,7 @@
     "projectile2d", "2d", "projectile2d-pair", "pair2d",
     "deflect", "game", "circle", "circular", "oscillator", "spring",
     "oscillator-game", "springgame", "attractor2d", "attractor", "grab", "launcher", "launchergame",
-    "platformbounce", "frictionramp", "coupledmass"
+    "platformbounce", "frictionramp", "coupledmass", "driven"
   ]);
 
   function mount(section) {
@@ -4884,6 +5124,7 @@
     if (kind === "deflect" || kind === "game") return mountDeflect(section);
     if (kind === "circle" || kind === "circular") return mountCircle(section);
     if (kind === "oscillator" || kind === "spring") return mountOscillator(section);
+    if (kind === "driven") return mountDriven(section);
     if (kind === "oscillator-game" || kind === "springgame") return mountSpringGame(section);
     if (kind === "attractor2d" || kind === "attractor") return mountAttractor2D(section);
     if (kind === "grab") return mountGrab(section);
@@ -5059,5 +5300,5 @@
     return sim;
   }
 
-  window.Interactive = { Projectile, Projectile2D, HandLift, HandLiftEnergy, DeflectGame, Circular, Oscillator, SpringGame, Attractor2D, Grab, LauncherGame, PlatformBounce, FrictionRamp, CoupledMass, mount, HOUSE, betaOf, dragStep, dragAdvance, histAt };
+  window.Interactive = { Projectile, Projectile2D, HandLift, HandLiftEnergy, DeflectGame, Circular, Oscillator, SpringGame, Attractor2D, Grab, LauncherGame, PlatformBounce, FrictionRamp, CoupledMass, Driven, mount, HOUSE, betaOf, dragStep, dragAdvance, histAt };
 })();

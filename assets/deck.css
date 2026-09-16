@@ -407,6 +407,33 @@
   .simctrls label{ display:flex; align-items:center; gap:.45em; color:var(--muted); }
   .simctrls input[type=range]{ width:6.5em; accent-color:var(--accent); }
   .simctrls input[type=checkbox]{ accent-color:var(--accent); }
+  /* ---- PROTOTYPE, 2026-09-16: a visible TRACK behind the slider thumb -------------------------
+     Scoped to Class G's `driven` sim so it can be judged on one slide before it goes house-wide.
+     Every range control in the suite has been the browser default, which on a black stage is a dark
+     groove on a black background: the thumb reads as a dot floating in space with nothing to slide
+     along, and Daniel had never consciously noticed why they felt odd until this slide put one big
+     slider in the middle of the screen. The filled portion is drawn with a hard-stop gradient keyed
+     off --fill, which mountDriven writes on every input, because a <input type=range> cannot style
+     its own progress in WebKit. If this is kept, move the block onto the bare
+     `.simctrls input[type=range]` rule above, delete the [data-sim] scope, and drop `accent-color`
+     (it does nothing once appearance is none). ------------------------------------------------- */
+  .stage.sim[data-sim="driven"] .simctrls input[type=range]{
+    -webkit-appearance:none; appearance:none; background:transparent; height:1.5em; cursor:pointer; }
+  .stage.sim[data-sim="driven"] .simctrls input[type=range]::-webkit-slider-runnable-track{
+    height:.42em; border-radius:999px; border:1px solid rgba(255,255,255,.16);
+    background:linear-gradient(to right, var(--accent) 0 var(--fill,0%), rgba(255,255,255,.17) var(--fill,0%) 100%); }
+  .stage.sim[data-sim="driven"] .simctrls input[type=range]::-webkit-slider-thumb{
+    -webkit-appearance:none; appearance:none; width:1.05em; height:1.05em; border-radius:50%;
+    background:var(--ink); border:1px solid rgba(0,0,0,.55); box-shadow:0 1px 3px rgba(0,0,0,.6);
+    margin-top:calc(.21em - .525em + 1px); }
+  .stage.sim[data-sim="driven"] .simctrls input[type=range]::-moz-range-track{
+    height:.42em; border-radius:999px; background:rgba(255,255,255,.17);
+    border:1px solid rgba(255,255,255,.16); }
+  .stage.sim[data-sim="driven"] .simctrls input[type=range]::-moz-range-progress{
+    height:.42em; border-radius:999px; background:var(--accent); }
+  .stage.sim[data-sim="driven"] .simctrls input[type=range]::-moz-range-thumb{
+    width:1.05em; height:1.05em; border-radius:50%; background:var(--ink);
+    border:1px solid rgba(0,0,0,.55); }
   .simctrls input[type=number]{ width:3.4em; background:#12151a; color:var(--ink); border:1px solid #2c3038;
                                 border-radius:6px; padding:.15em .3em; font:inherit; font-variant-numeric:tabular-nums; }
   .simctrls .u{ color:var(--muted); }
