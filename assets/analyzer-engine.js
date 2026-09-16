@@ -1282,7 +1282,14 @@ function inputIssue(st){
         let j=k; while(j>I.i0 && sr.a[j] < 0.25*sr.a[k]) j--;
         exp = I.v[j-I.i0];
       } else exp = -I.v[I.v.length-1];
-      if(Math.abs(A.v_before-exp)>Math.max(0.03,0.10*Math.abs(exp)))
+      // SOFT on purpose (2026-09-16, Daniel: "as long as they get a reasonable value, let them move on").
+      // Where the integral starts is the student's click, and a click a few samples off, or a re-drag after
+      // typing, moves the curve by a tenth of a m/s or more. So: accept anything within 35% / 0.15 m/s of
+      // the walk-back value, OR of the curve's own extreme in the window — the two readings a student
+      // plausibly takes — and only send back a number that is nowhere near their plot.
+      let vmax=0; for(const v of I.v) if(Math.abs(v)>Math.abs(vmax)) vmax=v; vmax=Math.abs(vmax);
+      const near=(ref)=>Number.isFinite(ref) && Math.abs(A.v_before-ref)<=Math.max(0.15,0.35*Math.abs(ref));
+      if(!near(exp) && !near(vmax))
         return fbText(st,"check","That doesn't match your own plot — the green curve starts at about {expected} m/s.",{expected:exp.toFixed(2)});
     }
   }
