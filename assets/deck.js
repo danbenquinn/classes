@@ -1417,6 +1417,16 @@
     const cur = Reveal.getCurrentSlide();
     // Sim slide: the first → plays the animation; once it's been played (→ or a Play click), → advances.
     if(cur && cur.classList.contains('sim') && cur._sim && !cur._sim.everPlayed){ cur._sim.play(); return; }
+    // A STAGED sim: once it has played, the next → advances the sim's OWN stage before the press
+    // reaches the slide. Class H's floor bounce is the first — its second stage fades the spring
+    // away and leaves the floor at the spring's top, with the ball and the plots running through.
+    // A sim opts in by exposing `advanceStage()`, which returns false when it has no stage left,
+    // and the press falls through. Same shape as the playlist, video-stack and quad branches below:
+    // one slide, more than one beat. (This was a Reveal `.fragment` for a day. A fragment reveals an
+    // ELEMENT, and what changes here is state inside a canvas, so the fragment had to be an empty
+    // invisible span — which is exactly how it shipped broken with nothing to look at.)
+    if(cur && cur.classList.contains('sim') && cur._sim && cur._sim.everPlayed
+       && typeof cur._sim.advanceStage === 'function' && cur._sim.advanceStage() !== false){ return; }
     // Quad slide (data-quad): first → plays the full-screen opener, second → tiles the four-up grid, next → advances.
     if(cur && cur.dataset.quad !== undefined && !cur._quadShown){
       if(activeVideo && cur.dataset.autoplay === undefined && player.paused && atHead(player, 0.05) && !player.ended){ player.play().catch(()=>{}); return; }
