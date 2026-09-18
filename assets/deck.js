@@ -80,6 +80,72 @@
     // RevealNotes unconditionally here would be a ReferenceError on every student copy.
     plugins: PUBLISHED ? [] : [ RevealNotes ]
   });
+  // ---------- short parentheticals do not break across lines ----------
+  // `a spring ($k=200$ N/m) drawn back` wraps after the math, because the only break opportunity in
+  // `(k=200 N/m)` is the space MathJax leaves between its container and the text ` N/m)`. The reader
+  // then finds an orphaned `N/m)` starting a line, which looks like a typo and costs a beat in class.
+  //
+  // CSS cannot do this: there is no selector for "between these two parentheses", and the parenthetical
+  // routinely spans element boundaries (text node, <mjx-container>, text node). So the engine does it,
+  // once, for every slide: find each `( … )` whose contents are SHORT and turn the ordinary spaces
+  // inside it into non-breaking ones.
+  //
+  // SHORT is the whole rule (`NOWRAP_MAX`). A brief parenthetical is read as one token and should not
+  // be split; a long aside is a phrase and must still wrap, or it would push a line off the slide —
+  // which would trade a small ugliness for a real one. Math containers count toward the length as one
+  // character each, so `($k=200$ N/m)` measures as short.
+  //
+  // Idempotent (a space already non-breaking is left alone), and it never touches text inside
+  // `mjx-container` — MathJax's own layout is not ours to edit.
+  const NOWRAP_MAX = 34;
+  function nowrapParens(root){
+    if(!root) return;
+    root.querySelectorAll('.lead, .ans, .qprompt, .qtxt, .psetup, .dtext, .dhead, .sub, .cap, figcaption, p, li')
+        .forEach(el => {
+      if(el.closest('aside.notes')) return;
+      // Flatten to a string, remembering which text node each character came from. A math container
+      // contributes ONE placeholder character: it adds length but no spaces and no parentheses.
+      const nodes = [], map = [];
+      let flat = '';
+      const walk = (n) => {
+        for(const c of n.childNodes){
+          if(c.nodeType === 3){
+            const i = nodes.push(c) - 1;
+            for(let k = 0; k < c.nodeValue.length; k++){ map.push([i, k]); }
+            flat += c.nodeValue;
+          } else if(c.nodeType === 1){
+            const tag = c.tagName.toLowerCase();
+            if(tag === 'mjx-container' || tag === 'svg'){ map.push(null); flat += ''; }
+            else if(tag === 'span' && c.classList.contains('nobr')) return;   // already done
+            else walk(c);
+          }
+        }
+      };
+      walk(el);
+      if(flat.indexOf('(') < 0) return;
+      // Collect first, apply in REVERSE. Wrapping mutates the tree, which invalidates every offset
+      // after the range; going right to left leaves the earlier ones untouched.
+      const hits = [];
+      const re = /\(([^()]*)\)/g;
+      let m;
+      while((m = re.exec(flat)) !== null){
+        if(m[1].length > NOWRAP_MAX) continue;
+        const a = map[m.index], b = map[m.index + m[0].length - 1];
+        if(a && b) hits.push([a, b]);
+      }
+      hits.reverse().forEach(([a, b]) => {
+        try{
+          const r = document.createRange();
+          r.setStart(nodes[a[0]], a[1]);
+          r.setEnd(nodes[b[0]], b[1] + 1);
+          const span = document.createElement('span');
+          span.className = 'nobr';
+          r.surroundContents(span);
+        }catch(e){ /* a parenthetical straddling block boundaries: leave it alone */ }
+      });
+    });
+  }
+
   // Typeset all math (slides + speaker notes) once MathJax is ready. Notes are display:none on the
   // deck but still get typeset, so the SVG is present when reveal copies them to the speaker window.
   Reveal.on('ready', () => {
@@ -92,6 +158,7 @@
       MathJax.startup.promise
         .then(() => MathJax.typesetPromise([document.querySelector('.reveal .slides')]))
         .then(() => document.querySelectorAll('mjx-assistive-mml').forEach(el => el.remove())) // no dup in speaker view
+        .then(() => nowrapParens(document.querySelector('.reveal .slides')))   // after typeset: the math is containers now
         .catch(e => console.warn('MathJax typeset failed', e));
   });
 
@@ -658,8 +725,8 @@
   //    on its last frame (so the finished graph can be studied); the next → advances. Without data-loop the
   //    first → plays it once, the next → advances.
   //  • data-cover → the walk-in warm-up: two full-width, half-height tiles that just loop.
-  //  • data-axes="x,y" labels each strip's momentum axis (m ṙ_x / m ṙ_y) and its force axis (F_x / F_y);
-//    t is time. (Until 2026-09-09 the momentum glyph read `mu`/`mv`.)
+  //  • data-axes="x,y" labels each strip's momentum axis (m ẋ / m ẏ) and its force axis (F_x / F_y);
+//    t is time. (The momentum glyph read `mu`/`mv` until 2026-09-09 and `m ṙ_x` until 2026-09-18.)
   const stackwrap = document.getElementById('stackwrap');
   let stackRaf = null;
   function pauseStack(){ stackwrap.querySelectorAll('video').forEach(v => v.pause()); if(stackRaf){ cancelAnimationFrame(stackRaf); stackRaf = null; } }
@@ -667,18 +734,20 @@
   function axisSVG(ylabel){                                    // coordinate glyph: y-axis (ylabel) up + time axis (t) right; corner at bottom-left (8%,92%)
     let ytxt;
     const MONO = 'ui-monospace,monospace';
-    // `mrdot_x` / `mrdot_y` — a MOMENTUM COMPONENT, m r-with-an-overdot and the component subscript
-    // (Daniel, 2026-09-09; it replaces the old `mu`/`mv`, which were the last place in the course
-    // still naming a velocity component with its own letter). The overdot is a <circle>, not a
-    // combining accent and not the precomposed U+1E59 — neither is safe to assume in whatever the
-    // browser resolves `ui-monospace` to. Each glyph gets its own <text> at a hand-set x so the
-    // layout does not depend on that font's advance width either; the numbers are tuned against
-    // this function's fixed 100-unit viewBox and 38-unit type size.
-    if(ylabel.indexOf('rdot_') >= 0){ const sub = ylabel.split('_')[1];
+    // `mdot_x` / `mdot_y` — a MOMENTUM COMPONENT: m, then the position letter with an overdot.
+    // It was `mrdot_` (m, r, overdot, subscript) from 2026-09-09 until 2026-09-18, when Class H's
+    // panels went to `m ẋ` and Daniel moved Class E to match rather than leave the course split
+    // across the two decks that show momentum at all. The 2026-09-09 point still holds and is what
+    // rules out the obvious `mv_x`: a velocity must not get its own letter back. `\dot x` is not a
+    // new letter, it is the velocity spelling these decks already use on every slide.
+    // The overdot is a <circle>, not a combining accent and not a precomposed codepoint — neither is
+    // safe to assume in whatever the browser resolves `ui-monospace` to. Each glyph gets its own
+    // <text> at a hand-set x so the layout does not depend on that font's advance width either; the
+    // numbers are tuned against this function's fixed 100-unit viewBox and 38-unit type size.
+    if(ylabel.indexOf('mdot_') === 0){ const v = ylabel.split('_')[1];
       ytxt = '<text x="17" y="31" fill="#cfd3da" font-size="38" font-style="italic" font-family="' + MONO + '">m</text>'
-           + '<text x="40" y="31" fill="#cfd3da" font-size="38" font-style="italic" font-family="' + MONO + '">r</text>'
-           + '<circle cx="53" cy="7" r="3.4" fill="#cfd3da"/>'
-           + '<text x="62" y="39" fill="#cfd3da" font-size="24" font-style="italic" font-family="' + MONO + '">' + sub + '</text>';
+           + '<text x="40" y="31" fill="#cfd3da" font-size="38" font-style="italic" font-family="' + MONO + '">' + v + '</text>'
+           + '<circle cx="52" cy="7" r="3.4" fill="#cfd3da"/>';
     } else if(ylabel.indexOf('_') >= 0){ const p = ylabel.split('_');
       ytxt = '<text x="17" y="31" fill="#cfd3da" font-size="38" font-style="italic" font-family="' + MONO + '">' + p[0] + '<tspan font-size="64%" dy="8">' + p[1] + '</tspan></text>';
     } else { ytxt = '<text x="17" y="31" fill="#cfd3da" font-size="38" font-style="italic" font-family="' + MONO + '">' + ylabel + '</text>'; }
@@ -761,7 +830,7 @@
         v.addEventListener('loadedmetadata', () => layoutStack(cur), { once: true }); sw.appendChild(v);
         const comp = axes[i];                                  // "x" or "y" → two glyphs (momentum + force); absent → none
         if(comp === 'x' || comp === 'y'){
-          const momEl = document.createElement('div'); momEl.className = 'stack-axis'; momEl.innerHTML = axisSVG('mrdot_' + comp); stackwrap.appendChild(momEl);
+          const momEl = document.createElement('div'); momEl.className = 'stack-axis'; momEl.innerHTML = axisSVG('mdot_' + comp); stackwrap.appendChild(momEl);
           const fEl = document.createElement('div'); fEl.className = 'stack-axis'; fEl.innerHTML = axisSVG('F_' + comp); stackwrap.appendChild(fEl);
           axisEls.push({ strip: i, yfrac: ZERO.mom, el: momEl }, { strip: i, yfrac: ZERO.force, el: fEl });
         }
@@ -864,14 +933,15 @@
   }
 
   // ---------- data-then auto-playlist (e.g. the Class D DOS warm-up): clip ends -> load data-then, loop it ----------
-  player.addEventListener('ended', () => {
+  function onThenEnded(ev){
+    if(ev.target !== player) return;                       // BOTH PLAYERS, below
     const cur = Reveal.getCurrentSlide();
     if(cur && cur.dataset.then && !player._swapped){
       player._swapped = true; player.loop = true;
       player.src = resolveSrc(cur.dataset.then); player.load();
       player.onloadeddata = () => { layoutActive(); player.play().catch(()=>{}); };
     }
-  });
+  }
 
   // ---------- data-loopseq: play several cuts back-to-back, then loop the WHOLE sequence ----------
   // The generalisation of data-then to N clips with a wrap-around. Use when one continuous shot had to be
@@ -879,7 +949,8 @@
   // seamless loop — nothing to advance, no per-cut keypress. `data-media` is the first cut (also the
   // overview thumbnail); `data-loopseq` is the full comma list. Contrast data-playlist, where the
   // presenter steps between cuts by hand. Per-clip `loop` must stay OFF or the first cut never ends.
-  player.addEventListener('ended', () => {
+  function onSeqEnded(ev){
+    if(ev.target !== player) return;                       // BOTH PLAYERS, below
     const cur = Reveal.getCurrentSlide();
     if(!cur || !cur.dataset.loopseq) return;
     const list = cur.dataset.loopseq.split(',').map(s => s.trim()).filter(Boolean);
@@ -888,6 +959,26 @@
     player.loop = false;
     player.src = resolveSrc(list[cur._seqIdx]); player.load();
     player.onloadeddata = () => { layoutActive(); player.play().catch(()=>{}); };
+  }
+
+  // ---------- BOTH PLAYERS, or neither: `ended` chains vs. the swap buffer ----------
+  // `player` and `playerB` are two <video> ELEMENTS, and `swapPlayers()` exchanges which variable
+  // points at which. A listener bound with `player.addEventListener(...)` is bound to the element
+  // `player` named AT THAT MOMENT — so after any swap it is sitting on the hidden buffer and the
+  // visible video's `ended` reaches nobody. Both chains above then stop silently: a `data-loopseq`
+  // slide plays its first cut and halts; a `data-then` slide never swaps. Nothing reports it,
+  // because from the engine's side the clip simply finished.
+  //
+  // Found 2026-09-18 on Class H's `balloon`, wired to loopseq two days earlier and playing exactly
+  // one of its four takes. The wiring was right and every gate was green; the listener was on the
+  // wrong element, because an earlier slide had staged its next cut and swapped. A gate cannot see
+  // this — it is not a fact about any file.
+  //
+  // So: bind to BOTH elements once, and have each handler bail unless the event came from whichever
+  // element is visible right now. Anything added here later must do the same.
+  [player, playerB].forEach(v => {
+    v.addEventListener('ended', onThenEnded);
+    v.addEventListener('ended', onSeqEnded);
   });
 
   // ---------- Live document camera (Class D; fully local — skipped in the speaker-view iframe) ----------
@@ -1625,6 +1716,40 @@
   });
 
   // ---------- Interactive sim slides: mount once, run the loop only while the slide is active ----------
+  // ---------- the slider track's filled fraction (deck.css, the range-control block) ----------
+  // WebKit cannot style a range input's own progress, so the filled percentage has to be pushed onto
+  // the element as a custom property. Doing it HERE, generically, is the whole point: every slider in
+  // every sim gets the house track by existing, rather than each mount remembering to paint itself.
+  // Class G's `driven` mount had its own copy while the style was a prototype; that copy is gone.
+  // Firefox has ::-moz-range-progress and ignores --fill, so this is WebKit's tax alone.
+  function paintRange(el){
+    const lo = +el.min || 0, hi = (el.max === "" || el.max == null) ? 100 : +el.max;
+    const f = hi === lo ? 0 : ((+el.value - lo) / (hi - lo)) * 100;
+    el.style.setProperty('--fill', Math.max(0, Math.min(100, f)).toFixed(1) + '%');
+  }
+  function paintRanges(root){
+    (root || document).querySelectorAll('.simctrls input[type=range]').forEach(paintRange);
+  }
+  // `input` bubbles, so one listener covers controls that are injected long after this runs.
+  document.addEventListener('input', (e) => {
+    const t = e.target;
+    if(t && t.tagName === 'INPUT' && t.type === 'range' && t.closest('.simctrls')) paintRange(t);
+  });
+  // A number box beside a slider writes `rng.value` directly, which fires NO `input` on the range.
+  // Repainting its label's range on the box's own events covers that without dispatching a synthetic
+  // `input` (which would re-enter each mount's handler and is the kind of loop that is hard to see).
+  document.addEventListener('input', (e) => {
+    const t = e.target;
+    if(t && t.tagName === 'INPUT' && (t.type === 'number' || t.type === 'text')){
+      const lab = t.closest('.simctrls label'); if(lab) paintRanges(lab);
+    }
+  });
+  document.addEventListener('change', (e) => {
+    const t = e.target;
+    if(t && t.tagName === 'INPUT'){ const lab = t.closest('.simctrls label'); if(lab) paintRanges(lab); }
+  });
+  Reveal.on('ready', () => paintRanges());
+
   let currentSim = null;
   function handleSim(){
     const cur = Reveal.getCurrentSlide();
@@ -1637,6 +1762,7 @@
     if(cur && cur.classList.contains('sim') && window.Interactive){
       if(!cur._sim) cur._sim = Interactive.mount(cur);
       cur._sim.resize(); cur._sim.render(); cur._sim.start();
+      paintRanges(cur);
       currentSim = cur._sim;
     }
   }

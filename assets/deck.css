@@ -405,35 +405,58 @@
   .simctrls.hud-left{ left:2.2%; right:auto; bottom:auto; top:12%; width:auto;
                       justify-content:flex-start; background:none; padding:0; }
   .simctrls label{ display:flex; align-items:center; gap:.45em; color:var(--muted); }
-  .simctrls input[type=range]{ width:6.5em; accent-color:var(--accent); }
-  .simctrls input[type=checkbox]{ accent-color:var(--accent); }
-  /* ---- PROTOTYPE, 2026-09-16: a visible TRACK behind the slider thumb -------------------------
-     Scoped to Class G's `driven` sim so it can be judged on one slide before it goes house-wide.
-     Every range control in the suite has been the browser default, which on a black stage is a dark
-     groove on a black background: the thumb reads as a dot floating in space with nothing to slide
-     along, and Daniel had never consciously noticed why they felt odd until this slide put one big
-     slider in the middle of the screen. The filled portion is drawn with a hard-stop gradient keyed
-     off --fill, which mountDriven writes on every input, because a <input type=range> cannot style
-     its own progress in WebKit. If this is kept, move the block onto the bare
-     `.simctrls input[type=range]` rule above, delete the [data-sim] scope, and drop `accent-color`
-     (it does nothing once appearance is none). ------------------------------------------------- */
-  .stage.sim[data-sim="driven"] .simctrls input[type=range]{
-    -webkit-appearance:none; appearance:none; background:transparent; height:1.5em; cursor:pointer; }
-  .stage.sim[data-sim="driven"] .simctrls input[type=range]::-webkit-slider-runnable-track{
+  /* ---- The range control: a VISIBLE TRACK behind the thumb -------------------------------------
+     House default since 2026-09-18. It was prototyped on 2026-09-16 scoped to Class G's `driven` sim
+     so it could be judged on one slide first, and that block ended with instructions for promoting
+     it; this is that promotion, verbatim — the [data-sim] scope is gone and `accent-color` with it,
+     since it does nothing once `appearance:none` is set.
+
+     Why it is worth the CSS: every range control in the suite used to be the browser default, which
+     on a black stage is a dark groove on a black background. The thumb reads as a dot floating in
+     space with nothing to slide along, and nobody consciously noticed WHY the controls felt odd
+     until one big slider sat in the middle of a slide.
+
+     The filled portion is a hard-stop gradient keyed off `--fill`, because a range input cannot
+     style its own progress in WebKit. `--fill` is written by `paintRanges()` in deck.js, which runs
+     on every `input` event and once per slide change for EVERY slider on the stage — generically, so
+     a new sim inherits this by existing rather than by remembering to opt in. Firefox has
+     ::-moz-range-progress and needs no help, so it ignores `--fill` entirely. --------------------- */
+  .simctrls input[type=range]{ width:6.5em; -webkit-appearance:none; appearance:none;
+    background:transparent; height:1.5em; cursor:pointer; }
+  .simctrls input[type=range]::-webkit-slider-runnable-track{
     height:.42em; border-radius:999px; border:1px solid rgba(255,255,255,.16);
-    background:linear-gradient(to right, var(--accent) 0 var(--fill,0%), rgba(255,255,255,.17) var(--fill,0%) 100%); }
-  .stage.sim[data-sim="driven"] .simctrls input[type=range]::-webkit-slider-thumb{
+    /* `background-origin:border-box` is load-bearing, and `background-image` (not the `background`
+       shorthand, which would reset the origin back). A gradient's default origin is the PADDING box
+       while it still paints out to the border box, so the 1px strip under the right border falls
+       outside the gradient's own span — and WebKit fills it with the gradient's FIRST color, leaving
+       a tiny accent-blue nub past the end of the gray track at every value but zero. Spanning the
+       border box removes it, and is the more correct mapping anyway: `--fill` should measure the
+       whole bar a person can see, not the bar minus its border. (Daniel spotted the dot; diagnosed
+       2026-09-18 by rendering the four candidate rules in headless Chromium and looking at them.) */
+    background-origin:border-box;
+    background-image:linear-gradient(to right, var(--accent) 0 var(--fill,0%), rgba(255,255,255,.17) var(--fill,0%) 100%); }
+  .simctrls input[type=range]::-webkit-slider-thumb{
     -webkit-appearance:none; appearance:none; width:1.05em; height:1.05em; border-radius:50%;
     background:var(--ink); border:1px solid rgba(0,0,0,.55); box-shadow:0 1px 3px rgba(0,0,0,.6);
     margin-top:calc(.21em - .525em + 1px); }
-  .stage.sim[data-sim="driven"] .simctrls input[type=range]::-moz-range-track{
+  .simctrls input[type=range]::-moz-range-track{
     height:.42em; border-radius:999px; background:rgba(255,255,255,.17);
     border:1px solid rgba(255,255,255,.16); }
-  .stage.sim[data-sim="driven"] .simctrls input[type=range]::-moz-range-progress{
+  .simctrls input[type=range]::-moz-range-progress{
     height:.42em; border-radius:999px; background:var(--accent); }
-  .stage.sim[data-sim="driven"] .simctrls input[type=range]::-moz-range-thumb{
+  .simctrls input[type=range]::-moz-range-thumb{
     width:1.05em; height:1.05em; border-radius:50%; background:var(--ink);
     border:1px solid rgba(0,0,0,.55); }
+  .simctrls input[type=range].wide{ width:min(46vw,360px); }
+  .simctrls input[type=checkbox]{ accent-color:var(--accent); }
+
+  /* A short parenthetical is one token and must not break across lines. `deck.js` → `nowrapParens`
+     wraps each one in this span after MathJax typesets; the rule is here so the two live together.
+     NOT solvable with white-space alone on the parent: the break these were losing to is the one at
+     an inline-block's boundary (every piece of inline math is an `mjx-container`), which no amount of
+     non-breaking SPACE prevents — there is no space at that boundary to make non-breaking. It takes
+     an element around the whole run. Long parentheticals are deliberately left breakable. */
+  .reveal .nobr{ white-space:nowrap; }
   .simctrls input[type=number]{ width:3.4em; background:#12151a; color:var(--ink); border:1px solid #2c3038;
                                 border-radius:6px; padding:.15em .3em; font:inherit; font-variant-numeric:tabular-nums; }
   .simctrls .u{ color:var(--muted); }

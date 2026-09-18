@@ -311,9 +311,9 @@
       }
     }
     // Small coordinate glyph: value axis up, time axis right, with the house's two label forms —
-    // `F_y` (base + subscript) and `mrdot_y` (a MOMENTUM COMPONENT: m, r with a drawn overdot, subscript).
+    // `F_y` (base + subscript) and `mdot_y` (a MOMENTUM COMPONENT: m, then the position letter with a drawn overdot).
     // LIFTED OUT OF DeflectGame onto SimBase 2026-09-16, when Class H's FloorBounce needed the same
-    // glyph: the alternative was a second copy of the `mrdot` recipe, which is the exact drift the
+    // glyph: the alternative was a second copy of the overdot recipe, which is the exact drift the
     // 2026-09-09 `mu`/`mv` rename existed to end. `color` is optional and defaults to the axis gray,
     // so DeflectGame's two calls are byte-identical in output to before the move.
     _graphAxis(ox, oy, L, vlabel, color) {
@@ -328,18 +328,18 @@
       const fs = L * 0.46; ctx.font = "italic " + fs + "px " + HOUSE.fontMono; ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
       ctx.fillStyle = lab;
       const lx = ox + L * 0.20, ly = oy2 - L * 0.56;   // sit the label mid-arrow, clear of the play-area border above
-      // `mrdot_y` — a MOMENTUM COMPONENT: m, r with an overdot, then the component subscript
-      // (Daniel, 2026-09-09; replaces the old `mv`). The dot is drawn, not typed, for the same reason
-      // _mrdotLabel draws it — the mono font is whatever the browser resolves, and an accented r is
-      // not safe to assume. Canvas gives us measureText, so the positions are measured, not guessed.
-      if (vlabel.indexOf("rdot_") >= 0) { const sub = vlabel.split("_")[1];
+      // `mdot_x` — a MOMENTUM COMPONENT written on the POSITION LETTER: m, then x (or y) with a drawn
+      // overdot and no subscript. The course convention since 2026-09-18 (notation.md §2), replacing
+      // `m ṙ_x`, which replaced `mv` on 2026-09-09. The 2026-09-09 reasoning survives both moves and
+      // is what rules out going back to `mv_x`: a velocity component must not get its own letter
+      // again. `\dot x` is not a new letter — it is the spelling these decks already use on every
+      // slide. The dot is DRAWN, not typed: the mono face is whatever the browser resolves and an
+      // accented glyph is not safe to assume. Canvas has measureText, so the positions are measured.
+      if (vlabel.indexOf("mdot_") === 0) { const v = vlabel.split("_")[1];
         ctx.fillText("m", lx, ly);
-        const rx = lx + ctx.measureText("m").width, rw = ctx.measureText("r").width;
-        ctx.fillText("r", rx, ly);
-        ctx.beginPath(); ctx.arc(rx + rw * 0.5, ly - fs * 0.72, fs * 0.07, 0, TAU); ctx.fill();
-        ctx.font = "italic " + (fs * 0.66) + "px " + HOUSE.fontMono;
-        ctx.fillText(sub, rx + rw, ly + fs * 0.22);
-        ctx.font = "italic " + fs + "px " + HOUSE.fontMono;
+        const vx = lx + ctx.measureText("m").width, vw = ctx.measureText(v).width;
+        ctx.fillText(v, vx, ly);
+        ctx.beginPath(); ctx.arc(vx + vw * 0.5, ly - fs * 0.72, fs * 0.07, 0, TAU); ctx.fill();
       } else if (vlabel.indexOf("_") >= 0) { const p = vlabel.split("_");   // e.g. F_y → base + subscript
         ctx.fillText(p[0], lx, ly); const bw = ctx.measureText(p[0]).width;
         ctx.font = "italic " + (fs * 0.66) + "px " + HOUSE.fontMono; ctx.fillText(p[1], lx + bw, ly + fs * 0.22);
@@ -1639,7 +1639,7 @@
       ctx.strokeStyle = "#3A3A44"; ctx.lineWidth = 1;
       ctx.beginPath(); ctx.moveTo(xStart, pC); ctx.lineTo(xEnd, pC); ctx.stroke();
       ctx.beginPath(); ctx.moveTo(xStart, fC); ctx.lineTo(xEnd, fC); ctx.stroke();
-      this._graphAxis(xStart, pC, L, "mrdot_y");  // momentum glyph — corner at the ball's start x, on p=0
+      this._graphAxis(xStart, pC, L, "mdot_y");   // momentum glyph — corner at the ball's start x, on m ẏ = 0
       this._graphAxis(xStart, fC, L, "F_y");   // force glyph — corner at the ball's start x, on F=0
       if (this.hist.length > 1) {
         ctx.fillStyle = withAlpha(HOUSE.normal, 0.32); ctx.beginPath(); ctx.moveTo(X(this.hist[0].x), fC);
@@ -2726,12 +2726,11 @@
     const RES_SNAP = 0.02;
     const snap = v => (Math.abs(v - 1) <= RES_SNAP ? 1 : v);
     const clamp = v => Math.max(+rng.min, Math.min(+rng.max, v));
-    // --fill is the CSS track's filled fraction; WebKit cannot style a range's own progress, so the
-    // percentage is pushed onto the element here on every input. See deck.css, the PROTOTYPE block.
-    const paint = () => { const lo = +rng.min, hi = +rng.max;
-                          rng.style.setProperty("--fill", ((+rng.value - lo) / (hi - lo) * 100).toFixed(1) + "%"); };
+    // The track's filled fraction is painted by deck.js's `paintRanges`, for every slider in the
+    // suite, now that the visible track is house style (2026-09-18). This mount used to carry its own
+    // copy while the style was a prototype scoped to this one sim.
     const apply = () => { const v = snap(+rng.value); rng.value = v; num.value = v.toFixed(2);
-                          paint(); sim.setR(v); sim.render(); };
+                          sim.setR(v); sim.render(); };
     rng.value = sim.r; num.value = (+sim.r).toFixed(2);
     rng.addEventListener("input", apply);
     num.addEventListener("input", () => { const v = parseFloat(num.value); if (isNaN(v)) return; rng.value = clamp(snap(v)); apply(); });
