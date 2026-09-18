@@ -301,6 +301,19 @@
   .practice .eval{ color:var(--muted); }
   .practice .soln{ font-size:calc(var(--size-body) * 720px); margin-top:.2em; border-left:3px solid var(--accent); padding-left:.8em; }
   .practice .soln .ans{ color:var(--muted); font-size:calc(var(--size-body) * 720px); }
+  /* A SETUP block on a multiple-choice question, same reasoning as `.soln` below and found the same
+     way (check_fit, 2026-09-18, Class H's hw-q1): `.psetup` was styled only under `.practice`, so on
+     a question slide it fell back to the default paragraph size — a three-line preamble plus a
+     display equation at body size, and choices C and D were entirely below the frame. A question
+     slide has four option rows to pay for before the preamble gets any room, so it gets the caption
+     tier and a tighter display equation. A tier, not a per-slide pin: the crowding is a property of
+     the slide TYPE. */
+  .quiz .psetup{ font-size:calc(var(--size-caption) * 720px); line-height:1.4; color:var(--muted);
+                 max-width:94%; padding-bottom:.4em; margin-bottom:.55em;
+                 border-bottom:1px solid var(--guide, #5a5a68); }
+  .quiz .psetup mjx-container[display]{ margin:.35em 0 !important; }
+  .quiz .psetup .tag{ display:block; color:var(--muted); letter-spacing:.12em;
+                      text-transform:uppercase; font-size:.82em; margin-bottom:.3em; }
   /* A solution under a MULTIPLE-CHOICE question gets the caption tier, not the body tier. It is the
      same element doing the same job, but it never has the same room: a practice slide spends its
      frame on one prompt and the working, while a question slide has already spent four option rows
