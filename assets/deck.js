@@ -1547,6 +1547,13 @@
     if(activeVideo && cur && cur.classList.contains('vid') && cur.dataset.autoplay === undefined && player.paused && atHead(player, 0.05) && !player.ended){
       player.play().catch(()=>{}); return;   // "first → plays a fresh clip" — but NOT warm-up/autoplay slides, which → should just skip past
     }
+    // `data-credit-fade="click"`: a title credit (`.credit`) that holds until YOU fade it. The first →
+    // tags the section `.credit-out` and the deck's CSS fades the credit; nothing else happens on that
+    // press, so the timing is the presenter's. Class I's finale is the first: the clip autoplays under
+    // the title, → fades it, → again brings up the exit-quiz notice. Cleared on slide change, so coming
+    // back to the slide brings the title back. (Class A's finale times its credit off `.playing`
+    // instead — a fixed 7 s from the moment the clip starts.)
+    if(cur && cur.dataset.creditFade === 'click' && !cur.classList.contains('credit-out')){ cur.classList.add('credit-out'); return; }
     // Static quiz (concept / homework MC): first → reveals the correct answer green; next → advances.
     if(cur && cur.classList.contains('quiz') && !cur.classList.contains('revealed')){ cur.classList.add('revealed'); return; }
     if(cur && cur.dataset.exitClass !== undefined && exitQuiz.style.display === 'none'){ exitQuiz.style.display = 'block'; return; }   // final slide: reveal the exit-quiz notice (+password in class)
@@ -1681,6 +1688,7 @@
   // has already gone by the time you press play. Class A's finale hangs its opening credit off this.
   function clearPlaying(){ document.querySelectorAll('section.playing').forEach(s => s.classList.remove('playing')); }
   Reveal.on('slidechanged', clearPlaying);
+  Reveal.on('slidechanged', () => document.querySelectorAll('section.credit-out').forEach(s => s.classList.remove('credit-out')));
   function armPlaying(v){
     v.addEventListener('play', () => {
       if(v !== player) return;
@@ -1999,20 +2007,21 @@
   // how far the reel travels to reach it is a *second* independent random choice of which repetition
   // of that slot to stop on. Without the second one every spin covers nearly the same distance and
   // the whole thing reads as canned, however random the outcome actually is.
-  // ODDS: 1/26, chosen to match the 26 class meetings (Class A–Z) — one spin per class gives an
-  // expected payout of exactly 1.00 over the semester. Memoryless, so no class is ever "due".
-  // The flip side, worth remembering before betting the bit on it: a 36% chance it never fires all
-  // semester, and a 26% chance it fires twice. If the wheel ends up on fewer than 26 decks, the
-  // denominator should come down to match the number of spins or the payout stops being credible.
-  const PRIZE_CYCLE  = 26,    // slots per cycle → the odds ARE this denominator
-        JACKPOT_AT   = 13,    // which slot in the cycle is the $20 (mid-cycle)
-        PRIZE_CYCLES = 7,     // cycles built into the DOM (runway past the furthest landing)
+  // ODDS: 1/13 (doubled from 1/26 on 2026-09-25, at Daniel's call). 1/26 matched the 26 class
+  // meetings — one expected payout a semester — but with the wheel on roughly half the decks that
+  // was ~0.3 payouts and a ~75% chance of never firing. 1/13 is memoryless like before, so no class
+  // is ever "due".
+  const PRIZE_CYCLE  = 13,    // slots per cycle → the odds ARE this denominator
+        JACKPOT_AT   = 6,     // which slot in the cycle is the $20 (mid-cycle)
+        PRIZE_CYCLES = 9,     // cycles built into the DOM (runway past the furthest landing)
         // Which cycle the prize reel may stop in, and so how far it travels. This is the knob that
         // sets how often the $20 flies past mid-spin — one sighting per cycle traveled — and it has
         // to move whenever PRIZE_CYCLE does: a shorter cycle packs the green slots closer, so the
-        // same distance in pixels shows it far more often. Cycle 3–4 gives 3–5 sightings at 1/26.
-        PRIZE_LAND   = [3,4],
-        PRIZE_REST   = 11,    // parked slot: puts the $20 visible below the pointer at rest
+        // same distance in pixels shows it far more often. Cycle 6–7 at 1/13 travels the same
+        // 78–104 slots that cycle 3–4 did at 1/26, so the spin looks and times the same; the $20
+        // now flies past 6–7 times, which is honest — it is twice as likely.
+        PRIZE_LAND   = [6,7],
+        PRIZE_REST   = 4,     // parked slot: puts the $20 visible below the pointer at rest
         NAME_MIN_SEGS= 160,   // name reel is padded to at least this many slots so it has runway
         PRIZE_SPIN_S = 6, NAME_SPIN_S = 8;
   const PRIZE_TEXT = 'Select a prize', JACKPOT_TEXT = '$20';
