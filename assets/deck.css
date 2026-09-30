@@ -370,6 +370,37 @@
      :not(.correct) would be every choice and the slide would tell a room that voted honestly that all
      of them were wrong. */
   .poll.sealed:not([data-survey]) .choice:not(.correct) .bar{ background:var(--mma-red); }
+  /* ---- Figure polls: one option graph per choice column (Class J, 2026-08-20; shared 2026-09-29) ----
+     A poll whose choices are PICTURES puts each option's figure (<img class="qfig">) at the top of its
+     own .choice, directly above that option's vote bar, so the picture a student votes for and the bar
+     their vote grows are the same column. Everything keys off :has(.qfig), so a text poll is untouched.
+     Moved here from Class J's per-deck <style> on 2026-09-29, before a projector check, because a
+     per-deck copy of a shared rule is how the course strip once failed in eight decks at once and
+     Classes K–Z will want it. Tuned against headless screenshots 2026-08-20; check_fit reported ZERO
+     findings on the first, badly broken version of this block — the fit gate measures overflow, and
+     every problem here was an overlap or a misalignment inside the frame. */
+  .poll:has(.qfig) .qprompt{ font-size:calc(var(--size-body) * 720px); max-width:56%; margin:7% 0 0; }
+  /* The QR shrinks on a figure poll — at 300px it reaches to y=370 and column D's graph ran underneath
+     it. 200px puts the card's bottom near y=300, and the option row starts below that. */
+  .poll:has(.qfig) .qr .qrimg, .poll:has(.qfig) .qr .qrimg img{ width:200px !important; height:200px !important; }
+  /* TOP-anchored, not bottom-anchored, and this is the whole trick. The base .poll aligns the columns
+     flex-END so the option text sits on one baseline — fine when the only thing above it is a bar. Here
+     a two-line label makes its column taller, which pushed that column's GRAPH higher than its
+     neighbors', and four graphs meant to be compared ended up on four different baselines (column D's
+     went behind the QR). Anchoring the row's top instead puts every graph on one line and lets the
+     labels hang unevenly below, which is the direction that does not matter. */
+  .poll:has(.qfig) .choices{ top:45%; bottom:auto; align-items:flex-start; }
+  .poll:has(.qfig) .choice{ display:flex; flex-direction:column; }
+  .poll:has(.qfig) .qfig{ display:block; width:100%; height:auto; margin:0 0 .55em; border-radius:6px; }
+  .poll:has(.qfig) .barwrap{ height:120px; }
+  .poll:has(.qfig) .opt{ font-size:calc(var(--size-caption) * 720px); line-height:1.25; }
+  .poll.sealed .choice.correct .qfig{ outline:2px solid var(--ok); outline-offset:2px; }
+  /* The run-up clip, looping as a thumbnail on its own poll so students can reason while they watch
+     (Class J, 2026-09-29). Sits in the gap between the prompt (max-width 56%) and the QR card, at a
+     fixed box with object-fit:contain so a portrait Short and a landscape screen recording both fit.
+     IN-ROOM ONLY — publish_deck.inline_suite_assets strips every .qvid, because the site keeps no clips. */
+  .poll .qvid{ position:absolute; top:5%; left:59.5%; width:18%; height:37%; object-fit:contain;
+               object-position:center top; border-radius:6px; background:transparent; }
   .pollmode{ position:absolute; left:3%; top:3%; z-index:8; font-size:.5em; letter-spacing:.12em;
              text-transform:uppercase; font-weight:650; display:flex; align-items:center; gap:.5em;
              color:var(--muted); padding:.35em .7em; border-radius:999px; background:rgba(255,255,255,.06);
@@ -417,6 +448,9 @@
      graph lives there, and the default bottom bar sat right on top of it. */
   .simctrls.hud-left{ left:2.2%; right:auto; bottom:auto; top:12%; width:auto;
                       justify-content:flex-start; background:none; padding:0; }
+  /* top-RIGHT twin, for a sim whose top-left is scenery (Class J's cliff launcher) */
+  .simctrls.hud-right{ right:2.2%; left:auto; bottom:auto; top:4%; width:auto;
+                       justify-content:flex-end; background:none; padding:0; }
   .simctrls label{ display:flex; align-items:center; gap:.45em; color:var(--muted); }
   /* ---- The range control: a VISIBLE TRACK behind the thumb -------------------------------------
      House default since 2026-09-18. It was prototyped on 2026-09-16 scoped to Class G's `driven` sim

@@ -958,9 +958,9 @@
         <label><span class="var"><i>ÿ</i>:</span> <input type="range" class="s-amax" min="-25" max="25" step="0.01"><input type="number" class="n-amax" step="any"><span class="u">m/s²</span></label>
       </div>`;
 
-  // HandLift preset: one signed a_max slider, Play, Reset, slo-mo, readout. Drag the ball to reposition.
-  // Its own controls and its own mount, rather than a branch inside mountHandLift: the slider asks for
-  // a different quantity in a different unit, there is a Reset button, and Play can be disabled. Class C's
+  // HandLiftEnergy preset (Class J): one signed TRAVEL slider, Play, Reset, slo-mo, readout. Drag the
+  // ball to reposition. Its own controls and its own mount rather than a branch inside mountHandLift —
+  // the slider asks for a different quantity in a different unit, and there is a Reset button. Class C's
   // path is left exactly as it was.
   const HAND_ENERGY_CONTROLS_HTML = `
       <canvas class="simcanvas"></canvas>
@@ -969,7 +969,7 @@
         <button class="simbtn play">▶ Play</button>
         <button class="simbtn reset">↺ Reset</button>
         <button class="simbtn slomo" title="Slow motion">🐢</button>
-        <label><span class="var">max <i>ẏ</i>:</span> <input type="range" class="s-vmax" step="0.1"><input type="number" class="n-vmax" step="any"><span class="u">m/s</span></label>
+        <label><span class="var">Δ<i>y</i>:</span> <input type="range" class="s-travel" step="0.05"><input type="number" class="n-travel" step="0.05"><span class="u">m</span></label>
       </div>`;
 
   function mountHandLiftEnergy(section) {
@@ -977,46 +977,56 @@
     const d = section.dataset;
     const canvas = section.querySelector(".simcanvas");
     const sim = new HandLiftEnergy(canvas, {
-      vMax:   d.vmax  !== undefined ? +d.vmax  : 0,
-      g:      d.g     !== undefined ? +d.g     : 9.8,
-      y0:     d.y0    !== undefined ? +d.y0    : undefined,
-      focusY: d.focus !== undefined ? +d.focus : undefined,
+      travel: d.travel !== undefined ? +d.travel : undefined,
+      g:      d.g      !== undefined ? +d.g      : 9.8,
+      y0:     d.y0     !== undefined ? +d.y0     : undefined,
+      focusY: d.focus  !== undefined ? +d.focus  : undefined,
       slomo:  d.slomo === "true"                       // OFF unless a slide asks for it
     });
     const q = s => section.querySelector(s);
     const readonly = window.self !== window.top;
-    const rng = q(".s-vmax"), num = q(".n-vmax");
-    rng.min = -HandLiftEnergy.V_MAX; rng.max = HandLiftEnergy.V_MAX;
+    const rng = q(".s-travel"), num = q(".n-travel");
     const clamp = v => Math.max(+rng.min, Math.min(+rng.max, v));
-    rng.value = sim.vMax; num.value = sim.vMax;
+    // The slider's ends follow the ball (Daniel, 2026-09-30). Targets are held inside [Y_LO, Y_HI], so from
+    // a ball resting low a −2 m drop cannot happen; the slider used to offer it anyway and then quietly move
+    // the ball less than it said. Now its range is exactly the travel that is possible from where the ball
+    // is, recomputed whenever the ball comes to rest somewhere new (a run ends, a drag, Reset).
+    const STEP = 0.05, snap = (v, f) => +(f(+(v / STEP).toFixed(6)) * STEP).toFixed(2);
+    const fitRange = () => {
+      const lo = Math.max(-HandLiftEnergy.D_MAX, snap(HandLiftEnergy.Y_LO - sim.y0, Math.ceil));
+      const hi = Math.min(HandLiftEnergy.D_MAX, snap(HandLiftEnergy.Y_HI - sim.y0, Math.floor));
+      rng.min = num.min = Math.min(lo, 0); rng.max = num.max = Math.max(hi, 0);
+      const v = clamp(+rng.value);
+      rng.value = v; num.value = v; sim.setD(v);
+    };
+    rng.value = sim.D; num.value = sim.D;
+    fitRange();
 
     const playBtn = q(".play"), resetBtn = q(".reset");
-    // Play is dead at a standstill. Without this the old sim happily "ran" a zero-speed push: nothing
-    // moved for a beat and then the controls came back, which reads as a bug rather than as a no-op.
+    // No dead zone any more (2026-09-29): every travel, including zero, is a run of the same length.
     const refreshPlay = () => {
       playBtn.textContent = !sim.running ? "▶ Play" : (sim.paused ? "▶ Resume" : "⏸ Pause");
-      const dead = !sim.running && !sim.canPlay;
-      playBtn.disabled = readonly || dead;
-      playBtn.style.opacity = dead ? ".35" : "";
-      playBtn.title = dead ? "set a speed first" : "";
+      playBtn.disabled = readonly;
     };
     sim.refreshPlayBtn = refreshPlay;
 
-    // Only commit between runs — changing the speed mid-flight would rewrite the trajectory under the
+    // Only commit between runs — changing the travel mid-flight would rewrite the trajectory under the
     // graph that is being drawn from it.
-    const apply = () => { if (!sim.running) { sim.setV(+rng.value); sim.cal = null; sim.render(); refreshPlay(); } };
+    const apply = () => { if (!sim.running) { sim.setD(+rng.value); sim.render(); refreshPlay(); } };
     rng.addEventListener("input", () => { num.value = rng.value; apply(); });
     num.addEventListener("input", () => { const v = parseFloat(num.value); if (isNaN(v)) return; rng.value = clamp(v); apply(); });
     num.addEventListener("change", () => { const v = parseFloat(num.value); num.value = isNaN(v) ? rng.value : clamp(v); rng.value = num.value; apply(); });
 
     playBtn.addEventListener("click", () => {
-      if (!sim.running) { sim.setV(+rng.value); sim.play(); }
+      if (!sim.running) { sim.setD(+rng.value); sim.play(); }
       else if (sim.paused) sim.resume(); else sim.pause();
       refreshPlay();
     });
-    // Reset earns its place here and nowhere else: a slow lift runs for seconds, and without this you
-    // are stuck watching one you have already changed your mind about.
+    // deck.js resets the sim on slide exit too, so the refit rides on reset() itself, not on the button.
+    const baseReset = sim.reset.bind(sim);
+    sim.reset = () => { baseReset(); fitRange(); };
     resetBtn.addEventListener("click", () => { sim.reset(); refreshPlay(); });
+    canvas.addEventListener("pointerup", () => { if (!sim.running) { fitRange(); sim.render(); } });
 
     const slo = q(".slomo"); slo.classList.toggle("on", sim.slomo);
     slo.addEventListener("click", () => { sim.slomo = !sim.slomo; slo.classList.toggle("on", sim.slomo); });
@@ -1035,7 +1045,7 @@
       if (raf) return;
       const loop = (now) => {
         sim.step(now);
-        if (sim.running !== prev) { prev = sim.running; refreshPlay(); }
+        if (sim.running !== prev) { prev = sim.running; if (!sim.running) fitRange(); refreshPlay(); }
         raf = requestAnimationFrame(loop);
       };
       sim.last = performance.now();
@@ -1125,23 +1135,48 @@
   // anything — but it has to be made once and held for the whole run, or the lid would move for a
   // reason that is not physics.
   class HandLiftEnergy extends HandLift {
+    // REBUILT 2026-09-29 (Daniel): FIXED DURATION, the slider sets the TRAVEL. The version before this
+    // one fixed the travel and let a speed slider set the duration, which made "same work, different
+    // power" visible but left a dead zone around zero (Play grayed out for |v| < 0.8 m/s, since a slow
+    // run over a fixed 1.2 m takes forever) and a time axis the slow runs filled and the fast ones did
+    // not. Now every run lasts the same time and fills the strip left to right, and the slider alone
+    // decides which story the lid tells:
+    //
+    //   Δy ≈ 0        almost nothing
+    //   small +       a slow rise in the lid (the palm pushes up, the ball moves up, the whole way)
+    //   big +         a fast rise, the ball leaves the palm (flat lid in flight), a fast fall in the catch
+    //   small −       a slow fall in the lid
+    //   big −         the hand drops out from under the ball (flat lid), then a fast fall in the catch
+    //
+    // The ball leaves the palm when the smootherstep's peak deceleration beats g:
+    // |Δy| > g·T²/5.7735 ≈ 1.09 m at T = 0.8 s. That threshold falls out of the model. Every run ends with
+    // the ball at rest at its TARGET height (start + Δy): after a release the hand carries on along its
+    // plan and is waiting, at rest, at the target; the ball comes down onto it, and one quintic catch
+    // gives a little below the target and eases back up to it. The graph therefore ends at exactly
+    // m·g·Δy above where it started. Each run starts where the last one ended (it walks, like Class C),
+    // with the target held inside [Y_LO, Y_HI] so the ball never walks off screen or below y = 0; Reset
+    // or a drag puts it back.
+    //
+    // Second pass, same day, after Daniel's first look: (1) Play no longer snaps the ball back to the
+    // original rest height — that was the "hand jumps to a new spot"; (2) the hand no longer reaches UP
+    // to meet a thrown ball and then comes back down, which read as a glitch. A smootherstep releases
+    // near the end of its travel, so a +2 m throw only clears the target by a few tens of centimeters;
+    // the steep version of the throw-and-catch story is the drop (−Δy past 1.1 m).
     constructor(canvas, opts = {}) {
-      // focusY is both the ball's rest height and the center of the view, so defaulting it here moves
-      // the scene down to where the asymmetric motion actually sits. A slide can still override it
-      // with data-focus.
+      // focusY is both the ball's rest height and the center of the view.
       super(canvas, Object.assign({}, opts, { focusY: opts.focusY ?? HandLiftEnergy.REST_Y }));
       this.run = null;           // the precomputed run — the ONE trajectory, and what the graph draws
-      this.cal = null;           // the frozen axis: { y0, yDatum, eMax } — see _calibrate()
-      // Slo-mo OFF by default here, unlike every other sim: the durations ARE the physics now, and a
-      // 0.16x rate would turn the slowest lift into half a minute.
+      this.cal = null;           // the frozen axes: { y0, sign, yDatum, eMax, dur } — see _calibrate()
+      this.axes = null;          // the frozen time window + per-sign energy axes, measured once
+      this.win = null;           // live runs keep going until this, so the strip always fills
       this.slomo = !!opts.slomo;
-      this.setV(opts.vMax ?? 0);
+      this.tMove = HandLiftEnergy.T_MOVE;
+      this.setD(opts.travel ?? HandLiftEnergy.D_DEFAULT);
       this.resize();
       this.render();
     }
 
     // ---- framing: hand on top, energy strip beneath it, control bar beneath THAT ------------------
-    // Daniel's order, and it puts the controls back where every other sim in the course keeps them.
     // The bar is a sibling DOM element overlaying the canvas, so its height is measured rather than
     // assumed — it wraps at narrow widths, and a hard-coded reserve would be wrong exactly then.
     resize() {
@@ -1156,11 +1191,7 @@
       this.gh = h * HOUSE.stackGraphH;
       this.gy = h - ctrlH - gap - this.gh;
       this.playH = this.gy - gap;
-      // The play area shows a FIXED slice of world height instead of being scaled by whatever height is
-      // left over. Left to `playH / frameH` the whole scene shrank by the size of the graph strip, which
-      // is how it came to read small; pinning the slice keeps the ball and the hand at very nearly the
-      // size Class C draws them. The slider is narrowed to match (see mountHandLift) so the motion still
-      // fits the slice at every setting.
+      // A FIXED slice of world height, so the scene is not shrunk by the graph strip.
       this.scale = Math.min(w / HOUSE.frameW, this.playH / HandLiftEnergy.PLAY_WORLD_H);
       this.ox = (w - HOUSE.frameW * this.scale) / 2;
       // Half the world height actually visible, less a margin for the ball and its weight arrow — the
@@ -1169,60 +1200,82 @@
     }
     // focusY sits at the center of the PLAY AREA, not of the canvas...
     sy(y) { return this.playH / 2 - (y - this.focusY) * this.scale; }
-    // ...and the inverse has to agree, or drag-to-reposition puts the ball somewhere else. SimBase's
-    // version inverts the canvas-centered sy; this one inverts the play-area-centered sy. Without it
-    // the hand jumped on every pointerdown.
+    // ...and the inverse has to agree, or drag-to-reposition puts the ball somewhere else.
     _toWorldCentered(ev) {
       const r = this.c.getBoundingClientRect();
       const px = (ev.clientX - r.left) / r.width * this.W, py = (ev.clientY - r.top) / r.height * this.H;
       return { x: (px - this.ox) / this.scale, y: this.focusY + (this.playH / 2 - py) / this.scale };
     }
 
-    // Fixed travel, speed-driven duration. Overrides HandLift's fixed-duration / acceleration-driven
-    // version; everything downstream (`_handTraj`, the release test, the catch, the re-seat) is written
-    // against `_hand`'s output and needs no change.
+    setD(d) { this.D = +d || 0; return this; }
+    // The travel actually used: the slider's, clipped so the target stays inside [Y_LO, Y_HI]. Y_LO keeps a
+    // hard drop's catch (it gives ~0.45 m below the target) above y = 0, where U is zero; Y_HI keeps a throw's
+    // apex under the 4 m the energy axis tops out at. Bites after a run or two in one direction.
+    _Deff() {
+      if (this._noClamp) return this.D || 0;       // calibration measures the full ±D_MAX runs
+      const lo = HandLiftEnergy.Y_LO, hi = HandLiftEnergy.Y_HI;
+      return Math.max(lo, Math.min(hi, this.y0 + (this.D || 0))) - this.y0;
+    }
+    get target() { return this.y0 + this._Deff(); }
+
+    // Fixed duration, travel from the slider: the same smootherstep as Class C (zero velocity AND zero
+    // acceleration at both ends), so peak |ÿ| = 5.7735·|Δy|/T².
     _hand(t) {
-      const H = HandLiftEnergy.TRAVEL, v = this.vMax || 0;
-      if (!v) return { y: this.y0, vy: 0, a: 0 };
-      const T = this.tMove, rise = (v < 0 ? -1 : 1) * H;
-      if (t <= 0) return { y: this.y0, vy: 0, a: 0 };
-      if (t >= T) return { y: this.y0 + rise, vy: 0, a: 0 };
+      const T = this.tMove, D = this._Deff();
+      if (t <= 0 || !D) return { y: this.y0, vy: 0, a: 0 };
+      if (t >= T) return { y: this.y0 + D, vy: 0, a: 0 };
       const s = t / T;
       const S  = 6 * s ** 5 - 15 * s ** 4 + 10 * s ** 3;
       const S1 = 30 * s ** 4 - 60 * s ** 3 + 30 * s ** 2;
       const S2 = 120 * s ** 3 - 180 * s ** 2 + 60 * s;
-      return { y: this.y0 + rise * S, vy: rise * S1 / T, a: rise * S2 / (T * T) };
+      return { y: this.y0 + D * S, vy: D * S1 / T, a: D * S2 / (T * T) };
+    }
+    // After a release the hand keeps to its PLAN in both directions and arrives at rest at the target.
+    // It does not follow through and park at the release height (Class C's throw), and it does not reach
+    // up to meet the ball (this preset's first 2026-09-29 build, which read as a glitch).
+    _handTraj(t) { return this._hand(t); }
+
+    // THE CATCH — one quintic from contact to rest AT THE TARGET. Entering at the ball's own height,
+    // velocity and −g (so the normal-force arrow grows from zero), leaving at rest with zero acceleration:
+    // the curve gives a little below the target and eases back up to it. A drop caught while the hand is
+    // still descending is simply carried down to the target. The duration grows with the arrival speed.
+    _beginCatch(t, yContact) {
+      const v = Math.abs(this.ballVy);
+      // Short enough that a fast drop does not sink far past the target (0.7 s let a 5 m/s arrival dip
+      // 0.8 m), long enough that the arrow never spikes.
+      this.catchDur = Math.max(0.3, Math.min(0.5, 0.2 + 0.04 * v));
+      this.catchT0 = t; this.catchY0 = yContact; this.catchV0 = this.ballVy;
+      this.catchY1 = this.target;
+      this.catchA = -this.g;          // seed the drawn acceleration (see HandLift._beginCatch)
+      this.catching = true; this.attached = true; this.caught = true;
     }
 
-    // The one place vMax is set, because tMove has to move with it. max S' = 15/8, so
-    // T = 1.875*H/|v| is exactly the duration whose peak speed is the one asked for.
-    setV(v) {
-      this.vMax = v;
-      const mag = Math.max(Math.abs(v), 1e-6);
-      this.tMove = 1.875 * HandLiftEnergy.TRAVEL / mag;
-      return this;
+    // One fixed step. The plan is written against the run's START height, so y0 must not move mid-run
+    // (HandLift "walks" it the moment the ball settles); it is restored every step and advanced once, when
+    // the run is over, so the next run starts where this one ended. A live run keeps going to the end of
+    // the window, so the strip always fills.
+    _advance(dt) {
+      const y0 = this.y0, was = this.running;
+      super._advance(dt);
+      this.y0 = y0;
+      if (!this._probing && this.win != null) {
+        const fell = this.ballY < this.focusY - HOUSE.frameH - 1;
+        this.running = !fell && this.t < this.win;
+        if (was && !this.running && !fell) this.y0 = Math.abs(this.ballY - this.target) < 0.02 ? this.target : this.ballY;
+      }
     }
-    get canPlay() { return Math.abs(this.vMax || 0) >= HandLiftEnergy.V_MIN; }
 
     _energyAt(y, vy, yDatum) {
       return { ke: 0.5 * this.mass * vy * vy, gpe: this.mass * this.g * (y - yDatum) };
     }
 
     // Run the whole trajectory before showing any of it, driving the SAME `_advance` the live loop
-    // drives — the physics exists in one place. State is snapshotted and restored around it.
-    //
-    // What is kept is the whole banded record, not just the axes. The first version graphed samples
-    // taken LIVE and only took the axes from here, which sounds harmless and is not: the live loop
-    // steps at whatever dt requestAnimationFrame hands it (times the slo-mo factor) while this steps at
-    // a fixed 1/240, so the two Euler integrations drift apart. The live path could then dip below this
-    // pass's y-minimum — a negative U, drawn as a band hanging under the time axis — and outlast this
-    // pass's duration, with every late sample clamped onto the right edge as a vertical wedge. Both are
-    // visible in Daniel's screenshot. Drawing the precomputed record and revealing it by time removes
-    // the disagreement rather than clamping it, and it is what a baked energy clip does with `still=`.
+    // drives — the physics exists in one place. The graph is drawn from this record and revealed by the
+    // clock (the live loop steps at rAF's dt, this at a fixed 1/240, and letting the two disagree drew
+    // bands under the axis — see the history in DESIGN.md).
     _precompute() {
       const cal = this._calibrate();
-      const { path } = this._probe(this.vMax);
-      // Thin to a drawable number of points — 900 is well past one per pixel of the strip's width.
+      const { path } = this._probe(this.D);
       const STRIDE = Math.max(1, Math.ceil(path.length / 900));
       const t = [], ke = [], gpe = [];
       const push = p => {
@@ -1232,26 +1285,23 @@
       for (let i = 0; i < path.length; i += STRIDE) push(path[i]);
       const last = path[path.length - 1];
       if (t[t.length - 1] < last.t) push(last);
-      // BOTH axes come from the calibration, and the time axis is the one that makes the slide work.
-      // Now that every run covers the same distance, the lid ends at the same height for every speed
-      // below the release threshold — same work — and the ONLY difference is how long it took. Stretch
-      // each run to fill the strip and that difference vanishes: slow and fast come out as identical
-      // pictures. At fixed seconds-per-pixel the slow lift fills the strip and is shallow, the fast one
-      // ends a fifth of the way across and is steep, and the slope is the power. A fast run leaving
-      // most of the strip empty is not a bug here; it is the measurement.
+      // Hold the settled state out to the end of the window: a quick lift is over in 0.8 s and the lid
+      // then runs flat to the right edge, which is exactly what it is doing.
+      if (t[t.length - 1] < cal.dur) { t.push(cal.dur); ke.push(ke[ke.length - 1]); gpe.push(gpe[gpe.length - 1]); }
       this.run = { t, ke, gpe, dur: cal.dur, eMax: cal.eMax };
     }
 
-    // Run one trajectory at a given a_max from the CURRENT rest height, with nothing drawn and nothing
-    // left behind, and report what it reached. The shared probe behind both _precompute and _calibrate.
-    _probe(vMax) {
+    // One trajectory at a given travel from the CURRENT rest height, with nothing drawn and nothing left
+    // behind. Runs to its natural end (settled in the hand), not to the window.
+    _probe(D) {
       const keep = ["t", "now", "ballY", "ballVy", "attached", "caught", "detached", "cleared",
                     "noRelease", "catching", "catchT0", "catchY0", "catchV0", "catchY1", "catchDur",
-                    "catchA", "detachT", "detachY", "detachV", "running", "y0", "aMax",
-                    "vMax", "tMove", "seating", "seatA"];
+                    "catchA", "detachT", "detachY", "detachV", "running", "y0", "D",
+                    "seating", "seatA", "seatT0", "seatY0", "seatV0", "seatY1", "seatV1", "seatA1", "seatDur"];
       const save = {}; for (const k of keep) save[k] = this[k];
       const savePos = this.posHist.slice();
-      this.setV(vMax); this._resetState(); this.running = true;
+      this._probing = true;
+      this.setD(D); this._resetState(); this.running = true;
       const dt = 1 / 240, LIMIT = 240 * 15;
       const path = [{ t: 0, y: this.ballY, vy: this.ballVy }];
       let yMin = this.ballY, guard = 0;
@@ -1260,60 +1310,44 @@
         if (this.ballY < yMin) yMin = this.ballY;
         path.push({ t: this.t, y: this.ballY, vy: this.ballVy });
       }
+      this._probing = false;
       for (const k of keep) this[k] = save[k];
       this.posHist = savePos;
       return { path, yMin };
     }
 
-    // ONE FROZEN AXIS PER SIGN of a_max — Daniel's refinement, and it uses the strip far better than a
-    // single axis did.
-    //
-    // The problem with one axis for everything is the DATUM. A drop needs the datum at the deepest point
-    // the ball can be driven to, or U goes negative; but then a lift — which never goes below the rest
-    // height at all — inherits that whole offset as a constant red base. It was eating about 55% of the
-    // strip on every positive run, so a gentle push moved the lid by a few percent of the picture.
-    //
-    // Split by sign and each branch gets the datum it actually needs. **Lifts measure from the rest
-    // height**, so U starts at zero and the entire strip is the work being done — which is the thing the
-    // slide is about. **Drops measure from the deepest reachable point**, as before. Runs stay comparable
-    // within the branch being demonstrated, which is how the slide is used: you sweep the lifts against
-    // each other, or the drops against each other, not one against the other.
-    //
-    // Worth saying out loud in class, because it IS a real choice and not a trick: only differences in U
-    // mean anything, so where zero sits is ours to pick — and we pick it where it makes the picture
-    // legible. The lift branch takes min(rest height, deepest reached) rather than the rest height
-    // outright, because the catch's give can in principle end a throw slightly below where it started;
-    // in practice they are the same number.
+    // FROZEN AXES. Energy (Daniel, 2026-09-30): gravity's zero is ALWAYS y = 0 — the "0 m" tick on
+    // screen — and the axis is fixed so a red band of the whole strip height means the ball is at the
+    // "4 m" tick, U = m·g·Y_TOP. Every run, whichever way and wherever it starts, reads on that one ruler:
+    // the red band's height IS the ball's height. (Until now each branch picked its own datum — the rest
+    // height for a lift, the deepest reachable point for a drop — which fit each picture better and made
+    // the two impossible to compare.) Time: one window for every run, measured once over both signs from
+    // the initial rest height.
     _calibrate() {
-      const sign = (this.vMax || 0) < 0 ? -1 : 1;
-      if (this.cal && Math.abs(this.cal.y0 - this.y0) < 1e-9 && this.cal.sign === sign) return this.cal;
-      const V = HandLiftEnergy.V_MAX, VMIN = HandLiftEnergy.V_MIN;
-      // V_MIN is in the probe set on purpose: it is the SLOWEST run the branch allows and therefore the
-      // one that sets the time axis. The fastest sets the energy axis.
-      const probes = [V, V * 0.6, V * 0.3, VMIN].map(f => sign * Math.max(f, VMIN));
-      let yDatum = this.y0, runs = [];
-      for (const a of probes) { const r = this._probe(a); runs.push(r); yDatum = Math.min(yDatum, r.yMin); }
-      let eMax = 0, durMax = 0;
-      for (const r of runs) {
-        durMax = Math.max(durMax, r.path[r.path.length - 1].t);
-        for (const p of r.path) {
-          const e = this._energyAt(p.y, p.vy, yDatum);
-          eMax = Math.max(eMax, e.ke + Math.max(0, e.gpe));
+      if (!this.axes) {
+        // Unclipped, so the window fits a full ±2 m run from wherever the ball has walked to — measured
+        // clipped from the rest height, a +2 m throw from low down outlasted the window mid-catch.
+        const keepY = this.y0; this.y0 = this.y0init; this._noClamp = true;
+        const DM = HandLiftEnergy.D_MAX, fr = [1, 0.8, 0.6, 0.4, 0.2];
+        let durMax = this.tMove;
+        for (const sg of [1, -1]) for (const f of fr) {
+          const r = this._probe(sg * f * DM); durMax = Math.max(durMax, r.path[r.path.length - 1].t);
         }
+        this.y0 = keepY; this._noClamp = false;
+        this.axes = { dur: durMax * 1.06, eMax: this.mass * this.g * HandLiftEnergy.Y_TOP };
       }
-      this.cal = { y0: this.y0, sign, yDatum, eMax: Math.max(eMax, 1e-6) * 1.06,
-                   dur: Math.max(durMax, 0.4) * 1.04 };
+      this.cal = { yDatum: 0, eMax: this.axes.eMax, dur: this.axes.dur };
+      this.win = this.cal.dur;
       return this.cal;
     }
 
-    play()  { if (!this.canPlay) return; super.play(); this._precompute(); }
+    play()  { super.play(); this._precompute(); }
     reset() { this.run = null; super.reset(); }
 
     _graph(ctx) {
       const x0 = this.W * 0.062, x1 = this.W * 0.985;
       const gy = this.gy, gh = this.gh, ay = gy + gh;
-      // Axes are drawn from frame zero, before there is any data — the point of a fixed frame is that it
-      // is visibly fixed, so the bands grow into a picture whose scale never moved.
+      // Axes from frame zero, before there is any data: the scale visibly never moves.
       ctx.save(); ctx.strokeStyle = HOUSE.ink; ctx.fillStyle = HOUSE.ink;
       ctx.lineWidth = 2; ctx.lineCap = "butt";
       ctx.beginPath(); ctx.moveTo(x0, ay); ctx.lineTo(x0, ay - gh * 0.45); ctx.stroke();
@@ -1331,26 +1365,22 @@
       const R = this.run;
       if (!R) { timeAxis(); return; }
 
-      // Reveal up to the live clock, with the leading edge interpolated so the bands grow smoothly
-      // rather than in one-sample steps.
       const tNow = Math.min(this.t, R.t[R.t.length - 1]);
       let n = 0; while (n < R.t.length && R.t[n] <= tNow) n++;
       if (n < 2) { timeAxis(); return; }
 
       const yOf = v => ay - Math.max(0, Math.min(1, v / R.eMax)) * gh;
       const xOf = t => x0 + Math.max(0, Math.min(1, t / R.dur)) * (x1 - x0);
-      const at = (arr, i) => arr[i];
       const edge = (arr) => {                       // linear interpolation to exactly tNow
         if (n >= R.t.length) return arr[arr.length - 1];
         const t0 = R.t[n - 1], t1 = R.t[n], f = t1 > t0 ? (tNow - t0) / (t1 - t0) : 0;
         return arr[n - 1] + f * (arr[n] - arr[n - 1]);
       };
       const bands = [
-        { col: HOUSE.velocity, top: i => at(R.ke, i),                  edge: () => edge(R.ke) },
-        { col: HOUSE.gravity,  top: i => at(R.ke, i) + at(R.gpe, i),   edge: () => edge(R.ke) + edge(R.gpe) }
+        { col: HOUSE.velocity, top: i => R.ke[i],             edge: () => edge(R.ke) },
+        { col: HOUSE.gravity,  top: i => R.ke[i] + R.gpe[i],  edge: () => edge(R.ke) + edge(R.gpe) }
       ];
-      // Painter's order, lowest band LAST — adjacent bands then share no edge against the background,
-      // so there is no antialiased seam. Same rule the baked renderer follows.
+      // Painter's order, lowest band LAST — no antialiased seam between adjacent bands.
       for (let bi = bands.length - 1; bi >= 0; bi--) {
         const b = bands[bi];
         ctx.save(); ctx.fillStyle = b.col;
@@ -1360,7 +1390,7 @@
         ctx.lineTo(xOf(tNow), ay); ctx.closePath(); ctx.fill();
         ctx.restore();
       }
-      timeAxis();   // over the fills, so the baseline is one even rule
+      timeAxis();
     }
 
     render() {
@@ -1368,28 +1398,20 @@
       this._graph(this.ctx);
     }
   }
-  // Slider bound, play-area world height, and rest position — one set of numbers, all three measured
-  // together from a headless sweep rather than guessed, and they have to move together.
-  //
-  // At +/-15 the ball never left y in [0.56, 3.01] and there was no throw worth watching. At +/-22 the
-  // excursion is about 4.25 m, so the play area has to show more world, and showing more world costs
-  // drawn size: 5.6 m puts this at ~80 px/m against Class C's 90, i.e. about 11% smaller. That is the
-  // trade Daniel asked for — a real throw is worth more here than matching Class C exactly, because
-  // this slide is about watching the lid move and Class C's is about the normal force.
-  //
-  // The rest position drops to 1.8 because the motion is NOT symmetric about the start: a throw climbs
-  // roughly twice as far as a drop falls, so centering the view on the old y = 2 wasted the top of the
-  // frame. `focusY` is both the rest height and the center of the view, so moving it does both at once.
-  // Re-measure all three before changing any of them, or before changing tMove.
-  // The hand's travel is the same every run — that is the whole point of this variant — and the slider
-  // asks for a peak SPEED, from which the duration follows. V_MIN is not decoration: T = 1.875*H/|v|, so
-  // a speed of 0.2 m/s would be an eleven-second animation. Below V_MIN, Play is off.
-  HandLiftEnergy.TRAVEL = 1.2;      // meters the hand moves, every time
-  HandLiftEnergy.V_MAX  = 5;        // slider bound, m/s
-  HandLiftEnergy.V_MIN  = 0.8;      // below this, Play is disabled (longest run ~2.8 s)
-  HandLiftEnergy.A_MAX = 22;        // kept: HandLift's own slider bound, unused by this preset
+  // Move time, slider bound, default, play-area world height and rest position — measured together, and
+  // they move together. At T = 0.8 s the release threshold is g·T²/5.7735 ≈ 1.09 m, so ±2 m spans every
+  // regime with room on both sides of it; a +2 m throw peaks about 2.3 m above the start and a −2 m drop
+  // bottoms out a little past −2 m, both inside the 5.6 m slice centered on y = 1.8.
+  HandLiftEnergy.T_MOVE = 0.8;      // seconds the hand takes, every run
+  HandLiftEnergy.D_MAX  = 2.0;      // slider bound, meters of travel
+  HandLiftEnergy.D_DEFAULT = 0.5;   // opens on a slow lift, so Play does something the first time
+  HandLiftEnergy.Y_LO = 0.5;        // lowest target: a hard drop's catch (it gives ~0.45 m) still stays above y = 0
+  HandLiftEnergy.Y_HI = 3.7;        // highest target: a throw's apex (~0.3 m above it) stays under Y_TOP
+  HandLiftEnergy.Y_TOP = 4.0;       // the energy axis: a full-height red band = the ball at the 4 m tick
+  HandLiftEnergy.A_MAX = 22;        // kept: read by mountHandLift's (Class C) branch, unused by this preset
   HandLiftEnergy.PLAY_WORLD_H = 5.6;
-  HandLiftEnergy.REST_Y = 1.8;
+  HandLiftEnergy.REST_Y = 2.1;      // 2026-09-30: up from 1.8, so from rest the slider reaches ±1.6 m — past the
+                                    // 1.09 m release threshold BOTH ways — inside [Y_LO, Y_HI]
 
   // ============================================================================================
   // DeflectGame (data-sim="deflect") — Class E's impulse target game.
@@ -3699,6 +3721,215 @@
   }
 
   // ============================================================================================
+  // LauncherCliff (data-sim="launcher-cliff") — Class J's opener. Class I's spring launcher, laid on
+  // its side on a cliff top and stripped of the game (Daniel, 2026-09-29).
+  //
+  // The point is to meet the energy graph's three bands ONE AT A TIME, before the upward launcher makes
+  // two of them move at once. Compressing a horizontal spring changes only the green band — the ball
+  // does not change height — so while the hand is on it the lid climbs by exactly ½kx² and nothing else
+  // moves. Let go: green pours entirely into blue as the coil straightens. The ball slides to the edge
+  // (frictionless top, nothing changes), goes over, and the red band it has been carrying the whole
+  // time bleeds into blue on the way down — a flat lid throughout. At the bottom it bounces (rigid,
+  // elastic, frictionless) and carries on right; at the right edge EVERYTHING FREEZES — ball in mid-air,
+  // graph stopped — so the room can read the whole ledger, and ↺ Reset starts it all fresh. Runs at HALF
+  // SPEED (Daniel, 2026-09-29, after a first look: the fall was over too fast, and the instant reload on
+  // landing was distracting). A press on the canvas only grabs a ball that is still in the launcher.
+  //
+  // Gravity's zero is the CLIFF BASE (Daniel's choice): the red band of height mgH is on screen from
+  // the first frame, before anyone touches anything, and the lid starts there, not at zero. That is the
+  // honest reading of "the ball already has somewhere to fall." Same frozen scale, same scrolling
+  // strip and drag-anywhere as LauncherGame; no targets, no Play button, no HUD — just ↺ Reset, top right.
+  // ============================================================================================
+  const LAUNCHER_CLIFF_HTML = `
+      <canvas class="simcanvas"></canvas>
+      <div class="simctrls hud-right">
+        <button class="simbtn reset">↺ Reset</button>
+      </div>`;
+
+  class LauncherCliff extends LauncherGame {
+    constructor(canvas, opts = {}) {
+      const o = Object.assign({}, opts); if (o.k === undefined) o.k = 60;   // mount passes k: undefined
+      super(canvas, o);
+      // Re-freeze the scale for THIS geometry: the most the system can hold is a full compression on
+      // top of the cliff's whole height (the ball's center sits one radius above each surface).
+      this.eMax = (0.5 * this.k * this.dMax * this.dMax + this.mass * this.g * this.topY) * 1.08;
+      this.reset(true);
+    }
+    _geom() {
+      if (this.topY !== undefined) return;
+      // World: ground at y = 0, cliff top at y = 4 m from the left edge to x = edgeX. With k = 60 and a
+      // 1 m full compression the ball leaves at 7.7 m/s and lands ~7 m past the edge — inside the frame.
+      this.worldH = 5.4; this.worldHalfW = 5.6;
+      this.topY = 4.0; this.edgeX = -2.6;
+      this.L0 = 1.5; this.dMax = 1.0;
+      this.pivot = { x: -5.1, y: this.topY + this.radius };   // the stop, at ball-center height
+      this.resize();
+    }
+    _axisPoint(r) { return { x: this.pivot.x + r, y: this.pivot.y }; }   // always horizontal, toward +x
+    // The strip sits a little LOWER than the house stack (Daniel, 2026-09-29): at full compression the
+    // stack reaches the top of its strip, and at the house position that put it right up against the
+    // ground's hatching. The scene keeps its size; only the strip moves.
+    resize() {
+      super.resize();
+      this.gy += this.H * LauncherCliff.GRAPH_DROP;
+    }
+    // Reset is always a FULL reset now: initial condition, empty graph, clock at zero, unfrozen.
+    reset() { this._geom(); this.airborne = false; this.frozen = false; super.reset(true); }
+    _reload() { super._reload(); this.airborne = false; }
+
+    _energies() {
+      const ke = 0.5 * this.mass * (this.attached ? this.rdot * this.rdot
+                                                  : this.vel.x * this.vel.x + this.vel.y * this.vel.y);
+      const y = this.attached ? this.pivot.y : this.pos.y;
+      const gpe = this.mass * this.g * Math.max(0, y - this.radius);        // zero with the ball on the ground
+      const spe = this.attached ? 0.5 * this.k * this.delta * this.delta : 0;
+      return { ke, gpe, spe };
+    }
+    _project() {
+      if (this.E0 == null) return;
+      if (this.attached) {
+        const ke = Math.max(0, this.E0 - this.mass * this.g * Math.max(0, this.pivot.y - this.radius)
+                               - 0.5 * this.k * this.delta * this.delta);
+        const spd = Math.sqrt(2 * ke / this.mass);
+        this.rdot = this.rdot < 0 ? -spd : spd;
+      } else {
+        const ke = Math.max(0, this.E0 - this.mass * this.g * Math.max(0, this.pos.y - this.radius));
+        const cur = 0.5 * this.mass * (this.vel.x * this.vel.x + this.vel.y * this.vel.y);
+        if (cur > 1e-9) { const f = Math.sqrt(ke / cur); this.vel.x *= f; this.vel.y *= f; }
+      }
+    }
+
+    _bindPointer() {
+      const toWorld = (ev) => {
+        const rct = this.c.getBoundingClientRect();
+        const px = (ev.clientX - rct.left) / rct.width * this.W, py = (ev.clientY - rct.top) / rct.height * this.H;
+        return { x: (px - this.ox) / this.scale, y: (this.playH - py) / this.scale };
+      };
+      // Press anywhere to grab (a ball in flight is recalled first); only the horizontal position of the
+      // pointer matters — it sets the compression and nothing else.
+      // Only a ball still in the launcher can be grabbed. A press while it is flying (or frozen at the
+      // end) does nothing: the only way back is the Reset button, so a stray click never wipes the graph.
+      this.c.addEventListener("pointerdown", (ev) => {
+        if (!this.attached || this.frozen) return;
+        this.dragging = true; this.c.setPointerCapture?.(ev.pointerId);
+      });
+      this.c.addEventListener("pointermove", (ev) => {
+        if (!this.dragging) return;
+        const p = toWorld(ev);
+        const rr = Math.max(this.L0 - this.dMax, Math.min(this.L0, p.x - this.pivot.x));
+        this.delta = this.L0 - rr; this.r = rr; this.rdot = 0;
+        this.pos = this._axisPoint(this.r);
+        const e = this._energies(); this.E0 = e.ke + e.gpe + e.spe;   // dragging = the one phase that adds energy
+      });
+      window.addEventListener("pointerup", () => {
+        if (!this.dragging) return;
+        this.dragging = false;
+        if (this.delta <= 0.02) { this.delta = 0; this.r = this.L0; this.pos = this._axisPoint(this.r); }
+      });
+    }
+
+    _integrate(h) {
+      if (this.dragging) return;
+      if (this.attached) {
+        if (this.delta <= 0) return;
+        const a = this.k * (this.L0 - this.r) / this.mass;       // horizontal: gravity has no component
+        this.rdot += a * h; this.r += this.rdot * h;
+        this.delta = Math.max(0, this.L0 - this.r);
+        this.pos = this._axisPoint(this.r);
+        if (this.r >= this.L0) {
+          this.attached = false; this.delta = 0;
+          this.vel = { x: this.rdot, y: 0 };
+          this.pos = this._axisPoint(this.L0);
+        }
+        return;
+      }
+      if (this.frozen) return;
+      if (!this.airborne && this.pos.x <= this.edgeX) {
+        this.pos.x += this.vel.x * h;                              // sliding along the frictionless top
+      } else {
+        this.airborne = true;
+        this.vel.y -= this.g * h;
+        this.pos.x += this.vel.x * h; this.pos.y += this.vel.y * h;
+        // The ground: a rigid, elastic, frictionless bounce — reflect the height and the vertical speed.
+        // (_project then holds the total exactly, so repeated bounces never drift.)
+        if (this.pos.y - this.radius < 0 && this.vel.y < 0) {
+          this.pos.y = 2 * this.radius - this.pos.y; this.vel.y = -this.vel.y;
+        }
+      }
+      this._recordPos(this.pos.x, this.pos.y, (this.now = performance.now()), HOUSE.trailFadeS * 1000);
+      // The right edge: FREEZE with the ball wholly on screen, so it reads as stopped, not gone.
+      const halfVis = (this.W / 2) / this.scale, xStop = halfVis - this.radius * 1.6;
+      if (this.pos.x >= xStop) { this.pos.x = xStop; this.frozen = true; }
+    }
+
+    // Half speed, and nothing at all advances once frozen — not the ball, not the clock, not the graph.
+    step(now) {
+      if (this.frozen) { this.last = now; return; }
+      const dt = Math.min((now - this.last) / 1000, 0.05) * LauncherCliff.TIME_SCALE; this.last = now;
+      const sub = 6, h = dt / sub;
+      for (let i = 0; i < sub && !this.frozen; i++) { this._integrate(h); this._project(); }
+      this.simT += dt;
+      this._pushHistory();
+      this.render();
+    }
+
+    _terrain() {   // house Floor, twice: the cliff (top + face) and the ground beyond it
+      const ctx = this.ctx, s = this.scale;
+      const yT = this.sy(this.topY), yG = this.sy(0), xE = this.sx(this.edgeX), x1 = this.W;
+      const hatch = 0.28 * s, gap = Math.max(s * 0.34, 13);
+      ctx.save(); ctx.strokeStyle = HOUSE.boundary; ctx.lineCap = "butt"; ctx.lineJoin = "round";
+      ctx.lineWidth = Math.max(s * 0.06, 4);
+      ctx.beginPath(); ctx.moveTo(0, yT); ctx.lineTo(xE, yT); ctx.lineTo(xE, yG); ctx.lineTo(x1, yG); ctx.stroke();
+      ctx.lineWidth = Math.max(s * 0.032, 2.5);
+      for (let hx = gap; hx <= xE - gap * 0.3; hx += gap) { ctx.beginPath(); ctx.moveTo(hx, yT); ctx.lineTo(hx - hatch, yT + hatch); ctx.stroke(); }
+      for (let hy = yT + gap; hy <= yG - gap * 0.3; hy += gap) { ctx.beginPath(); ctx.moveTo(xE, hy); ctx.lineTo(xE - hatch, hy + hatch); ctx.stroke(); }
+      for (let hx = xE + gap; hx <= x1 + 0.01; hx += gap) { ctx.beginPath(); ctx.moveTo(hx, yG); ctx.lineTo(hx - hatch, yG + hatch); ctx.stroke(); }
+      // the stop the spring pushes off: a short wall, hatched on its back
+      const xs = this.sx(this.pivot.x), yTop = this.sy(this.topY + 2.4 * this.radius);
+      ctx.lineWidth = Math.max(s * 0.06, 4);
+      ctx.beginPath(); ctx.moveTo(xs, yT); ctx.lineTo(xs, yTop); ctx.stroke();
+      ctx.lineWidth = Math.max(s * 0.032, 2.5);
+      for (let hy = yTop + gap * 0.35; hy < yT; hy += gap * 0.6) { ctx.beginPath(); ctx.moveTo(xs, hy); ctx.lineTo(xs - hatch * 0.7, hy + hatch * 0.7); ctx.stroke(); }
+      ctx.restore();
+    }
+    render() {
+      const ctx = this.ctx; ctx.clearRect(0, 0, this.W, this.H);
+      this._terrain();
+      this._coil();
+      if (!this.attached && this.posHist && this.posHist.length > 1) {
+        this._whiteTrail(this.posHist.map(p => ({ x: this.sx(p.x), y: this.sy(p.y), t: p.t })),
+                         this.now, HOUSE.trailFadeS * 1000);
+        this._motionBlur(this.radius, k => this._posAtBack(k * HOUSE.blurDt * 1000) || null);
+      }
+      const b = this.attached ? this._axisPoint(this.r) : this.pos;
+      this._disc(b.x, b.y, this.radius, HOUSE.mass, 1);
+      this._graph(ctx);
+    }
+  }
+
+  LauncherCliff.TIME_SCALE = 0.5;   // half speed (Daniel, 2026-09-29)
+  LauncherCliff.GRAPH_DROP = 0.03;  // strip moved down 3% of the frame height from the house stack
+
+  function mountLauncherCliff(section) {
+    if (!section.querySelector(".simcanvas")) section.insertAdjacentHTML("beforeend", LAUNCHER_CLIFF_HTML);
+    const canvas = section.querySelector(".simcanvas");
+    const sim = new LauncherCliff(canvas, {
+      k: section.dataset.k !== undefined ? +section.dataset.k : undefined,
+      g: section.dataset.g !== undefined ? +section.dataset.g : undefined
+    });
+    const resetBtn = section.querySelector(".reset");
+    resetBtn.addEventListener("click", () => sim.reset());
+    if (window.self !== window.top) { canvas.style.pointerEvents = "none"; resetBtn.disabled = true; }
+    // Always live, like LauncherGame: the strip scrolls from the moment the slide opens.
+    let raf = null;
+    sim.start = () => { if (raf) return; const loop = (now) => { sim.step(now); raf = requestAnimationFrame(loop); };
+                        sim.last = performance.now(); raf = requestAnimationFrame(loop); };
+    sim.stop = () => { if (raf) { cancelAnimationFrame(raf); raf = null; } };
+    window.addEventListener("resize", () => { sim.resize(); sim.render(); });
+    return sim;
+  }
+
+  // ============================================================================================
   // PIN-JOINTED PLATFORM FAMILY — PlatformBounce (Class H) and FrictionRamp (Class M).
   //
   // PlatformBounce arrived here on 2026-08-21, from `ClassH-Bouncing/gen/classH-sims.js`, where it
@@ -5104,7 +5335,7 @@
     "projectile", "elevator", "handlift", "normal", "handlift-energy", "handliftenergy",
     "projectile2d", "2d", "projectile2d-pair", "pair2d",
     "deflect", "game", "circle", "circular", "oscillator", "spring",
-    "oscillator-game", "springgame", "attractor2d", "attractor", "grab", "launcher", "launchergame",
+    "oscillator-game", "springgame", "attractor2d", "attractor", "grab", "launcher", "launchergame", "launcher-cliff", "launchercliff",
     "platformbounce", "frictionramp", "coupledmass", "driven"
   ]);
 
@@ -5136,6 +5367,7 @@
     if (kind === "attractor2d" || kind === "attractor") return mountAttractor2D(section);
     if (kind === "grab") return mountGrab(section);
     if (kind === "launcher" || kind === "launchergame") return mountLauncherGame(section);
+    if (kind === "launcher-cliff" || kind === "launchercliff") return mountLauncherCliff(section);
     if (kind === "platformbounce") return mountPlatformBounce(section);
     if (kind === "frictionramp") return mountFrictionRamp(section);
     if (kind === "coupledmass") return mountCoupledMass(section);
