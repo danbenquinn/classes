@@ -198,6 +198,21 @@
   const camctrls = document.getElementById('camctrls');
   let camStream  = null;
   const inTopWindow = (window.self === window.top);   // false inside the speaker-view iframe
+  // SPEAKER VIEW IS SILENT (2026-10-02). The S window holds two iframes that each load this whole deck —
+  // "current" and "upcoming" — and each one runs the media engine like the projector does, so an autoplay
+  // clip on the NEXT slide (Class K's finale, with sound) played its audio out of the laptop while the room
+  // was still on the slide before. Every per-clip volume rule in this file is written as
+  // `el.muted = (d.mute !== undefined) || vol === 0`, i.e. it UN-mutes whenever a clip has volume, so muting
+  // once is not enough. Instead, inside an iframe the `muted` setter is pinned to true and `play()` mutes
+  // first, for every <video>/<audio> the page will ever make. The projector window is untouched.
+  if(!inTopWindow){
+    const MP = HTMLMediaElement.prototype, md = Object.getOwnPropertyDescriptor(MP, 'muted'), play = MP.play;
+    if(md && md.set){
+      Object.defineProperty(MP, 'muted', { configurable:true, enumerable:md.enumerable,
+        get(){ return md.get.call(this); }, set(){ md.set.call(this, true); } });
+      MP.play = function(){ md.set.call(this, true); return play.apply(this, arguments); };
+    }
+  }
   let activeVideo = false, nativeMedia = false;
 
   const resolveSrc = s => new URL(s, location.href).href;
@@ -819,6 +834,13 @@
     } else {
       const anim = mk(list[0]); anim.className = 'stack-anim';
       if(d.animshift) anim.style.transform = 'translateY(-' + d.animshift + '%)';   // nudge the animation up (% of frame height)
+      // data-animbleed="N" (2026-10-01, Class K): the clip was rendered framed N% of its height LOWER than
+      // the canonical frame (so a force arrow hanging below the ball is inside the clip instead of cut off),
+      // and this moves it back down by the same N% — everything above the old bottom edge lands on the same
+      // pixel — and draws the animation OVER the graph strips with mix-blend-mode:screen, so its black is
+      // transparent and the part that hangs below (the arrowheads) shows on top of the energy bands.
+      if(d.animbleed){ anim.style.transform = 'translateY(' + parseFloat(d.animbleed) + '%)';
+                       anim.style.zIndex = '1'; anim.style.mixBlendMode = 'screen'; }
       stackwrap.appendChild(anim);
       const sw = document.createElement('div'); sw.className = 'stack-strips';
       const _bp = d.graphbottom !== undefined ? d.graphbottom

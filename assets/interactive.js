@@ -404,7 +404,7 @@
   function betaOf(cd, area) { return 0.5 * RHO_AIR * Math.max(cd || 0, 0) * Math.max(area || 0, 0); }
 
   // One RK4 substep of  r̈ = -g ŷ - (beta/m)|ṙ|ṙ.  `k` is beta/m and is passed in FRESH every substep,
-  // which is the whole point: the C_d / A⊥ sliders change the motion mid-flight, not just the arrows.
+  // which is the whole point: the beta slider changes the motion mid-flight, not just the arrows.
   function dragStep(st, dt, g, k) {                      // st = {x, y, u, v}, mutated in place
     const au = (u, v) => -k * Math.hypot(u, v) * u;
     const av = (u, v) => -g - k * Math.hypot(u, v) * v;
@@ -443,7 +443,7 @@
       super(canvas);
       this.focusY = opts.focusY ?? HOUSE.focusY;
       this.v0 = opts.v0 ?? 0; this.g = opts.g ?? 9.8; this.mass = opts.mass ?? 1;
-      this.beta = opts.beta ?? 0;          // ½rho·C_d·A_perp [kg/m], read LIVE off the sliders
+      this.beta = opts.beta ?? 0;          // the lumped drag constant [kg/m], read LIVE off the slider
       this.dragMode = !!opts.dragMode;     // set by the mount, NOT by beta: a slide that can reach
                                            // drag always integrates, so beta may change mid-flight
       this.st = null; this.hist = null;    // live state + its history (see dragAdvance / histAt)
@@ -581,7 +581,7 @@
       const ctx = this.ctx, v = this.running ? this.vel(this.t) : this.v0;
       const lines = [`t = ${this.t.toFixed(2)} s`, `x = ${p.x.toFixed(2)} m`, `y = ${p.y.toFixed(2)} m`, `v = ${v.toFixed(2)} m/s`];
       if (this.beta > 0) {                                        // Class K: the lumped constant and its asymptote
-        lines.push(`\u03b2 = ${this.beta.toFixed(3)} kg/m`);
+        lines.push(`\u03b2 = ${this.beta.toFixed(3)} N/(m/s)\u00b2`);
         lines.push(`terminal = ${this.vTerm.toFixed(2)} m/s`);
       }
       ctx.save(); ctx.font = (HOUSE.sizeBody * this.H) + "px " + HOUSE.fontMono; ctx.textBaseline = "top";   // readout = body tier
@@ -924,8 +924,10 @@
         <label><span class="var"><i>g</i>:</span> <input type="range" class="s-g" min="0" max="12" step="0.2"><input type="number" class="n-g" step="0.2"><span class="u">m/s²</span></label>
       </div>`;
 
-  // Class K drag controls: exactly the two sliders that make up beta — shape and size. They are two
-  // ways of changing one number (the readout shows beta itself), which is the point of lumping them.
+  // Class K drag controls: ONE slider, beta itself (Daniel, 2026-10-01). The first layer of the lesson is
+  // that drag scales with speed squared through one lumped constant; what beta is made of (½ρC_dA⊥) is a
+  // second layer the deck brings in later, so the sim no longer asks for C_d or A⊥. The ball stays at
+  // house size because the mass and size are fixed — only beta moves.
   const DRAG_CONTROLS_HTML = `
       <canvas class="simcanvas"></canvas>
       <button class="simbtn toggle-readout" title="show / hide numbers">123</button>
@@ -933,11 +935,10 @@
         <button class="simbtn play">▶ Play</button>
         <button class="simbtn reset">↺ Reset</button>
         <button class="simbtn slomo" title="Slow motion">🐢</button>
-        <label><span class="var"><i>C</i><sub>d</sub>:</span> <input type="range" class="s-cd" min="0" max="1.5" step="0.05"><input type="number" class="n-cd" step="0.05"></label>
-        <label><span class="var"><i>A</i><sub>⊥</sub>:</span> <input type="range" class="s-area" min="0.1" max="1" step="0.05"><input type="number" class="n-area" step="0.05"><span class="u">m²</span></label>
+        <label><span class="var"><i>β</i>:</span> <input type="range" class="s-beta" min="0" max="1" step="0.01"><input type="number" class="n-beta" step="0.01"><span class="u">N/(m/s)²</span></label>
       </div>`;
 
-  // Same two sliders on the wide 2-D frame; area in cm² because the object is a ball, not a skydiver.
+  // The same one slider on the wide 2-D frame, over a baseball-sized range (a real baseball is ~0.0009 kg/m).
   const DRAG_CONTROLS_2D_HTML = `
       <canvas class="simcanvas"></canvas>
       <button class="simbtn toggle-readout" title="show / hide numbers">123</button>
@@ -945,8 +946,7 @@
         <button class="simbtn play">▶ Play</button>
         <button class="simbtn reset">↺ Reset</button>
         <button class="simbtn slomo" title="Slow motion">🐢</button>
-        <label><span class="var"><i>C</i><sub>d</sub>:</span> <input type="range" class="s-cd" min="0" max="1" step="0.05"><input type="number" class="n-cd" step="0.05"></label>
-        <label><span class="var"><i>A</i><sub>⊥</sub>:</span> <input type="range" class="s-area" min="10" max="100" step="1"><input type="number" class="n-area" step="1"><span class="u">cm²</span></label>
+        <label><span class="var"><i>β</i>:</span> <input type="range" class="s-beta" min="0" max="0.005" step="0.0001"><input type="number" class="n-beta" step="0.0001"><span class="u">N/(m/s)²</span></label>
       </div>`;
 
   const HAND_CONTROLS_HTML = `
@@ -1913,7 +1913,7 @@
       this.x0 = 0; this.y0 = 0;                                  // ALWAYS launch from the origin <0,0> (drag-to-position disabled)
       this.maxSpeed = opts.maxSpeed ?? 40;                       // speed cap → the max range just fills the screen, never overshoots
       this.mass = opts.mass ?? 0.145;      // a baseball — sized so real ball drag lands in the slider's middle
-      this.beta = opts.beta ?? 0;          // ½rho·C_d·A_perp [kg/m], read LIVE off the sliders
+      this.beta = opts.beta ?? 0;          // the lumped drag constant [kg/m], read LIVE off the slider
       this.dragMode = !!opts.dragMode;     // as in Projectile: capability, not current beta
       this.lockVec = !!opts.lockVec;       // Class K locks speed + angle so only drag varies
       this.st = null; this.hist = null;
@@ -2125,7 +2125,7 @@
                      `x = ${p.x.toFixed(1)} m`, `y = ${p.y.toFixed(1)} m`,
                      `u = ${ux.toFixed(1)} m/s`, `v = ${vy.toFixed(1)} m/s`];
       if (this.beta > 0) {
-        lines.push(`\u03b2 = ${this.beta.toExponential(1)} kg/m`);
+        lines.push(`\u03b2 = ${this.beta.toExponential(1)} N/(m/s)\u00b2`);
         lines.push(`terminal = ${this.vTerm.toFixed(0)} m/s`);
       }
       ctx.save(); ctx.font = Math.max(HOUSE.sizeBody * this.H, 12) + "px " + HOUSE.fontMono; ctx.textBaseline = "top";
@@ -5375,7 +5375,7 @@
   }
 
   function mountProjectile(section) {
-    const dragMode = section.dataset.drag !== undefined;          // Class K: swap in the C_d / A_perp sliders
+    const dragMode = section.dataset.drag !== undefined;          // Class K: swap in the beta slider
     if (dragMode) return mountProjectileDrag(section);
     if (!section.querySelector(".simcanvas")) section.insertAdjacentHTML("beforeend", CONTROLS_HTML);
     const d = section.dataset;
@@ -5444,8 +5444,8 @@
   function _wireDragSliders(section, sim, apply, extraDisable) {
     const q = s => section.querySelector(s);
     const readonly = window.self !== window.top;
-    const rng = { cd: q(".s-cd"), area: q(".s-area") };
-    const num = { cd: q(".n-cd"), area: q(".n-area") };
+    const rng = { beta: q(".s-beta") };
+    const num = { beta: q(".n-beta") };
     const clamp = (el, v) => Math.max(+el.min, Math.min(+el.max, v));
     Object.keys(rng).forEach(k => {
       const s = rng[k], n = num[k]; n.value = s.value;
@@ -5468,7 +5468,7 @@
     apply();
     if (readonly) {
       sim.c.style.pointerEvents = "none";
-      [playBtn, q(".reset"), slo, rt, rng.cd, rng.area, num.cd, num.area].concat(extraDisable || [])
+      [playBtn, q(".reset"), slo, rt, rng.beta, num.beta].concat(extraDisable || [])
         .forEach(el => { if (el) el.disabled = true; });
       const ctrls = q(".simctrls"); if (ctrls) ctrls.style.opacity = ".4";
     }
@@ -5483,8 +5483,8 @@
     return { rng, num };
   }
 
-  // 1-D free fall with drag (Class K `sim-freefall`). Opens with C_d = 0 — the Class B ball — so the
-  // first slider push is the moment drag enters the course.
+  // 1-D free fall with drag (Class K `sim-freefall`). Opens with beta = 0 — the Class B ball — so the
+  // first slider push is the moment drag enters the course. `data-beta` sets the opening value.
   function mountProjectileDrag(section) {
     if (!section.querySelector(".simcanvas")) section.insertAdjacentHTML("beforeend", DRAG_CONTROLS_HTML);
     const d = section.dataset;
@@ -5498,13 +5498,10 @@
       slomo: d.slomo !== "false"
     });
     const q = s => section.querySelector(s);
-    q(".s-cd").value = d.cd !== undefined ? +d.cd : 0;
-    q(".s-area").value = d.area !== undefined ? +d.area : 0.4;
+    q(".s-beta").value = d.beta !== undefined ? +d.beta : 0;
     const apply = () => {
-      const cd = +q(".s-cd").value, area = +q(".s-area").value;
-      sim.beta = betaOf(cd, area);
-      sim.area = area;                     // the disc reads this — see Projectile.radius
-      if (!sim.running) sim.render();
+      sim.beta = Math.max(0, +q(".s-beta").value);   // read LIVE every substep — see dragAdvance
+      if (!sim.running) sim.render();      // sim.area stays at areaRef, so the ball keeps house size
     };
     _wireDragSliders(section, sim, apply);
     return sim;
@@ -5527,12 +5524,9 @@
     });
     sim.u0 = speed * Math.cos(theta); sim.v0 = speed * Math.sin(theta);
     const q = s => section.querySelector(s);
-    q(".s-cd").value = d.cd !== undefined ? +d.cd : 0;
-    q(".s-area").value = d.area !== undefined ? +d.area : 42;    // cm² — a real baseball
+    q(".s-beta").value = d.beta !== undefined ? +d.beta : 0;
     const apply = () => {
-      const cd = +q(".s-cd").value, area = +q(".s-area").value * 1e-4;    // cm² → m²
-      sim.beta = betaOf(cd, area);
-      sim.area = area;                     // the disc reads this — see Projectile2D.radius
+      sim.beta = Math.max(0, +q(".s-beta").value);
       if (!sim.running) { sim.landed = false; sim.render(); }
     };
     _wireDragSliders(section, sim, apply);
