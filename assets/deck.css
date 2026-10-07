@@ -401,6 +401,14 @@
      IN-ROOM ONLY — publish_deck.inline_suite_assets strips every .qvid, because the site keeps no clips. */
   .poll .qvid{ position:absolute; top:5%; left:59.5%; width:18%; height:37%; object-fit:contain;
                object-position:center top; border-radius:6px; background:transparent; }
+  /* A TEXT poll with a run-up clip (Class L's saloon door, 2026-10-07). The base text poll keeps the
+     300px QR, whose card reaches left to x~71% and ran over the thumbnail's right third. So: the QR
+     shrinks to the figure-poll size, the prompt narrows, and the clip gets the freed width — 50%..77%,
+     clear of the card (which starts near 79%). Figure polls (:has(.qfig)) are untouched. */
+  .poll:has(.qvid):not(:has(.qfig)) .qr .qrimg,
+  .poll:has(.qvid):not(:has(.qfig)) .qr .qrimg img{ width:200px !important; height:200px !important; }
+  .poll:has(.qvid):not(:has(.qfig)) .qprompt{ max-width:44%; }
+  .poll:has(.qvid):not(:has(.qfig)) .qvid{ left:50%; width:27%; }
   .pollmode{ position:absolute; left:3%; top:3%; z-index:8; font-size:.5em; letter-spacing:.12em;
              text-transform:uppercase; font-weight:650; display:flex; align-items:center; gap:.5em;
              color:var(--muted); padding:.35em .7em; border-radius:999px; background:rgba(255,255,255,.06);

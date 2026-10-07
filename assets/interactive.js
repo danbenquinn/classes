@@ -2441,7 +2441,7 @@
       const ctx = this.ctx, fs = HOUSE.sizeBody * this.H;
       const lines = this.damped
         ? [`ζ = ${this.zeta.toFixed(2)}`, this.regime,
-           this.zeta < 1 ? `√(ω²−γ²) = ${this.omegaD.toFixed(2)} rad/s` : `no oscillation`]
+           this.zeta < 1 ? `ω√(1−ζ²) = ${this.omegaD.toFixed(2)} rad/s` : `no oscillation`]
         : [`f = ${this.freq.toFixed(2)} Hz`, `ω = ${this.omega.toFixed(2)} rad/s`];
       // The initial condition, which is the whole reason this panel exists in Class F: with omega read
       // off the trace and this read off the mass, the general solution is fully determined and the
@@ -2481,7 +2481,7 @@
       </div>`;
   const OSC_D_CONTROLS_HTML = `
       <canvas class="simcanvas"></canvas>
-      <button class="simbtn toggle-readout on" title="show / hide numbers">123</button>
+      <button class="simbtn toggle-readout" title="show / hide numbers">123</button>
       <div class="simctrls">
         <button class="simbtn play">⏸ Pause</button>
         <button class="simbtn reset">↺ Reset</button>
@@ -2523,6 +2523,7 @@
     q(".reset").addEventListener("click", () => { sim.reset(); refreshPlay(); });
     const slo = q(".slomo"); if (slo) { slo.classList.toggle("on", sim.slomo); slo.addEventListener("click", () => { sim.slomo = !sim.slomo; slo.classList.toggle("on", sim.slomo); }); }
     const rt = q(".toggle-readout");
+    if (damp) sim.showReadout = false;   // Class L: the number panel starts hidden; 123 shows it (Daniel, 2026-10-07)
     if (rt) rt.addEventListener("click", () => { sim.showReadout = !sim.showReadout; rt.classList.toggle("on", sim.showReadout); sim.render(); });
     const netchk = q(".s-net");   // gravity variant only: toggle the white net-force arrow
     if (netchk) { netchk.checked = sim.showNet; netchk.addEventListener("change", () => { sim.showNet = netchk.checked; sim.render(); }); }
