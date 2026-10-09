@@ -4310,7 +4310,7 @@
       // "filled in white from what you've drawn down to the ground") — the rubber laid on the road.
       const lw = Math.max(this.scale * 0.018, 1.6), gap = Math.max(this.scale * 0.03, 3);   // px
       const band = gap + lw;                               // px: from the bar's surface to the old line's top edge
-      const off = barHalf + (band / 2) / this.scale;       // centre of the band, world units off the bar's centreline
+      const off = barHalf + (band / 2) / this.scale;       // center of the band, world units off the bar's centreline
       ctx.save(); ctx.strokeStyle = HOUSE.trail; ctx.lineCap = "butt";
       ctx.lineWidth = band;
       for (const sk of this.skids) {
