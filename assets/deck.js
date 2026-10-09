@@ -314,8 +314,18 @@
     attrib.style.left   = (mrect.x + pad) + 'px';
     attrib.style.bottom = (LH - (mrect.y + mrect.h) + vpad) + 'px';
   }
+  // The exit-quiz notice and a caption both want the lower-left (2026-10-09, Class M's Free Solo finale:
+  // "Password: freesolo" landed on top of "Alex Honnold climbing El Capitan…"). When a plain caption is
+  // showing, lift the notice to sit just above it; otherwise hand it back to deck.css's bottom:14%.
+  // Looked up by id rather than through `exitQuiz`, which is declared further down the file.
+  function liftExitQuiz(){
+    const eq = document.getElementById('exitquiz'); if(!eq) return;
+    if(slidecap.style.display === 'none' || slidecap.classList.contains('capfixed')){ eq.style.bottom = ''; return; }
+    const pr = (eq.offsetParent || document.body).getBoundingClientRect(), cr = slidecap.getBoundingClientRect();
+    eq.style.bottom = Math.max(pr.bottom - cr.top + 10, 0.14 * pr.height) + 'px';
+  }
   function placeCap(){                    // plain caption, lower-left of the media itself (like placeAttrib)
-    if(slidecap.style.display === 'none') return;
+    if(slidecap.style.display === 'none'){ liftExitQuiz(); return; }
     const cur = Reveal.getCurrentSlide();
     // The caption and the attribution badge want the SAME corner, and until Class D no slide carried
     // both — the caption slides were uncredited stills and the credited ones were captionless. Class D
@@ -329,17 +339,18 @@
     slidecap.classList.toggle('capfixed', fixed);
     if(fixed){
       slidecap.style.left = '3.2%'; slidecap.style.top = '4.5%';
-      slidecap.style.bottom = 'auto'; slidecap.style.maxWidth = '60%'; return;
+      slidecap.style.bottom = 'auto'; slidecap.style.maxWidth = '60%'; liftExitQuiz(); return;
     }
     slidecap.style.top = 'auto';
     if(cur && (cur.dataset.creditScreen !== undefined || cur.dataset.fullscreen !== undefined)){
       slidecap.style.left = '3%'; slidecap.style.bottom = 'calc(4% + ' + lift + 'px)';
-      slidecap.style.maxWidth = '94%'; return;                     // full-bleed: wrap within the screen
+      slidecap.style.maxWidth = '94%'; liftExitQuiz(); return;     // full-bleed: wrap within the screen
     }
     const LH = layer.clientHeight, pad = Math.max(8, Math.round(mrect.w*0.025));
     slidecap.style.left   = (mrect.x + pad) + 'px';
     slidecap.style.bottom = (LH - (mrect.y + mrect.h) + Math.round(pad*0.5) + lift) + 'px';
     slidecap.style.maxWidth = Math.max(0, mrect.w - 2*pad) + 'px'; // wrap on the media, never spill past it
+    liftExitQuiz();
   }
   function placeYear(){                    // lower-right corner of the media rectangle (data-year)
     if(yeartag.style.display === 'none') return;
@@ -589,6 +600,7 @@
       }
     }
     if(d.playlist && cur._pl && cur._pl.list.length > 1) preloadInto(playerB, cur._pl.list[1], d);   // stage the 2nd cut for a flash-free advance
+    else if(d.then && !isStill(media)) preloadInto(playerB, d.then, d);   // stage the loop clip: the swap on `ended` is then flash-free (2026-10-08)
     else stageNextClip(cur);                         // …otherwise decode the NEXT SLIDE's clip into the
                                                      // buffer. `else`, because there is one buffer and
                                                      // the cut inside this slide is reached first
@@ -959,8 +971,26 @@
     if(ev.target !== player) return;                       // BOTH PLAYERS, below
     const cur = Reveal.getCurrentSlide();
     if(cur && cur.dataset.then && !player._swapped){
+      // NO BLACK BETWEEN THE TWO CLIPS (2026-10-08, Class M's drum brake). This used to point the
+      // visible element at the loop clip and load() it, so the screen showed the black media layer
+      // until the first frame decoded. The mount now pre-decodes the loop clip into the hidden buffer
+      // (see the `d.then` branch at the end of the mount), so here it is a swap, exactly as a playlist
+      // cut is. The old load-in-view path stays as the fallback for a buffer that is not ready.
+      const want = cur.dataset.then;
+      if(resolveSrc(playerB.src) === resolveSrc(want) && playerB.readyState >= 2){
+        const d = cur.dataset;
+        const vr = parseFloat(d.volume), vv = isNaN(vr) ? 1 : Math.max(0, Math.min(1, vr));
+        swapPlayers();
+        player._swapped = true; player.loop = true;
+        player.volume = vv; player.muted = (d.mute !== undefined) || vv === 0;
+        player.style.opacity = 1; player.style.zIndex = ''; player.style.transition = '';
+        try{ player.currentTime = 0; }catch(e){}
+        layoutActive(); player.play().catch(()=>{});
+        stageNextClip(cur);                                 // buffer free again: decode the next slide's clip
+        return;
+      }
       player._swapped = true; player.loop = true;
-      player.src = resolveSrc(cur.dataset.then); player.load();
+      player.src = resolveSrc(want); player.load();
       player.onloadeddata = () => { layoutActive(); player.play().catch(()=>{}); };
     }
   }

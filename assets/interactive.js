@@ -4110,7 +4110,7 @@
   // platform: tip it and static friction grows to hold the block, tip past atan(mu_s) and the teeth
   // lift, the block slides, and the amber arrow SHRINKS to mu_k·|F_N|. Two live sliders, mu_s and
   // mu_k. The baked prototype is the retired quarry's `animations/scripts/tilt-ramp.py`; the block
-  // anatomy (teeth buried while stuck, lifted by tooth_h once sliding) is OBJECTS.md's teethed
+  // anatomy (teeth lifted by tooth_h so only the tips touch; until 2026-10-09 they were buried while stuck) is OBJECTS.md's teethed
   // friction block, and physanim draws exactly the same object with `velocity_lift`.
   //
   // FOUR THINGS THAT ARE LOAD-BEARING, all of them learned somewhere else in this engine first:
@@ -4143,6 +4143,17 @@
       this.mus = opts.mus ?? 0.60;
       this.muk = Math.min(opts.muk ?? 0.35, this.mus);   // a slide asking for mu_k > mu_s is a config
       //   error, not an interaction; the RUNTIME invariant is held by the coupled sliders in the mount.
+      // STATIC-ONLY (data-static-only, Class M's first `sim-ramp`, 2026-10-08): kinetic friction is
+      // switched OFF — mu_k is pinned at 0 and its slider is never built — so the first look at this sim
+      // is about static friction alone. Past the ceiling the block slides frictionlessly; the second
+      // sim slide (`sim-ramp-kinetic`) puts mu_k back.
+      this.staticOnly = !!opts.staticOnly;
+      if (this.staticOnly) this.muk = 0;
+      // SKID MARK (data-skid, Class M's `sim-ramp-kinetic`, 2026-10-09): while the block SLIDES it lays a
+      // thin white line on the surface behind it — a tire skid, drawn. One segment per slip, so stick-slip
+      // leaves separate marks; cleared on recycle and on Reset. Static contact leaves nothing, which is the
+      // point: no relative motion at the contact, nothing sheared off.
+      this.skid = !!opts.skid; this.skids = [];
       this.minAngle = 0;                    // no dead-zone: flat IS the interesting starting state here
       this.angle0 = opts.angle ?? 0;        // what Reset returns the bar to
       this.angle = this.angle0;
@@ -4150,20 +4161,40 @@
       // falls onto this one, so the bar sits at the middle of the frame where it is easiest to read
       // from the back of the room — and the block still has four world units to fall through after it
       // walks off the end, which is more than enough to leave frame.
-      this.pivY = 0;
+      this.pivY = 0;                        // overridden by _layoutRamp(): the upper third (2026-10-09)
       this.bw = 1.05; this.bh = 0.58;       // block, in world units (the quarry's proportions)
       this.nTeeth = 12; this.toothH = 0.09;
       this.forceScale = 0.42;               // ONE scale for every arrow, so lengths compare directly
       this.showReadout = false;
       this.running = true; this.paused = false; this.everPlayed = true;
       this.last = performance.now();
+      this._layoutRamp();
       this._resetBody();
+    }
+    // A RAMP THAT NEVER ENDS ON SCREEN (Daniel, 2026-10-09). The pin sits a third of the way down the
+    // frame and the bar is long enough to run off-screen in every direction (under the controls too —
+    // the canvas fills the slide), so the block can never reach an end and never becomes a projectile.
+    // What the room watches is the whole descent, from the upper third to the edge of the frame. When
+    // the block leaves the screen it RECYCLES: back to the pin, stuck, at the SAME tilt — so a steep
+    // ramp replays the slide again and again without re-dragging. Reset still flattens the bar.
+    // The projectile branch in step() is kept but is now unreachable (|s| never passes halfLen first).
+    resize() { super.resize(); if (this.bw) this._layoutRamp(); }
+    _layoutRamp() {
+      if (!this.scale) return;
+      const wW = this.W / this.scale, wH = this.H / this.scale;
+      this.pivY = wH / 6;                              // sy(pivY) = H/3: the upper third
+      this.halfLen = Math.hypot(wW, wH) + 2;           // longer than any pin-to-corner distance
+    }
+    _offScreen() {
+      const c = this._bodyCenter(), m = this.bw * this.scale;
+      const px = this.sx(c.x), py = this.sy(c.y);
+      return px < -m || px > this.W + m || py < -m || py > this.H + m;
     }
     _resetBody() {
       this.s = 0; this.vs = 0;              // along-platform position (from the pin) and velocity
       this.sliding = false; this.airborne = false;
       this.x = this.pivX; this.y = this.pivY; this.vx = 0; this.vy = 0;
-      this.simMs = 0; this.posHist = [];
+      this.simMs = 0; this.posHist = []; this.skids = [];
     }
     _angleLocked() { return false; }        // the platform is ALWAYS draggable — that is the slide
     play()  { this._resetBody(); this.running = true; this.paused = false; this.everPlayed = true; this.last = performance.now(); }
@@ -4187,7 +4218,9 @@
     // Block center, in world coords, lifted off the surface by half its height (plus the tooth lift).
     _bodyCenter() {
       const t = this._tangent(), n = this._normal();
-      const lift = this.bh / 2 + (this.sliding ? this.toothH : 0);
+      // Always lifted by the full toothH, stuck or sliding (Daniel, 2026-10-09): only the peaks ever touch,
+      // matching the `asperities` slides, and the block no longer pops on slip.
+      const lift = this.bh / 2 + this.toothH;
       return { x: this.pivX + this.s * t.x + lift * n.x, y: this.pivY + this.s * t.y + lift * n.y };
     }
     step(now) {
@@ -4203,7 +4236,10 @@
           }
           const aPar = this._aPar, limit = this._fricLimit;      // both read LIVE — see note 1
           if (!this.sliding) {
-            if (Math.abs(aPar) > limit) this.sliding = true;     // the ceiling has been crossed
+            if (Math.abs(aPar) > limit) {                         // the ceiling has been crossed
+              this.sliding = true;
+              if (this.skid) this.skids.push({ a: this.s, b: this.s });   // a new skid mark starts here
+            }
             else { this.vs = 0; }                                // still stuck: friction cancels the pull exactly
           }
           if (this.sliding) {
@@ -4234,19 +4270,20 @@
             this.x = c.x; this.y = c.y; this.vx = this.vs * t.x; this.vy = this.vs * t.y;
           }
         }
+        if (this.skid && this.sliding && this.skids.length) this.skids[this.skids.length - 1].b = this.s;
+        if (!this.airborne && this._offScreen()) this._resetBody();   // slid off the frame → recycle, same tilt
         const c = this.airborne ? { x: this.x, y: this.y } : this._bodyCenter();
         this._recordPos(c.x, c.y, this.simMs, HOUSE.trailFadeS * 1000);
-        if (this.y < this.pivY - 5.5 || this.x < -2 || this.x > HOUSE.frameW + 2) this.reset();
+        if (this.airborne && (this.y < this.pivY - 5.5 || this.x < -2 || this.x > HOUSE.frameW + 2)) this.reset();
       } else { this.last = now; }
       this.render();
     }
 
     // --- drawing -------------------------------------------------------------------------------
     // The teethed block (OBJECTS.md 'Variants — teethed (friction) block'): a rectangle whose bottom
-    // edge is a triangle wave. While stuck the teeth are BURIED — we draw the block first and the
-    // platform bar over it, so the interlock reads as solid contact and only the tips show. Once
-    // sliding the whole block lifts by tooth_h and the voids between teeth become visible, which is
-    // the entire visual argument for why kinetic friction is the smaller number.
+    // edge is a triangle wave. The block always rides at the full tooth_h lift (2026-10-09): the tips sit
+    // in the bar (block drawn first, bar over it), the gaps between them stay open, so only the peaks touch
+    // — the same picture as the `asperities` slides, stuck or sliding.
     // One block polygon, drawn at a given world center in a given color — the real body, and each of
     // its after-images, so a ghost can never drift out of shape from the thing it is a ghost of.
     _drawBlockAt(c, color, alpha) {
@@ -4264,6 +4301,25 @@
         p = P(a, b); ctx.lineTo(p.x, p.y);
       }
       ctx.closePath(); ctx.fill(); ctx.restore();
+    }
+    _drawSkids() {
+      if (!this.skid || !this.skids.length) return;
+      const ctx = this.ctx, t = this._tangent(), n = this._normal();
+      const barHalf = Math.max(this.scale * 0.06, 4) / 2 / this.scale;    // the bar's stroke, in world units
+      // A solid white band from the bar's surface up to where the old thin line sat (Daniel, 2026-10-09:
+      // "filled in white from what you've drawn down to the ground") — the rubber laid on the road.
+      const lw = Math.max(this.scale * 0.018, 1.6), gap = Math.max(this.scale * 0.03, 3);   // px
+      const band = gap + lw;                               // px: from the bar's surface to the old line's top edge
+      const off = barHalf + (band / 2) / this.scale;       // centre of the band, world units off the bar's centreline
+      ctx.save(); ctx.strokeStyle = HOUSE.trail; ctx.lineCap = "butt";
+      ctx.lineWidth = band;
+      for (const sk of this.skids) {
+        if (Math.abs(sk.b - sk.a) < 1e-3) continue;
+        const P = s => [this.sx(this.pivX + s * t.x + off * n.x), this.sy(this.pivY + s * t.y + off * n.y)];
+        const [x0, y0] = P(sk.a), [x1, y1] = P(sk.b);
+        ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+      }
+      ctx.restore();
     }
     _drawBlock() {
       this._drawBlockAt(this.airborne ? { x: this.x, y: this.y } : this._bodyCenter(), HOUSE.mass, 1);
@@ -4334,10 +4390,11 @@
       const lines = [
         `angle  ${this.angle.toFixed(0)}°     tan = ${Math.abs(Math.tan(this.phi)).toFixed(2)}`,
         `μs = ${this.mus.toFixed(2)}   →  slips past ${this._critAngle.toFixed(0)}°`,
-        `μk = ${this.muk.toFixed(2)}`,
+        this.staticOnly ? "kinetic friction: off" : `μk = ${this.muk.toFixed(2)}`,
         this.airborne ? "OFF THE END — no contact, no friction"
                       : (stuck ? "STUCK — friction = the pull, below its ceiling"
-                               : "SLIDING — friction = μk |F_N|, constant")
+                               : (this.staticOnly ? "SLIDING — no kinetic friction (switched off)"
+                                                  : "SLIDING — friction = μk |F_N|, constant"))
       ];
       ctx.save();
       ctx.font = fs + "px " + HOUSE.fontMono; ctx.textBaseline = "top";
@@ -4350,6 +4407,7 @@
     render() {
       const ctx = this.ctx; ctx.clearRect(0, 0, this.W, this.H);
       this._blockBlur();          // after-images UNDER the body…
+      this._drawSkids();          // …the skid mark (data-skid) under the block too…
       this._drawBlock();          // …then the block…
       this._drawPlatform();       // …then the bar over both, so buried teeth read as solid contact
       this._drawForces();
@@ -4428,17 +4486,21 @@
   // two coefficients. The two coefficients are INDEPENDENT — neither slider clamps or reads the other.
   // See the note in step() for why that matters more than keeping mu_k <= mu_s.
   function mountFrictionRamp(section) {
+    const d = section.dataset;
+    const staticOnly = d.staticOnly !== undefined;   // data-static-only: no mu_k slider, mu_k = 0
     if (!section.querySelector(".simcanvas")) section.insertAdjacentHTML("beforeend",
       _platformShell(
         `<label><span class="var">angle:</span> <input type="range" class="s-ang" min="-60" max="60" step="1"><input type="number" class="n-ang" step="1"><span class="u">°</span></label>
-         <label><span class="var"><i>μ</i><sub>s</sub>:</span> <input type="range" class="s-mus" min="0" max="1.2" step="0.05"><input type="number" class="n-mus" step="0.05"></label>
-         <label><span class="var"><i>μ</i><sub>k</sub>:</span> <input type="range" class="s-muk" min="0" max="1.2" step="0.05"><input type="number" class="n-muk" step="0.05"></label>`, true));
-    const d = section.dataset;
+         <label><span class="var"><i>μ</i><sub>s</sub>:</span> <input type="range" class="s-mus" min="0" max="1.2" step="0.05"><input type="number" class="n-mus" step="0.05"></label>` +
+        (staticOnly ? "" :
+        `<label><span class="var"><i>μ</i><sub>k</sub>:</span> <input type="range" class="s-muk" min="0" max="1.2" step="0.05"><input type="number" class="n-muk" step="0.05"></label>`), true));
     const sim = new FrictionRamp(section.querySelector(".simcanvas"), {
       angle: d.angle !== undefined ? +d.angle : 0,
       mus:   d.mus   !== undefined ? +d.mus   : 0.60,
       muk:   d.muk   !== undefined ? +d.muk   : 0.35,
-      g:     d.g     !== undefined ? +d.g     : 5.0
+      g:     d.g     !== undefined ? +d.g     : 5.0,
+      staticOnly,
+      skid:  d.skid !== undefined                 // data-skid: lay a skid mark while sliding
     });
     const ang = _bindSlider(section, ".s-ang", ".n-ang", () => sim.angle,
       v => { sim.angle = sim._snapAngle(v); if (!sim.running) sim.render(); });
@@ -4458,17 +4520,17 @@
     let musB, mukB;
     musB = _bindSlider(section, ".s-mus", ".n-mus", () => sim.mus, v => {
       sim.mus = v;
-      if (sim.muk > sim.mus) { sim.muk = sim.mus; mukB.show(sim.muk); }
+      if (mukB && sim.muk > sim.mus) { sim.muk = sim.mus; mukB.show(sim.muk); }
       if (!sim.running) sim.render();
     });
-    mukB = _bindSlider(section, ".s-muk", ".n-muk", () => sim.muk, v => {
+    if (!staticOnly) mukB = _bindSlider(section, ".s-muk", ".n-muk", () => sim.muk, v => {
       sim.muk = v;
       if (sim.mus < sim.muk) { sim.mus = sim.muk; musB.show(sim.mus); }
       if (!sim.running) sim.render();
     });
     _wirePlatformCommon(section, sim, [{ rng: ".s-ang", num: ".n-ang" },
-                                       { rng: ".s-mus", num: ".n-mus" },
-                                       { rng: ".s-muk", num: ".n-muk" }]);
+                                       { rng: ".s-mus", num: ".n-mus" }]
+                                       .concat(staticOnly ? [] : [{ rng: ".s-muk", num: ".n-muk" }]));
     sim.render();
     return sim;
   }
