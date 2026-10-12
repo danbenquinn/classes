@@ -257,6 +257,11 @@
      wide panel throws away a third of the height, and `center` takes half of that off the TOP, which is
      exactly where a jump happens. Anchoring up spends the whole loss on the floor instead. */
   #topmedia video.titlebg.cover.covertop{object-position:50% 0%;}
+  /* an IMAGE behind the title (Sportsball's poster, 2026-10-08). `fit:"backdrop"`: fill, zoom past the edges,
+     and dim, so the graphic is a backdrop to the title rather than a figure competing with it. */
+  #topmedia img.titlebg{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;z-index:0;}
+  #topmedia img.titlebg.cover{object-fit:cover;}
+  #topmedia img.titlebg.backdrop{object-fit:cover;object-position:50% 40%;transform:none;filter:brightness(.45) saturate(1.1);}
   /* the same two fits on a plain `top: video` step: fill the panel, crop the overflow (top-anchored for
      cover-top). Default stays contain. */
   #topmedia video.topvid.cover{width:100%;height:100%;max-width:none;max-height:none;object-fit:cover;}
@@ -309,6 +314,108 @@
   #topmedia .pong-btn{font:inherit;font-size:var(--fs-ui);font-weight:600;padding:8px 18px;border:1px solid var(--line);
     border-radius:7px;background:var(--accent);color:#0d0d12;cursor:pointer;}
   #topmedia .pong-btn:hover{filter:brightness(1.08);}
+
+  /* ---- simulated y(t) driven by the step's inputs (top:"sim", Sportsball 2026-10-08) ----
+     The plot fills the panel; one slider row underneath. The readout reuses .plotreadout so a sim's
+     green number looks exactly like an analyzer tool's. The slider is green because what it sets is
+     the model, and the model is drawn green. */
+  #topmedia .sim{display:flex;flex-direction:column;width:100%;height:100%;padding:8px 16px 10px;gap:4px;}
+  #topmedia .sim-plot{flex:1 1 auto;min-height:0;position:relative;}
+  #topmedia .sim-plot canvas{position:absolute;inset:0;width:100%;height:100%;display:block;}
+  #topmedia .sim-ctl{flex:0 0 auto;display:flex;align-items:center;gap:12px;padding-left:62px;
+    color:var(--muted);font-size:var(--fs-ui);}
+  #topmedia .sim-ctl label{color:var(--ink);font-weight:600;}
+  #topmedia .sim-ctl input[type=range]{flex:0 1 420px;accent-color:var(--mma-green);cursor:pointer;}
+  #topmedia .sim-ctl .simval{color:var(--result);font-weight:600;font-variant-numeric:tabular-nums;min-width:3em;}
+  #topmedia .sim-ctl .simhint{font-size:var(--fs-label);}
+  #topmedia .sim-ctl .simval{min-width:2.6em;margin-left:-6px;}   /* "e = 0.80" reads as one phrase, slider right after */
+  /* a sim step's inputs: measured times two to a row, then the fitted value on its own line */
+  .inputs.simfields{display:block;}
+  .inputs.simfields .inputs.multi.byrow{margin-top:2px;grid-template-columns:repeat(4,auto);}   /* all four hop times on one row */
+  .inputs.fitline{margin-top:10px;padding-top:8px;border-top:1px dashed var(--line);}
+  /* a blind drop's number, locked once the model is shown */
+  #stepbody .inrow input:disabled, #stepbody .deck-go:disabled{opacity:.55;cursor:not-allowed;}
+
+  /* ---- data-collection title card (top:"ball", Sportsball 2026-10-09): the ball's name beside the ball, to scale ---- */
+  #topmedia .ballcard{display:flex;align-items:center;justify-content:center;gap:clamp(32px,6vw,110px);width:100%;height:100%;padding:0 4vw;}
+  #topmedia .bc-text{display:flex;flex-direction:column;gap:6px;}
+  #topmedia .bc-kicker{font-size:var(--fs-label);text-transform:uppercase;letter-spacing:.14em;color:var(--muted);font-weight:700;}
+  #topmedia .bc-name{font-size:clamp(48px,7vw,108px);font-weight:700;line-height:1;color:var(--ink);letter-spacing:-.01em;}
+  #topmedia .bc-spec{font-size:clamp(14px,1.4vw,19px);color:var(--muted);font-variant-numeric:tabular-nums;}
+  #topmedia .bc-art{display:flex;flex-direction:column;align-items:center;gap:16px;}
+  #topmedia .bc-ball img{width:100%;height:100%;object-fit:contain;display:block;filter:drop-shadow(0 6px 18px rgba(0,0,0,.55));}
+  #topmedia .bc-disc{border-radius:50%;background:radial-gradient(circle at 34% 30%, color-mix(in srgb, var(--ball) 55%, white) 0%, var(--ball) 42%, color-mix(in srgb, var(--ball) 55%, black) 100%);
+    box-shadow:0 6px 18px rgba(0,0,0,.55);}
+  #topmedia .bc-disc{position:relative;} #topmedia .bc-disc svg{position:absolute;inset:0;width:100%;height:100%;}
+  /* a near-black ball (the squash ball) needs more fill light to read as a sphere on the dark panel */
+  #topmedia .bc-disc.dark{background:radial-gradient(circle at 34% 30%, #8d9096 0%, var(--ball) 46%, #17181b 100%);
+    box-shadow:0 0 0 1px rgba(255,255,255,.10), 0 0 22px rgba(255,255,255,.07), 0 6px 18px rgba(0,0,0,.55);}
+  #topmedia .bc-shape{position:relative;filter:drop-shadow(0 6px 14px rgba(0,0,0,.5));} #topmedia .bc-shape svg{position:absolute;inset:0;width:100%;height:100%;}
+  /* the avatar left behind in the plot's top-right corner once the data is in (makeSim) */
+  #topmedia .sim-badge{position:absolute;top:2px;right:6px;z-index:2;display:none;gap:16px;align-items:center;pointer-events:none;}
+  #topmedia .sim-badge.on{display:flex;}
+  body:has(#teacherbadge) #topmedia .sim-badge{right:150px;}   /* clear of the TEACHER MODE tag */
+  #topmedia .sb-item{display:flex;align-items:center;gap:7px;}
+  #topmedia .sb-art{display:flex;align-items:center;justify-content:center;min-width:22px;height:24px;}
+  #topmedia .sb-art .bc-disc, #topmedia .sb-art .bc-shape{box-shadow:none;filter:none;}
+  #topmedia .sb-name{color:var(--ink);font-size:13px;font-weight:600;white-space:nowrap;}
+  /* a steaming ball: the steam on top, the to-scale disc filling the bottom square */
+  #topmedia .bc-steamy{display:flex;flex-direction:column;justify-content:flex-end;}
+  #topmedia .bc-steamy .bc-steam{width:100%;height:auto;display:block;flex:0 0 auto;}
+  #topmedia .bc-steamy .bc-disc{width:100%;aspect-ratio:1;flex:0 0 auto;}
+  /* several balls side by side, one scale */
+  #topmedia .ballcard.multi{flex-direction:column;gap:18px;}
+  #topmedia .bc-top{text-align:center;}
+  #topmedia .bc-kicker sub{text-transform:none;}
+  /* the same card as a sim step's empty state, laid over the plot area until the student's number is in */
+  #topmedia .sim{position:relative;}
+  #topmedia .sim .sim-card{position:absolute;inset:0;display:none;}
+  #topmedia .sim .sim-card.on{display:flex;}
+  /* the hint hangs below the card without taking up layout space, so the ball and title sit exactly where they
+     sit on a card with no hint (the setup step) and don't jump when you advance to the data step */
+  #topmedia .bc-text, #topmedia .bc-foot{position:relative;}
+  #topmedia .bc-hint{position:absolute;top:100%;left:0;margin-top:14px;width:30em;max-width:42vw;
+    color:var(--muted);font-size:clamp(14px,1.25vw,17px);line-height:1.4;}
+  #topmedia .ballcard.multi .bc-hint{left:50%;transform:translateX(-50%);text-align:center;margin-top:4px;max-width:80vw;}
+  #topmedia .bc-row{display:flex;align-items:flex-end;justify-content:center;gap:clamp(28px,5vw,90px);}
+  #topmedia .bc-col{display:flex;flex-direction:column;align-items:center;gap:6px;}
+  /* pairs with a "vs." between (a ball card's `vs:`) */
+  #topmedia .bc-row.vs{gap:clamp(14px,2vw,34px);}
+  #topmedia .bc-row.vs .bc-name.sm{font-size:clamp(18px,1.9vw,30px);white-space:nowrap;}
+  #topmedia .bc-row.vs .bc-spec{font-size:clamp(12px,1.05vw,16px);white-space:nowrap;}
+  #topmedia .bc-vs{align-self:center;display:flex;flex-direction:column;align-items:center;gap:6px;padding-bottom:40px;}
+  #topmedia .bc-vs b{font-size:clamp(22px,2.4vw,36px);font-style:italic;font-weight:700;color:var(--muted);}
+  #topmedia .bc-vs span{font-size:clamp(13px,1.15vw,17px);font-weight:600;color:var(--result);white-space:nowrap;}
+  #topmedia .bc-pairgap{width:clamp(24px,5vw,90px);flex:0 0 auto;align-self:stretch;border-left:1px solid var(--rule, rgba(255,255,255,.12));margin-left:clamp(8px,1.5vw,28px);}
+  #topmedia .bc-slot{display:flex;align-items:flex-end;justify-content:center;}
+  #topmedia .bc-name.sm{font-size:clamp(24px,2.6vw,40px);margin-top:10px;}
+  /* top:"rank" — drag the balls into order */
+  #topmedia .rank{display:flex;gap:28px;width:100%;height:100%;padding:10px 18px;align-items:stretch;user-select:none;}
+  #topmedia .rk-col{flex:1 1 0;display:flex;flex-direction:column;gap:4px;border-radius:8px;padding:4px 8px;}
+  #topmedia .rk-left{background:rgba(255,255,255,.02);}
+  #topmedia .rk-head{font-size:var(--fs-label);text-transform:uppercase;letter-spacing:.1em;color:var(--muted);font-weight:700;height:26px;line-height:26px;}
+  #topmedia .rk-slot{display:flex;align-items:center;gap:10px;border:1px dashed var(--line);border-radius:6px;}
+  #topmedia .rk-n{width:22px;text-align:right;color:var(--muted);font-variant-numeric:tabular-nums;flex:0 0 auto;}
+  #topmedia .rk-item{display:flex;align-items:center;gap:12px;flex:1 1 auto;padding:0 8px;border-radius:6px;background:var(--raised);cursor:grab;touch-action:none;}
+  #topmedia .rk-slot .rk-item{height:100% !important;}
+  #topmedia .rk-art{display:flex;align-items:center;justify-content:center;flex:0 0 auto;}
+  #topmedia .rk-txt{display:flex;gap:10px;align-items:baseline;color:var(--ink);} #topmedia .rk-txt span{color:var(--muted);font-size:var(--fs-label);}
+  #topmedia .rk-over{outline:2px solid var(--accent);}
+  #topmedia .rk-src{opacity:.35;}
+  .rk-ghost{position:fixed;z-index:1000;pointer-events:none;display:flex;align-items:center;gap:12px;padding:0 8px;border-radius:6px;background:var(--raised);
+    box-shadow:0 8px 24px rgba(0,0,0,.5);opacity:.95;color:var(--ink);}
+  .rk-ghost .rk-txt{display:flex;gap:10px;align-items:baseline;} .rk-ghost .rk-txt span{color:var(--muted);font-size:var(--fs-label);}
+  .rk-ghost .bc-disc{border-radius:50%;background:radial-gradient(circle at 34% 30%, color-mix(in srgb, var(--ball) 55%, white) 0%, var(--ball) 42%, color-mix(in srgb, var(--ball) 55%, black) 100%);position:relative;}
+  .rk-ghost .bc-disc svg,.rk-ghost .bc-shape svg{position:absolute;inset:0;width:100%;height:100%;} .rk-ghost .rk-art{display:flex;align-items:center;justify-content:center;}
+  /* `fit:"fill"` on a top:video step: scale the clip up until it touches the panel's sides or top/bottom */
+  #topmedia video.topvid.fill{width:100%;height:100%;max-width:none;max-height:none;object-fit:contain;}
+  #topmedia .bc-scale{display:flex;flex-direction:column;align-items:center;gap:4px;color:var(--muted);font-size:var(--fs-label);}
+  #topmedia .bc-scale span{display:block;height:6px;border:2px solid var(--muted);border-top:none;}
+  #topmedia .bc-scale em{font-style:normal;}
+
+  /* color cues in prose and feedback — `[words]{.blue}` in a manifest: the words wear the color of the plot
+     element they name. Blue = measured, green/purple = model, amber = the difference (2026-10-11). */
+  .c-blue{color:var(--trace);} .c-green{color:var(--result);} .c-amber{color:var(--edge);} .c-purple{color:var(--mma-purple);}
 
   /* ---- passcode / access-code gate row ---- */
   .coderow{display:flex;align-items:center;gap:8px;margin-top:10px;flex-wrap:wrap;}

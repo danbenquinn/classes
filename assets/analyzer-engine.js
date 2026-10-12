@@ -28,7 +28,7 @@ const codeHash = s => cyrb53(String(s||"").trim().toLowerCase());   // normalize
 // with a letter someone puts on a graphic, so this is house-wide rather than a Workshop 1 switch.
 const ROMAN=["i","ii","iii","iv","v","vi","vii","viii","ix","x","xi","xii"];
 const choiceLabel = i => ROMAN[i] || String(i+1);
-const TOOLDEF={point:"Select Point", avg:"Average Value", integrate:"Integrate", dblint:"Double Integrate", fitsine:"Fit Sine", crop:"Crop"};
+const TOOLDEF={point:"Select Point", avg:"Average Value", integrate:"Integrate", dblint:"Double Integrate", fitsine:"Fit Sine", crop:"Crop", slope:"Slope"};
 const TOOLS=(typeof CONFIG!=='undefined'&&CONFIG&&Array.isArray(CONFIG.tools)&&CONFIG.tools.length)
   ? CONFIG.tools.filter(t=>TOOLDEF[t]) : ["point","avg","dblint","fitsine"];
 const _toolsHTML=TOOLS.map((t,i)=>'<button data-tool="'+t+'"'+(i===0?' class="on"':'')+'>'+TOOLDEF[t]+'</button>').join("");
@@ -89,7 +89,11 @@ function typesetMath(el){
   if(!el || !MJ) return;
   const run = () => { try{
       if(MJ.typesetClear) MJ.typesetClear([el]);
-      if(MJ.typesetPromise) MJ.typesetPromise([el]).catch(()=>{});
+      // MathJax's accessibility menu makes every equation a tab stop (tabindex="0"), so Tab from one input
+      // landed on the next input's LABEL (τ₂) instead of its box. Equations stay readable and clickable;
+      // they just drop out of the tab order (Daniel, 2026-10-11).
+      if(MJ.typesetPromise) MJ.typesetPromise([el]).then(()=>{
+        el.querySelectorAll("mjx-container[tabindex]").forEach(m=>m.setAttribute("tabindex","-1")); }).catch(()=>{});
     }catch(e){} };
   if(MJ.startup && MJ.startup.promise) MJ.startup.promise.then(run).catch(()=>{});
   else run();
@@ -194,6 +198,7 @@ function setSlots(st){
 }
 const PI2_2 = Math.PI*Math.PI/2;   // ≈4.93 m/s² — the target acceleration amplitude for a 0.5 m, 0.5 Hz wave
 let activePong=null;               // the running Pong game (top:"pong"), stopped when the step changes
+let activeBallFit=null;            // re-sizes a top:"ball" card's ball to scale when the window changes
 
 /* ====================== phyphox ingest ======================== */
 function parseCSV(text){
@@ -293,11 +298,20 @@ function prettySignal(h){
   if(m){ const dd={x:"ẍ",y:"ÿ",z:"z̈"}[m[1].toLowerCase()]; return "Acceleration "+dd+" (m/s²)"; }
   return h;
 }
+/* `sym` is what the plot's vertical axis IS, `unit` its unit, `rate` the unit of its slope, `dp` the
+   decimals a reading of it may print. Every workshop before Sportsball plotted an acceleration, so the
+   readouts said "m/s²" in five hardcoded places; Sportsball's radiosonde altitude is a POSITION (2026-10-08). A
+   non-acceleration column is read from its own header, phyphox-style — "Height y (m)" gives y, m — so
+   the instrument says what it is plotting rather than assuming. Acceleration columns are unchanged. */
 function axisInfo(h){
-  if(/absolute/i.test(h)) return {L:"r", dot:"ṙ", ddot:"|r̈|"};
-  const m=h.match(/acceleration\s*([xyz])/i);
-  if(m){ const l=m[1].toLowerCase(); return {L:l, dot:{x:"ẋ",y:"ẏ",z:"ż"}[l], ddot:{x:"ẍ",y:"ÿ",z:"z̈"}[l]}; }
-  return {L:"x", dot:"ẋ", ddot:"ẍ"};
+  const DOT={x:"ẋ",y:"ẏ",z:"ż"}, DDOT={x:"ẍ",y:"ÿ",z:"z̈"};
+  if(/absolute/i.test(h||"")) return {L:"r", dot:"ṙ", ddot:"|r̈|", sym:"|r̈|", unit:"m/s²", rate:"m/s³", dp:2};
+  const m=(h||"").match(/acceleration\s*([xyz])/i);
+  if(m){ const l=m[1].toLowerCase(); return {L:l, dot:DOT[l], ddot:DDOT[l], sym:DDOT[l], unit:"m/s²", rate:"m/s³", dp:2}; }
+  const g=(h||"").match(/\b([A-Za-z])\s*\(([^)]+)\)\s*$/);
+  if(g && !/acceleration/i.test(h)){ const l=g[1], u=g[2].trim();
+    return {L:l, dot:DOT[l.toLowerCase()]||l, ddot:DDOT[l.toLowerCase()]||l, sym:l, unit:u, rate:u+"/s", dp:1}; }
+  return {L:"x", dot:"ẋ", ddot:"ẍ", sym:"ẍ", unit:"m/s²", rate:"m/s³", dp:2};
 }
 
 /* ====================== series + math ========================
@@ -325,6 +339,13 @@ function nearest(s,tq){ let lo=0,hi=s.t.length-1; if(tq<=s.t[0])return 0; if(tq>
 function selRange(s,P){ P=P||active(); if(!P||!P.sel) return null;
   return [nearest(s,Math.min(P.sel.a,P.sel.b)), nearest(s,Math.max(P.sel.a,P.sel.b))]; }
 function average(s,P){ const r=selRange(s,P); if(!r) return null; let sum=0; for(let i=r[0];i<=r[1];i++) sum+=s.a[i]; return sum/(r[1]-r[0]+1); }
+// least-squares line through the selected window -> {m (slope), b (intercept), t0, t1}, or null (<3 samples)
+function slopeFit(s,P){ const r=selRange(s,P); if(!r||r[1]-r[0]<2) return null;
+  let n=0,st=0,sy=0,stt=0,sty=0; const t0=s.t[r[0]];
+  for(let i=r[0];i<=r[1];i++){ const t=s.t[i]-t0, y=s.a[i]; n++; st+=t; sy+=y; stt+=t*t; sty+=t*y; }
+  const den=n*stt-st*st; if(!(Math.abs(den)>0)) return null;
+  const m=(n*sty-st*sy)/den, b0=(sy-m*st)/n;
+  return {m:m, b:b0-m*t0, t0:t0, t1:s.t[r[1]]}; }
 /* ---- crop: a VIEW window, not a filter ----
    `P.crop = {a,b}` in seconds. It changes what the plot SHOWS (dimmed outside, vertical axis rescaled to
    what is inside) and nothing that any tool COMPUTES — an Average dragged across the grayed region still
@@ -579,10 +600,17 @@ function updatePlotReadout(P){
     if(P.point==null){ show('<span class="ro-hint">click or drag along the trace</span>'); return; }
     const i=nearest(s,P.point);
     const td = timeDecimals(s);          // never finer than the sample interval — see timeDecimals()
-    show('<span class="ro"><i>t</i> = '+s.t[i].toFixed(td)+' s&nbsp;·&nbsp;<i>'+A.ddot+'</i> = '+s.a[i].toFixed(2)+' m/s²</span>');
+    show('<span class="ro"><i>t</i> = '+s.t[i].toFixed(td)+' s&nbsp;·&nbsp;<i>'+A.sym+'</i> = '+s.a[i].toFixed(A.dp)+' '+A.unit+'</span>');
   } else if(S.tool==="avg"){
     const av=average(s,P); if(av==null){ show('<span class="ro-hint">drag a region to average</span>'); return; }
-    show('<span class="ro">average <i>'+A.ddot+'</i> = '+av.toFixed(2)+' m/s²<span class="ro-ctx"> over '+Math.abs(P.sel.b-P.sel.a).toFixed(timeDecimals(s))+' s</span></span>');
+    show('<span class="ro">average <i>'+A.sym+'</i> = '+av.toFixed(A.dp)+' '+A.unit+'<span class="ro-ctx"> over '+Math.abs(P.sel.b-P.sel.a).toFixed(timeDecimals(s))+' s</span></span>');
+  } else if(S.tool==="slope"){
+    // Slope (Sportsball, 2026-10-08): a least-squares line through every sample in the window, not a
+    // secant between two clicks — on GPS-grade data the two endpoints carry the noise and the middle
+    // carries the answer. One decimal: a 10-second window of altitude good to a meter or two is good
+    // to about a tenth of a m/s, and no better.
+    const L=slopeFit(s,P); if(!L){ show('<span class="ro-hint">drag across a stretch to fit a line to it</span>'); return; }
+    show('<span class="ro">slope of <i>'+A.sym+'</i> = '+L.m.toFixed(1)+' '+A.rate+'<span class="ro-ctx"> over '+(L.t1-L.t0).toFixed(timeDecimals(s))+' s</span></span>');
   } else if(S.tool==="crop"){
     // Crop is the one tool that reads out in AMBER, not green, and that is the point of the house rule
     // rather than an exception to it: green means "a number you measured", and a crop measures nothing.
@@ -694,13 +722,20 @@ function renderPanel(P){
   const ay=a=>mT+(Ay.hi-a)/(Ay.hi-Ay.lo)*ph;
   P.G=G={mL,mR,tLo:T.lo,tHi:T.hi};
 
+  // soft minor gridlines first, under everything: `yMinor` on the slot's CONFIG.panels entry (Sportsball's
+  // radiosonde: every 1000 m, so a student can find "25 km" without a ruler).
+  const pdef=PANELDEF.find(d=>(d.key||"")===P.key)||{};
+  if(pdef.yMinor>0){ const st0=Math.ceil(Ay.lo/pdef.yMinor)*pdef.yMinor;
+    ctx.save(); ctx.strokeStyle=getCss("--grid"); ctx.globalAlpha=0.55; ctx.lineWidth=1;
+    for(let v=st0; v<=Ay.hi+1e-9; v+=pdef.yMinor){ const y=ay(v); ctx.beginPath(); ctx.moveTo(mL,y); ctx.lineTo(W-mR,y); ctx.stroke(); }
+    ctx.restore(); }
   // horizontal gridlines + left labels
   ctx.textBaseline="middle"; ctx.textAlign="right"; ctx.font=font(11);
   Ay.ticks.forEach(v=>{ const y=ay(v); ctx.strokeStyle=getCss(v===0?"--zero":"--grid"); ctx.lineWidth=1;
     ctx.beginPath(); ctx.moveTo(mL,y); ctx.lineTo(W-mR,y); ctx.stroke();
     ctx.fillStyle=getCss("--muted"); ctx.fillText(fmt(v), mL-8, y); });
   // left axis title (tinted to the trace) — variable italic, unit roman
-  axisTitleV(15, mT+ph/2, A.ddot, "(m/s²)", "--trace");
+  axisTitleV(15, mT+ph/2, A.sym, "("+A.unit+")", "--trace");
   // frame (left + bottom)
   ctx.strokeStyle=getCss("--line"); ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(mL,mT); ctx.lineTo(mL,mT+ph); ctx.lineTo(W-mR,mT+ph); ctx.stroke();
   // time ticks + title
@@ -737,6 +772,13 @@ function renderPanel(P){
     ctx.fillStyle=getCss("--band-amber"); ctx.fillRect(tx(s.t[r[0]]),mT,tx(s.t[r[1]])-tx(s.t[r[0]]),ph);
     ctx.strokeStyle=getCss("--avg"); ctx.lineWidth=num("--stroke-result");
     ctx.beginPath(); ctx.moveTo(tx(s.t[r[0]]),ay(av)); ctx.lineTo(tx(s.t[r[1]]),ay(av)); ctx.stroke(); ctx.lineWidth=1; } }
+  // slope: the same amber band, and the fitted line in solid green across the window (the measured value)
+  if(S.tool==="slope" && P.sel){ const L=slopeFit(s,P); if(L){
+    ctx.fillStyle=getCss("--band-amber"); ctx.fillRect(tx(L.t0),mT,tx(L.t1)-tx(L.t0),ph);
+    ctx.save(); ctx.beginPath(); ctx.rect(mL,mT,px,ph); ctx.clip();
+    ctx.strokeStyle=getCss("--result"); ctx.lineWidth=num("--stroke-result")+0.75;
+    ctx.beginPath(); ctx.moveTo(tx(L.t0),ay(L.m*L.t0+L.b)); ctx.lineTo(tx(L.t1),ay(L.m*L.t1+L.b)); ctx.stroke();
+    ctx.restore(); ctx.lineWidth=1; } }
 
   // The signal trace. Cropped, it is drawn TWICE: the whole recording dimmed, then the kept window in
   // full blue over the top. Both are clipped to the plot rectangle, because the discarded part is
@@ -840,13 +882,13 @@ function renderPanel(P){
     ctx.beginPath(); ctx.moveTo(x,mT); ctx.lineTo(x,mT+ph); ctx.stroke(); ctx.setLineDash([]);
     ctx.fillStyle=getCss("--mark"); ctx.beginPath(); ctx.arc(x,y,4,0,7); ctx.fill(); ctx.lineWidth=1; }
   // selection edges (avg / integrate / fit sine): dashed amber context lines bounding the selection
-  if((S.tool==="avg"||S.tool==="dblint"||S.tool==="integrate"||S.tool==="fitsine") && P.sel){ const r=selRange(s,P);
+  if((S.tool==="avg"||S.tool==="slope"||S.tool==="dblint"||S.tool==="integrate"||S.tool==="fitsine") && P.sel){ const r=selRange(s,P);
     ctx.strokeStyle=getCss("--edge"); ctx.lineWidth=num("--stroke-mark"); ctx.setLineDash([4,4]);
     [r[0],r[1]].forEach(i=>{ const x=tx(s.t[i]);
       ctx.beginPath(); ctx.moveTo(x,mT); ctx.lineTo(x,mT+ph); ctx.stroke(); }); ctx.setLineDash([]); ctx.lineWidth=1;
     // The bounds' TIMES, in the same amber, at the foot of each rule (2026-09-11) — so a window dragged for
     // Integrate or Average Value can be read off without switching to Select Point and re-finding it.
-    if(S.tool==="integrate"||S.tool==="avg"){
+    if(S.tool==="integrate"||S.tool==="avg"||S.tool==="slope"){
       const td=timeDecimals(s); ctx.fillStyle=getCss("--edge"); ctx.font=font(11); ctx.textBaseline="bottom";
       ctx.textAlign="right"; ctx.fillText(s.t[r[0]].toFixed(td)+" s", tx(s.t[r[0]])-3, mT+ph-3);
       ctx.textAlign="left";  ctx.fillText(s.t[r[1]].toFixed(td)+" s", tx(s.t[r[1]])+3, mT+ph-3);
@@ -976,7 +1018,36 @@ function gExpect(){
 function hangExpect(){ return Number.isFinite(S.answers.tair) ? 9.8*Math.pow(S.answers.tair,2)/8*100 : null; }
 function setTop(st){                                    // top region: analyzer tool, video, figure, big equation, title slide, or the pong game
   if(activePong){ activePong.stop(); activePong=null; }   // leaving a pong step tears the game down
+  if(activeSim){ activeSim.stop(); activeSim=null; }       // …and a sim step its simulation
+  activeBallFit=null;
   const tm=$("topmedia"), mode=st.top||"analyzer";
+  if(mode==="ball"){                                    // a title card: each ball's name beside the ball drawn TO SCALE
+    // Sportsball, 2026-10-09 (Daniel). One px-per-cm for every card in the deck — set so the LARGEST object in
+    // CONFIG.balls fills ~70% of the panel height — so a ping-pong ball really does look tiny after the
+    // basketball. One ball: big name on the left, the ball on the right. Several (`balls: squash,pingpong`):
+    // side by side, each named underneath, all at the same scale, so the comparison is the picture.
+    const ks=(st.balls||[]).filter(k=>ballCfg()[k]);
+    tm.style.display="flex";
+    tm.innerHTML=ballCardHTML(ks, st.kicker||"", null, st.vs);   // no default kicker: a step that wants one says `kicker:` (Daniel, 2026-10-11)
+    activeBallFit=()=>fitBallCard(tm, ks, parseFloat(st.ballScale)||1);
+    activeBallFit();
+    return;
+  }
+  if(mode==="rank"){                                    // drag the balls into order (makeRank)
+    tm.style.display="flex";
+    tm.innerHTML='<div class="rank"></div>';
+    activeBallFit = makeRank(tm.querySelector(".rank"), st);
+    return;
+  }
+  if(mode==="sim"){                                     // a simulated y(t) driven by the step's inputs (see makeSim)
+    tm.style.display="flex";
+    tm.innerHTML='<div class="sim">'
+      +'<div class="sim-plot"><canvas></canvas><div class="plotreadout"></div></div>'
+      +((st.simfit==="fixed"||st.simfit==="stack"||st.simSlider==="no") ? '' : '<div class="sim-ctl"><label>'+simSliderLabel(st)+' =</label><span class="simval"></span><input type="range">'
+      +'<span class="simhint">drag to fit</span></div>')+'</div>';
+    activeSim = makeSim(tm.querySelector(".sim"), st);
+    return;
+  }
   if(mode==="pong"){                                    // the impulse/momentum Pong capstone (see makePong)
     tm.style.display="flex";
     tm.innerHTML='<div class="pong">'
@@ -998,7 +1069,7 @@ function setTop(st){                                    // top region: analyzer 
     // width and crop the overflow, anchored to the top for cover-top. Impulsive Behavior's two-test sled
     // clip is 2.5:1 in a ~2.7:1 panel, so contain left side bars; cover-top fills the width and spends the
     // loss on the floor and the lab's white credit block, never on THOR's head.
-    const fitCls = st.fit==="cover" ? " cover" : st.fit==="cover-top" ? " cover covertop" : "";
+    const fitCls = st.fit==="cover" ? " cover" : st.fit==="cover-top" ? " cover covertop" : st.fit==="fill" ? " fill" : "";
     const cur=tm.querySelector("video.topvid");
     if(cur && cur.dataset.src===st.media){ cur.className="topvid"+fitCls; tm.style.display="flex"; return; }
     tm.style.display="flex";
@@ -1018,7 +1089,12 @@ function setTop(st){                                    // top region: analyzer 
     // middle, for a clip whose subject is high up: Get Air's walk-in is a man jumping, so a centered crop
     // spends its whole budget on the gym floor and cuts the person out. See analyzer.css.
     const fitCls = st.fit==="cover" ? " cover" : st.fit==="cover-top" ? " cover covertop" : "";
-    const bg = st.media ? '<video class="titlebg'+fitCls+'" src="'+st.media+'" autoplay loop muted playsinline onerror="this.style.display=\'none\'"></video>' : '';
+    // An image works too (Sportsball's poster, 2026-10-08): `fit:"backdrop"` fills the panel, zooms in past
+    // the edges and dims it, so the graphic reads as a backdrop behind the title rather than as a figure.
+    const isImg = /\.(png|jpe?g|webp|gif|svg)$/i.test(st.media||"");
+    const imgCls = st.fit==="backdrop" ? " backdrop" : fitCls;
+    const bg = !st.media ? '' : isImg ? '<img class="titlebg'+imgCls+'" src="'+st.media+'" alt="" onerror="this.style.display=\'none\'">'
+      : '<video class="titlebg'+fitCls+'" src="'+st.media+'" autoplay loop muted playsinline onerror="this.style.display=\'none\'"></video>';
     // House standard: the title teaser is a FULL-SCREEN reminder. A workshop overrides it (e.g. Workshop 0's
     // "download phyphox"), or sets teaser:"" to suppress it entirely.
     const teaser = (st.teaser!==undefined) ? st.teaser : TEASER_FULLSCREEN;
@@ -1057,6 +1133,9 @@ function setTop(st){                                    // top region: analyzer 
 }
 // a step's numeric fields, normalized: supports one `input`/`key` (legacy) or an `inputs:[...]` array.
 function fieldsOf(st){ return st.inputs ? st.inputs : (st.input ? [{label:st.input,key:st.key,unit:st.unit,range:st.range,dp:st.dp}] : []); }
+// a manifest writes "—" in the unit column of a dimensionless input (e, C_d) because the column can't be
+// empty; on screen and in messages that means NO unit, not a dash (Daniel, 2026-10-11)
+function unitText(u){ return (u==null || u==="—" || u==="-" || u==="–") ? "" : u; }
 // mean / population std helpers + a loose stats-consistency check (3-sample std is noisy → accept sample or
 // population, wide tolerance; low-stakes, just catches nonsense like entering 0 or the mean for the spread).
 function _mean(a){ return a.reduce((x,y)=>x+y,0)/(a.length||1); }
@@ -1155,7 +1234,7 @@ function inputIssue(st){
         {source:st.verify, live: live==null ? "nothing yet" : live.toFixed(3), label:f.label});
     }
     if(f.range){
-      const V={label:f.label, unit:f.unit||"", low:f.range[0], high:f.range[1]};
+      const V={label:f.label, unit:unitText(f.unit), low:f.range[0], high:f.range[1]};
       // A NEGATIVE answer to a question that cannot have one is a different mistake from a small one,
       // and `low` was answering both with "that looks too small to be right" — which is true and
       // useless. Almost always it is a subtraction run backwards (Get Air: t_land − t_takeoff typed the
@@ -1171,7 +1250,7 @@ function inputIssue(st){
     if(f.dp != null){
       const got = decimalsOf(S.raw ? S.raw[f.key] : null);
       if(got != null && got !== f.dp){
-        const V2 = {label:f.label, unit:f.unit||"", dp:f.dp, got:got,
+        const V2 = {label:f.label, unit:unitText(f.unit), dp:f.dp, got:got,
                     rounded: Number.isFinite(v) ? v.toFixed(f.dp) : ""};
         return fbText(st, "dp", got > f.dp
           ? "That is more precision than the measurement supports — give it to exactly {dp} decimal place(s), so {rounded}."
@@ -1179,6 +1258,35 @@ function inputIssue(st){
       }
     }
   }
+  /* `simfit` (Sportsball, 2026-10-08): the fit box against the value that best explains the student's OWN
+     measurement — see simBest(). An e is graded on itself; a C_d on what it predicts, because the slope of
+     gap-vs-C_d changes a lot between pairs and "within 0.05" means nothing for one of them. */
+  if(st.checkKind==="simfit"){
+    if(st.sim==="bounce"){ const tau=simTimes(st);
+      for(let k=1;k<tau.length;k++) if(tau[k]>=tau[k-1])
+        return fbText(st,"order","Each hop should be shorter than the one before it. Check that you typed them in order — and if one is suspiciously short, it is probably an echo: raise the threshold and drop again.");
+    }
+    const B=simBest(st), fk=simFields(st).fit, v=fk?S.answers[fk]:NaN;
+    if(B && B.reach) return fbText(st,"reach","No setting of the model can produce what you measured. Re-check the number you typed, and if it is right, measure again.");
+    if(B && B.value!=null && Number.isFinite(v)){
+      if(B.kind==="e" && Math.abs(v-B.value)>B.tol)
+        return fbText(st,"check","Not quite — with your times, the model lines up best near {expected}. Drag the slider until the green hops sit on your blue ones.",{expected:B.value.toFixed(2)});
+      if(B.kind==="cd"){ const pred=simDropPred(st,v);
+        if(Math.abs(pred-B.meas)>B.tolT)
+          return fbText(st,"check","Not quite — at that value the model predicts {pred} s against your {meas} s. Drag the slider until the two agree (the best match is near {expected}).",
+                        {expected:B.value.toFixed(2), pred:pred.toFixed(3), meas:B.meas.toFixed(3)}); }
+    }
+  }
+  // `termmass`: m = beta v_t^2 / g, with beta given by the deck (CONFIG.termmass.beta) and v_t the speed the student
+  // measured in an earlier step (CONFIG.termmass.vKey). Soft, 10%: it checks the arithmetic, not the guess behind beta.
+  // `gapgate`: a blind drop's gap must be within a generous factor of the model's — wide enough for
+  // real hands and real stairwells, narrow enough to catch a typo or a stopwatch that stopped on an echo
+  if(st.checkKind==="gapgate" && st.sim==="drop"){ const v=S.answers[(fieldsOf(st)[0]||{}).key], g=simDropPred(st,null);
+    if(Number.isFinite(v) && Number.isFinite(g) && g>0 && (v<g/(CONFIG.sim&&CONFIG.sim.gapFactor||5) || v>g*(CONFIG.sim&&CONFIG.sim.gapFactor||5)))
+      return fbText(st,"check","That's a long way from anything two balls like these can do from this height. Check that <b>Minimum delay</b> is 0.005 s, open both hands at once, and drop again."); }
+  if(st.checkKind==="termmass"){ const c=CONFIG.termmass||{}, b=c.beta, g=c.g||9.8, vt=S.answers[c.vKey], v=S.answers[st.key||(fieldsOf(st)[0]||{}).key];
+    if(Number.isFinite(b) && Number.isFinite(vt) && vt!==0 && Number.isFinite(v)){ const exp=b*vt*vt/g;
+      if(Math.abs(v-exp)>0.10*exp) return fbText(st,"check","Not quite — with beta = {beta} kg/m and your speed of {v} m/s, beta v²/g comes to about {expected} kg.",{expected:exp.toFixed(2), beta:b, v:Math.abs(vt)}); } }
   if(st.checkKind==="hang"){
     const exp=hangExpect(), v=S.answers[st.key];
     if(exp!=null && Math.abs(v-exp)/Math.max(exp,1)>=0.2){
@@ -1389,6 +1497,7 @@ function stepComplete(i){
   if(st.gate==="crop" && !allVisible(isCropped)) return false;            // must have trimmed the view
   if(st.gate==="abs"  && !allVisible(onAbs))      return false;            // must have switched Signal to absolute
   if((st.check||st.checkFn) && S.answers["q"+i]==null) return false;     // set only on a correct pick
+  if(st.top==="rank" && S.answers["rankok"+i]!==true) return false;      // the drag-into-order sorter
   // Typed answers. The VALUES always have to be sane (`inputIssue`, the length floor). The extra
   // requirement — that the student pressed Enter and read what came back — applies only on a step that
   // has something to tell them, which is what `wantsSubmit` decides. `ok<step>` is set by that button
@@ -1535,6 +1644,9 @@ function blockReason(i){
     "Click <b>Crop</b> and drag the amber bounds inward"+(visiblePanels().length>1?" on both plots":"")+" before moving on.");
   if(st.gate==="abs" && !allVisible(onAbs)) return fbText(st,"abs",
     "Switch <b>Signal</b> to <b>Absolute acceleration</b>"+(visiblePanels().length>1?" on both plots":"")+" before moving on.");
+  if(st.top==="rank" && S.answers["rankok"+i]!==true) return fbText(st,"any",
+    (S.answers["rankwait_"+st.id] && Date.now()<S.answers["rankwait_"+st.id]) ? "Check your work — the gate rechecks your order when the countdown ends."
+    : (S.answers["rank_"+st.id]||{right:[null]}).right.every(Boolean) ? "Not quite yet — some balls are out of order." : "Drag every ball into a slot on the right first.");
   if((st.input||st.inputs) && inputIssue(st)!==null) return inputIssue(st);   // already honours hint.input
   if(wantsSubmit(st) && S.answers["ok"+i]!==true){
     if(st.input||st.inputs) return "Press <b>Enter</b> to check your answer.";
@@ -1577,6 +1689,9 @@ function buildSummary(cfg){
   const sub = s => String(s).replace(/\{(\w+)\}/g, (m,k)=>{
     if(k==="file"){ const P=S.panels[0]; return (P&&P.fileName)||"(no file loaded)"; }
     if(k.indexOf("file_")===0){ const P=panelByKey(k.slice(5)); return (P&&P.fileName)||"(no file loaded)"; }
+    // what was TYPED (or set by a sim slider) when there is one — "0.80", not the Number 0.8: the `dp:`
+    // rule asked for that trailing zero, so the deliverable should not strip it back off (2026-10-08)
+    if(S.raw && S.raw[k]!=null && String(S.raw[k]).trim()!=="" && Number.isFinite(S.answers[k])) return String(S.raw[k]).trim();
     return (S.answers[k]!=null && S.answers[k]!=="") ? S.answers[k] : "—";
   });
   return (cfg.lines||[]).map(sub).join("\n");
@@ -1639,6 +1754,26 @@ function renderStep(){
     btn.addEventListener("click",()=>{ if(loadDemoData()){ btn.disabled=true; btn.textContent="Sample data loaded ✓"; } });
     row.appendChild(btn); prose.insertBefore(row, prose.firstChild);
   }
+  // …and the same lever for a step whose measurement is TYPED, not loaded (Sportsball's stairwell gaps,
+  // 2026-10-11): CONFIG.samples maps an input key to a sample value; in TEACHER MODE a step with any such
+  // input gets the button, which fills those boxes exactly as typing would. Still teacher-only, same reason.
+  { const SMP=(typeof CONFIG!=="undefined" && CONFIG && CONFIG.samples) || {};
+    const sk=fieldsOf(st).map(f=>f.key).filter(k=>SMP[k]!=null);
+    if(sk.length && ungated() && st.gate!=="data"){
+      const row=document.createElement("div"); row.className="samplerow";
+      // CONFIG.sampleGroups: [{label, keys}] — a step holding any key of a group loads the WHOLE group, so one
+      // click fills every page of a run (Sportsball: all five bounce pages from the basketball page). Keys on
+      // other steps go straight into the answers, exactly as if typed there.
+      const grps=((typeof CONFIG!=="undefined" && CONFIG && CONFIG.sampleGroups) || []).filter(g=>g.keys.some(k=>sk.includes(k)));
+      const all=[...new Set(sk.concat(...grps.map(g=>g.keys)))].filter(k=>SMP[k]!=null);
+      const btn=document.createElement("button"); btn.className="deck-go";
+      btn.textContent="Load sample data"+(grps.length ? " ("+grps.map(g=>g.label).join(", ")+")" : "");
+      btn.addEventListener("click",()=>{ let n=0;
+        all.forEach(k=>{ const inp=document.querySelector('#stepbody input[data-key="'+k+'"]');
+          if(inp){ if(!inp.disabled){ inp.value=String(SMP[k]); inp.dispatchEvent(new Event("input")); n++; } }
+          else { S.answers[k]=parseFloat(SMP[k]); S.raw[k]=String(SMP[k]); n++; } });
+        if(n){ btn.disabled=true; btn.textContent="Sample data loaded ✓"; } });
+      row.appendChild(btn); prose.insertBefore(row, prose.firstChild); } }
   // data-collection discomfort disclaimer (house component): true → default text, or a custom string.
   if(st.disclaimer){
     const d=document.createElement("div"); d.className="disclaimer";
@@ -1667,12 +1802,17 @@ function renderStep(){
       refreshNext(); return;
     }
     S.answers["ok"+S.step]=true;
+    if(simBlind(st)){ lockBlind(); if(activeSim) activeSim.redraw(); }
     // A step can gate on more than one thing — the load step wants a file AND a mass. "✓ that works"
     // over a Next that is still dark would be the most confusing possible moment, so when something
     // else is outstanding, say what it is instead of congratulating them.
     setFb(stepComplete(S.step) ? passFb(st) : blockReason(S.step));
     refreshNext();
   };
+
+  // a blind test's measurement is final once the model has been shown (Daniel, 2026-10-09)
+  function lockBlind(){ body.querySelectorAll('#stepbody input[type=number]').forEach(x=>{ x.disabled=true; x.title="Locked in: the model has been shown."; });
+    body.querySelectorAll('#stepbody .submitrow .deck-go').forEach(x=>{ x.disabled=true; }); }
 
   const checkQ = (typeof st.checkFn==="function") ? st.checkFn(S.answers) : st.check;
   let qEl=null;
@@ -1695,13 +1835,15 @@ function renderStep(){
           d.classList.remove("locked");                              // keep the wrong pick readable in red
           let rem=Number.isFinite(st.lockSeconds)?st.lockSeconds:LOCK_S;
           const wrongMsg=fbText(st,"wrong","<b>Discuss for a minute</b>, then try again.");
-          const paint=()=>setFb(wrongMsg+"<br><span style='color:var(--muted)'>"+rem+"s</span>");
-          paint();
+          // Typeset the message ONCE and tick only the seconds. Re-setting the whole box every second
+          // re-ran MathJax every second, so on a real laptop the raw `$e\equiv…$` source flashed (or stuck)
+          // between typesets (Daniel, 2026-10-09).
+          setFb(wrongMsg+"<br><span class='lockcount' style='color:var(--muted)'>"+rem+"s</span>");
           if(S.lockTimer) clearInterval(S.lockTimer);
           S.lockTimer=setInterval(()=>{ rem--;
             if(rem<=0){ clearInterval(S.lockTimer); S.lockTimer=null;
               choiceEls.forEach(x=>{ x.dataset.locked=""; x.classList.remove("locked","wrong"); }); clearFb(); }
-            else paint();
+            else { const c=fb.querySelector(".lockcount"); if(c) c.textContent=rem+"s"; }
           },1000);
         }
       });
@@ -1728,12 +1870,23 @@ function renderStep(){
     // together IS the step. Same for Workshop 0's amplitude/frequency and its two R² values. Above two
     // fields the group logic below still rules.
     const pair = fields.length===2;
-    if(fields.length>1 && !st.figure && !pair) wrap.style.gridTemplateRows="repeat("+Math.ceil(fields.length/2)+",auto)";
-    if(fields.length>1 && (st.figure || pair)) wrap.classList.add("byrow");
+    // A sim step's inputs are two different things — times read off the phone, and the one number the
+    // slider sets — so they are laid out as two groups: the times two to a row, the fit on a line of its
+    // own underneath (Daniel, 2026-10-08: "it's not clear what best-fit e they're supposed to put in").
+    const simSplit = st.top==="sim" && fields.some(f=>f.unit==="s") && fields.some(f=>f.unit!=="s");
+    let timesGrid=null, fitLine=null;
+    if(simSplit){ wrap.className="inputs simfields";
+      timesGrid=document.createElement("div"); timesGrid.className="inputs multi byrow";
+      fitLine=document.createElement("div"); fitLine.className="inputs fitline";
+      wrap.appendChild(timesGrid); wrap.appendChild(fitLine); }
+    else {
+      if(fields.length>1 && !st.figure && !pair) wrap.style.gridTemplateRows="repeat("+Math.ceil(fields.length/2)+",auto)";
+      if(fields.length>1 && (st.figure || pair)) wrap.classList.add("byrow"); }
     fields.forEach(f=>{
       const row=document.createElement("div"); row.className="inrow";
-      row.innerHTML='<label>'+f.label+':</label><input type="number" step="any" style="width:88px"> <span class="unit">'+(f.unit||"")+'</span>';
+      row.innerHTML='<label>'+f.label+':</label><input type="number" step="any" style="width:88px"> <span class="unit">'+unitText(f.unit)+'</span>';
       const inp=row.querySelector("input");
+      inp.dataset.key=f.key;                        // lets a top-region sim write the box it drives (makeSim)
       if(S.answers[f.key]!=null) inp.value=S.answers[f.key];
       // `input`, not `change`: `change` only fires on blur, so a student who retyped a number and
       // reached straight for Enter was being judged on the previous one. Editing any value RETRACTS
@@ -1743,9 +1896,10 @@ function renderStep(){
         S.answers[f.key]=parseFloat(inp.value);
         S.raw[f.key]=inp.value;                     // the string, for the `dp:` check — see decimalsOf()
         witness(st, f.key, S.answers[f.key]);       // was it true when they typed it?
+        if(activeSim) activeSim.onInput(f.key);     // a sim step redraws from what was just typed
         S.answers["ok"+S.step]=false; clearFb(); refreshNext(); });
       inp.addEventListener("keydown",e=>{ if(e.key==="Enter"){ e.preventDefault(); submit(); } });
-      wrap.appendChild(row);
+      (simSplit ? (f.unit==="s" ? timesGrid : fitLine) : wrap).appendChild(row);
     });
     // The Enter row is a SIBLING of the input grid, never a child of it. Inside, it inherits the grid's
     // placement: `.inputs.multi` flows column-first with an explicit row count, so a `grid-column:1/-1`
@@ -1777,7 +1931,7 @@ function renderStep(){
     else if(qEl){ prose.insertBefore(wrap,qEl); if(goRow) prose.insertBefore(goRow,qEl);
                   main.classList.add("measure-ask"); }   // prose column carries boxes too → give it more width (analyzer.css)
     else { prose.appendChild(wrap); if(goRow) prose.appendChild(goRow); }
-    if(goRow && S.answers["ok"+S.step]===true) setFb(passFb(st));   // a step you already cleared
+    if(goRow && S.answers["ok"+S.step]===true){ setFb(passFb(st)); if(simBlind(st)) lockBlind(); }   // a step you already cleared
   }
 
   if(st.text){                                        // freeform text step (gated only on min length — not content)
@@ -1849,12 +2003,625 @@ $("next").addEventListener("click",()=>{
   if(!ungated() && !stepComplete(S.step)){ if(!S.lockTimer){ const p=$("deckfb"); if(p) p.innerHTML=blockReason(S.step); } return; }
   S.step++; renderStep();
 });
+// TAB moves between the step's ENTRY BOXES only — numbers, text, passcodes, freeform answers — and wraps;
+// Shift-Tab goes back. Suite-wide, because a step's tab order otherwise wanders through labels, equations,
+// buttons and the nav bar before it reaches the next box (Daniel, 2026-10-11). Enter still submits.
+function entryBoxes(){ return [...document.querySelectorAll('#stepbody input[type=number], #stepbody input[type=text], #stepbody textarea:not([readonly])')]
+  .filter(x=>!x.disabled && x.offsetParent!==null); }
+document.addEventListener("keydown",e=>{
+  if(e.key!=="Tab" || e.altKey || e.ctrlKey || e.metaKey) return;
+  const boxes=entryBoxes(); if(!boxes.length) return;
+  const i=boxes.indexOf(document.activeElement);
+  e.preventDefault();
+  const next = i<0 ? (e.shiftKey ? boxes.length-1 : 0) : (i + (e.shiftKey ? -1 : 1) + boxes.length) % boxes.length;
+  boxes[next].focus(); if(boxes[next].select) boxes[next].select();
+});
 document.addEventListener("keydown",e=>{                 // ← / → drive Back / Next
   const tag=(document.activeElement||{}).tagName||"";
   if(tag==="INPUT"||tag==="SELECT"||tag==="TEXTAREA") return;
   if(e.key==="ArrowRight") $("next").click();
   else if(e.key==="ArrowLeft") $("prev").click();
 });
+
+/* ============================================================== */
+/*  BALLS — the to-scale ball art shared by top:"ball" cards and the top:"rank" sorter      */
+/* ============================================================== */
+/* Every ball is drawn from its CONFIG.balls entry: `img` (a keyed square PNG) if there is one, otherwise a
+   shaded disc in `color`, with `seams` ("basketball" | "tennis") drawn over it; `shape:"filter"` draws a fluted
+   paper cup instead of a sphere. Sizes are always D × one px-per-cm, so every picture in the deck agrees. */
+function ballCfg(){ return (typeof CONFIG!=="undefined" && CONFIG.balls) || {}; }
+function ballName(b){ return b.title || (b.name||"").replace(/^./,c=>c.toUpperCase()); }
+function ballSpec(b){ const g=b.m*1000; return (b.m?(g>=100?Math.round(g):g.toFixed(1).replace(/\.0$/,""))+" g · ":"")+(b.D*100).toFixed(1)+" cm across"; }
+function ballMaxD(B){ return Math.max.apply(null,Object.keys(B).map(x=>B[x].D||0))*100; }
+function ballAspect(b){ return b.shape==="filter" ? 0.42 : b.steam ? 1.52 : 1; }   // a steaming ball is taller by its steam
+function ballMaxSlot(ks,B){ return Math.max.apply(null,ks.map(k=>(B[k].D||0)*100*ballAspect(B[k]))); }
+function sizeBall(el,pxcm){ const D=parseFloat(el.dataset.d)||5, a=parseFloat(el.dataset.a)||1, w=Math.max(4,D*pxcm);
+  el.style.width=w+"px"; el.style.height=(w*a)+"px"; }
+const BALL_SEAMS={ basketball:{c:"#111", w:2.2, d:["M50 0 Q46 50 50 100","M0 50 Q50 55 100 50","M17 8 Q44 50 17 92","M83 8 Q56 50 83 92"]},
+                   tennis:    {c:"#fbfbf4", w:3.2, d:["M13 17 C42 37 42 63 13 83","M87 17 C58 37 58 63 87 83"]} };
+let _ballClip=0;
+function ballArt(b){
+  const D=(b.D||0.05)*100, a=ballAspect(b), data=' data-d="'+D+'" data-a="'+a+'"';
+  if(b.img) return '<div class="bc-ball"'+data+'><img src="'+b.img+'" alt=""></div>';
+  if(b.shape==="filter"){                               // a basket coffee filter, side-on: a fluted paper cup
+    const n=14, pleats=[]; for(let i=1;i<n;i++){ const t=i/n; pleats.push('<path d="M'+(t*100).toFixed(1)+' 6 L'+(18+t*64).toFixed(1)+' 41"/>'); }
+    let rim="M0 5"; for(let i=0;i<n;i++){ const x0=i*100/n, x1=(i+1)*100/n; rim+=" Q"+((x0+x1)/2).toFixed(1)+" "+(i%2?1.5:8)+" "+x1.toFixed(1)+" 5"; }
+    const id="bcf"+(++_ballClip);
+    // a nested stack (`stack: 5`) shows its extra rims just under the top one
+    const extra=[]; for(let j=1;j<(b.stack||1);j++) extra.push('<path d="'+rim+'" transform="translate(0 '+(j*1.6)+')" fill="none" stroke="#d8d4cb" stroke-width=".9"/>');
+    return '<div class="bc-ball bc-shape"'+data+'><svg viewBox="0 0 100 42" preserveAspectRatio="none">'
+      +'<defs><linearGradient id="'+id+'" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fbfaf6"/><stop offset="1" stop-color="#cfcbc2"/></linearGradient></defs>'
+      +'<path d="'+rim+' L82 41 Q50 43 18 41 Z" fill="url(#'+id+')"/>'
+      +'<g stroke="#b9b4aa" stroke-width=".7" fill="none" opacity=".9">'+pleats.join("")+'</g>'
+      +extra.join("")+'<path d="'+rim+'" fill="none" stroke="#e9e6df" stroke-width=".8"/></svg></div>';
+  }
+  // `steam: true` — the hot squash ball: three wavy lines rising off the top, the same mark as the kettle
+  // station's printed sheet (Daniel, 2026-10-11). The ball stays to scale; the steam sits above it.
+  if(b.steam){ const plain=Object.assign({},b,{steam:false});
+    return '<div class="bc-ball bc-steamy"'+data+'><svg class="bc-steam" viewBox="0 0 100 52" aria-hidden="true">'
+      +'<g fill="none" stroke="#e0483e" stroke-width="3.3" stroke-linecap="round">'
+      +'<path d="M30.95 43.4 C21.4 33 40.5 24.4 30.95 10.1"/><path d="M50 40.6 C40.5 29.2 59.5 20.6 50 4.4"/>'
+      +'<path d="M69 43.4 C59.5 33 78.6 24.4 69 10.1"/></g></svg>'
+      +ballArt(plain).replace(/ data-d="[^"]*" data-a="[^"]*"/,"").replace('class="bc-ball ','class="')+'</div>'; }
+  const sm=BALL_SEAMS[b.seams], id="bcc"+(++_ballClip);
+  const seams = sm ? '<svg viewBox="0 0 100 100" preserveAspectRatio="none"><defs><clipPath id="'+id+'"><circle cx="50" cy="50" r="50"/></clipPath></defs>'
+      +'<g clip-path="url(#'+id+')" fill="none" stroke="'+sm.c+'" stroke-width="'+sm.w+'" stroke-linecap="round" opacity=".9">'
+      +sm.d.map(d=>'<path d="'+d+'"/>').join("")+'</g></svg>' : '';
+  return '<div class="bc-ball bc-disc'+(b.dark?' dark':'')+'"'+data+' style="--ball:'+(b.color||"#c8c8c8")+'">'+seams+'</div>';
+}
+
+// The title card itself, shared by top:"ball" steps and a sim step's empty state (makeSim): one ball → big name
+// on the left, ball on the right; several → side by side, each named underneath. `hint` is a muted line under
+// the names — on a sim step, what to type below to make the plot appear.
+// `vs` (a top:"ball" step's `vs: caption | caption`): the balls are PAIRS, in order — a "vs." between the two of
+// each pair, its caption under it (Sportsball's pre-stairwell slide: the gap the model predicts), and a wider
+// space between pairs (Daniel, 2026-10-11).
+function ballCardHTML(ks, kicker, hint, vs){
+  const B=ballCfg(), many=ks.length>1, scaleBar='<div class="bc-scale"><span></span><em>10 cm</em></div>';
+  const hintHTML = hint ? '<div class="bc-hint">'+hint+'</div>' : '';
+  if(!many){ const b=B[ks[0]]||{name:"ball",D:0.05};
+    return '<div class="ballcard"><div class="bc-text"><div class="bc-kicker">'+(kicker||"")+'</div>'
+      +'<div class="bc-name">'+ballName(b)+'</div><div class="bc-spec">'+ballSpec(b)+'</div>'+hintHTML+'</div>'
+      +'<div class="bc-art">'+ballArt(b)+scaleBar+'</div></div>'; }
+  return '<div class="ballcard multi">'+(kicker?'<div class="bc-kicker bc-top">'+kicker+'</div>':'')
+    +'<div class="bc-row'+(vs!=null?' vs':'')+'">'+ks.map((k,i)=>{
+        const col='<div class="bc-col"><div class="bc-slot">'+ballArt(B[k])+'</div>'
+          +'<div class="bc-name sm">'+ballName(B[k])+'</div><div class="bc-spec">'+ballSpec(B[k])+'</div></div>';
+        if(vs==null || i===0) return col;
+        if(i%2===1){ const cap=String(vs).split("|").map(x=>x.trim())[(i-1)/2]||"";
+          return '<div class="bc-vs"><b>vs.</b>'+(cap?'<span>'+cap+'</span>':'')+'</div>'+col; }
+        return '<div class="bc-pairgap"></div>'+col; }).join("")+'</div>'
+    +'<div class="bc-foot">'+scaleBar+hintHTML+'</div></div>';
+}
+// One px-per-cm for every single-ball card in the deck — set so the LARGEST object in CONFIG.balls fills ~70% of
+// the height — so a ping-pong ball really does look tiny after the basketball. A comparison card scales to ITS
+// largest object instead (the 10 cm bar keeps it honest), limited by width as well.
+// `scale` (a step's `ballScale:`): shrink a comparison card below its fit-to-panel size, so two small balls shown
+// alone still LOOK small next to the cards that come after (Sportsball s2-mass, Daniel 2026-10-11).
+function fitBallCard(el, ks, scale){
+  const B=ballCfg(), h=el.clientHeight||420, w=el.clientWidth||1200, many=ks.length>1,
+        sumW=ks.reduce((a,k)=>a+(B[k].D||0)*100,0),
+        wfrac = el.querySelector(".bc-row.vs") ? 0.40 : 0.62,     // a vs. card spends width on the "vs." and the pair gap
+        pxcm = (scale||1) * (many ? Math.min(0.42*h/ballMaxSlot(ks,B), wfrac*w/sumW) : 0.70*h/ballMaxD(B));
+  el.querySelectorAll(".bc-ball").forEach(x=>sizeBall(x,pxcm));
+  el.querySelectorAll(".bc-slot").forEach(x=>{ x.style.height=(ballMaxSlot(ks,B)*pxcm)+"px"; });
+  el.querySelectorAll(".bc-scale span").forEach(x=>{ x.style.width=(10*pxcm)+"px"; });
+}
+
+/* ---- top:"rank" — drag every ball into order of terminal speed (Sportsball, 2026-10-09) ----
+   Left: the balls in a random order. Right: numbered slots, fastest at the top. Drag (or click) a ball across;
+   drag within the right column to swap; drag (or click) it back to return it. With every slot full, the
+   feedback box says how many are out of place — or, all right, names the winner and the loser. The order is
+   by m/D² (the step's text tells students to assume one C_d for all), and the step is gated on getting it. */
+function rankTruth(ks,B){ return ks.slice().sort((x,y)=>B[y].m/(B[y].D*B[y].D)-B[x].m/(B[x].D*B[x].D)); }
+function rankVt(b){ return Math.sqrt(b.m*9.81/(0.5*1.2*0.47*Math.PI*b.D*b.D/4)); }
+function makeRank(root,st){
+  const B=ballCfg(), ks=(st.balls||[]).filter(k=>B[k]), key="rank_"+st.id, truth=rankTruth(ks,B);
+  let R=S.answers[key];
+  if(!R || !Array.isArray(R.left) || !Array.isArray(R.right) || R.right.length!==ks.length){
+    const sh=ks.slice(); for(let i=sh.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [sh[i],sh[j]]=[sh[j],sh[i]]; }
+    if(sh.join()===truth.join()) sh.reverse();
+    R={left:sh, right:ks.map(()=>null)}; S.answers[key]=R; }
+  const item=k=>'<div class="rk-item" data-k="'+k+'"><div class="rk-art">'+ballArt(B[k])+'</div>'
+    +'<div class="rk-txt"><b>'+ballName(B[k])+'</b><span>'+ballSpec(B[k])+'</span></div></div>';
+  let pxcm=2;
+  function draw(){
+    root.innerHTML='<div class="rk-col rk-left" data-col="left"><div class="rk-head">Balls</div>'
+      +R.left.map(item).join("")+'</div>'
+      +'<div class="rk-col rk-right" data-col="right"><div class="rk-head">Fastest terminal speed ↓ slowest</div>'
+      +R.right.map((k,i)=>'<div class="rk-slot" data-i="'+i+'"><span class="rk-n">'+(i+1)+'</span>'+(k?item(k):'')+'</div>').join("")+'</div>';
+    fit(); verdict(); }
+  function fit(){ const h=root.clientHeight||440, rowH=Math.max(30,(h-34)/ks.length - 4);
+    pxcm=Math.min(3.2,(rowH-6)/ballMaxD(B));
+    root.querySelectorAll(".rk-item,.rk-slot").forEach(el=>{ el.style.height=rowH+"px"; });
+    root.querySelectorAll(".rk-art").forEach(el=>{ el.style.width=(ballMaxD(B)*pxcm)+"px"; });
+    root.querySelectorAll(".bc-ball").forEach(el=>sizeBall(el,pxcm)); }
+  // One check per cooldown (Daniel, 2026-10-09: "I just guessed my way there based on the feedback in under a
+  // minute"). A full, wrong list is checked once, says how many are out of place, and then the gate goes quiet
+  // for `lockSeconds` (default LOCK_S): rearranging is allowed, but nothing is re-graded until the countdown
+  // ends, and then whatever is in the slots is checked again. The deadline lives in S.answers, so leaving the
+  // step and coming back doesn't reset it.
+  const waitKey="rankwait_"+st.id, lastKey="ranklast_"+st.id, coolS=Number.isFinite(st.lockSeconds)?st.lockSeconds:LOCK_S;
+  function waitMsg(){ const left=Math.max(0,Math.ceil((S.answers[waitKey]-Date.now())/1000));
+    return "Check your work: "+S.answers[lastKey]+" of "+ks.length+" are in the wrong spot. The gate will recheck your answers in <b>"+left+"</b> second"+(left===1?"":"s")+"."; }
+  function tick(){ if(S.lockTimer){ clearInterval(S.lockTimer); S.lockTimer=null; }
+    S.lockTimer=setInterval(()=>{ if(!root.isConnected){ clearInterval(S.lockTimer); S.lockTimer=null; return; }
+      if(Date.now()>=S.answers[waitKey]){ clearInterval(S.lockTimer); S.lockTimer=null; verdict(); }
+      else { const fb=$("deckfb"); if(fb){ fb.dataset.rank="1"; fb.innerHTML=waitMsg(); } } },500); }
+  function verdict(){
+    const fb=$("deckfb"); const full=R.right.every(Boolean);
+    S.answers["rank_list"]=R.right.filter(Boolean).map(k=>B[k].name).join(" > ");
+    const waiting = S.answers[waitKey] && Date.now()<S.answers[waitKey];
+    if(waiting){ S.answers["rankok"+S.step]=false; if(fb){ fb.dataset.rank="1"; fb.innerHTML=waitMsg(); } if(!S.lockTimer) tick(); refreshNext(); return; }
+    if(!full){ S.answers["rankok"+S.step]=false; if(fb && fb.dataset.rank) { fb.innerHTML=""; delete fb.dataset.rank; } refreshNext(); return; }
+    const wrong=R.right.filter((k,i)=>k!==truth[i]).length;
+    S.answers["rankok"+S.step] = wrong===0;
+    if(wrong){ S.answers[lastKey]=wrong; S.answers[waitKey]=Date.now()+coolS*1000;
+      if(fb){ fb.dataset.rank="1"; fb.innerHTML=waitMsg(); } tick(); refreshNext(); return; }
+    if(fb){ fb.dataset.rank="1";
+      const w=B[truth[0]], l=B[truth[truth.length-1]];
+      fb.innerHTML = "✓ Yes! The winner is the <b>"+w.name+"</b>, at about "+Math.round(rankVt(w))+" m/s, and the slowest is the <b>"+l.name+"</b>, at about "+Math.round(rankVt(l))+" m/s."; }
+    refreshNext(); }
+  function place(k,to,i){                                // move ball k to the left column, or to slot i (swapping)
+    const fromL=R.left.indexOf(k), fromR=R.right.indexOf(k);
+    if(to==="left"){ if(fromR>=0){ R.right[fromR]=null; R.left.push(k); } }
+    else { const occ=R.right[i];
+      if(fromR>=0){ R.right[fromR]=occ||null; R.right[i]=k; }
+      else { R.left.splice(fromL,1); if(occ) R.left.push(occ); R.right[i]=k; } }
+    S.answers[key]=R; draw(); }
+  let drag=null;
+  root.addEventListener("pointerdown",e=>{ const el=e.target.closest(".rk-item"); if(!el) return; e.preventDefault();
+    const r=el.getBoundingClientRect(), g=el.cloneNode(true); g.classList.add("rk-ghost");
+    g.style.width=r.width+"px"; g.style.height=r.height+"px"; g.style.left=r.left+"px"; g.style.top=r.top+"px"; document.body.appendChild(g);
+    el.classList.add("rk-src"); drag={k:el.dataset.k, el, g, dx:e.clientX-r.left, dy:e.clientY-r.top, x0:e.clientX, y0:e.clientY, moved:false};
+    root.setPointerCapture && root.setPointerCapture(e.pointerId); });
+  root.addEventListener("pointermove",e=>{ if(!drag) return;
+    if(Math.abs(e.clientX-drag.x0)+Math.abs(e.clientY-drag.y0)>4) drag.moved=true;
+    drag.g.style.left=(e.clientX-drag.dx)+"px"; drag.g.style.top=(e.clientY-drag.dy)+"px";
+    root.querySelectorAll(".rk-over").forEach(x=>x.classList.remove("rk-over"));
+    drag.g.style.display="none"; const t=document.elementFromPoint(e.clientX,e.clientY); drag.g.style.display="";
+    const tgt=t && (t.closest(".rk-slot")||t.closest(".rk-left")); if(tgt) tgt.classList.add("rk-over"); });
+  const end=e=>{ if(!drag) return; const d=drag; drag=null; d.g.remove(); d.el.classList.remove("rk-src");
+    root.querySelectorAll(".rk-over").forEach(x=>x.classList.remove("rk-over"));
+    if(!d.moved){                                        // a click: across to the first empty slot, or back
+      if(R.left.indexOf(d.k)>=0){ const i=R.right.indexOf(null); if(i>=0) place(d.k,"right",i); }
+      else place(d.k,"left"); return; }
+    const t=document.elementFromPoint(e.clientX,e.clientY), slot=t&&t.closest(".rk-slot"), left=t&&t.closest(".rk-left");
+    if(slot) place(d.k,"right",+slot.dataset.i); else if(left) place(d.k,"left"); };
+  root.addEventListener("pointerup",end); root.addEventListener("pointercancel",end);
+  draw(); setTimeout(verdict,0);
+  return fit;
+}
+
+/* ============================================================== */
+/*  SIM — a simulated y(t) in the top region (top:"sim")              */
+/* ============================================================== */
+/* Built for Sportsball (2026-10-08). Sections 1 and 2 of that workshop measure TIMES by ear — the gaps
+   between bounces, the gap between two landings — and a time is a point, not a picture. So the top
+   region draws the motion those times imply, beside a model the student tunes with ONE slider until the
+   two agree. The slider IS the step's fit input: moving it writes the box, typing in the box moves it —
+   one number with two handles — and the box is what `checkKind:"simfit"` grades.
+
+   Wiring (NARR):  top:"sim" · sim:"bounce"|"superball"|"drop" · balls:[…] · simfit:<what the slider sets>
+     bounce     "e" (one restitution, no air) or "e-drag" (one restitution, quadratic drag on every hop)
+     superball  "e" — released from CONFIG.sim.superballBlocks, timed to the CONFIG.sim.superballBounces-th bounce
+     drop       "cd-shared" (one C_d for both balls) · "cd-second" (the first ball keeps its CONFIG C_d,
+                the slider sets the second's) · "cd" (one object, its whole fall time)
+   Which input is which is read from the step's own fields BY UNIT, so a manifest needs no new syntax:
+   unit "s" fields are measured times, in order; the first field with any other unit is the fit. A step
+   that re-reads times typed earlier names them with `simKeys:`. Every number that belongs to the
+   workshop rather than the physics — masses, diameters, C_d, the size of a cinder block, which input
+   holds the drop height — lives in the deck's CONFIG.balls / CONFIG.sim, never here.
+
+   Colors follow the house rule: BLUE is only what you measured — a vertical line at each instant your
+   stopwatch heard (2026-10-08 revision, Daniel: "the blue should represent what we know for sure
+   happened", so no drawn-in hop shapes) — GREEN is the model, AMBER is context (the deviation readout),
+   and the dashed gray curve is "no drag". A drop step with `simfit:"fixed"` has no slider at all: its
+   model is a smooth sphere at each ball's CONFIG C_d, and the student compares rather than fits. */
+let activeSim=null;
+const SIM_G=9.81, SIM_RHO=1.2;
+function simCfg(){ return (typeof CONFIG!=="undefined" && CONFIG && CONFIG.sim) || {}; }
+// A fixed-model drop that asks for a measurement is a BLIND test: the top shows only its title until the
+// student's number has passed Enter, so the model can't be read off and typed back (Daniel, 2026-10-09).
+function simBlind(st){ return st && st.top==="sim" && st.sim==="drop" && (st.simfit==="fixed"||st.simfit==="stack") && fieldsOf(st).length>0; }
+function simBall(k){ const B=(typeof CONFIG!=="undefined" && CONFIG && CONFIG.balls) || {};
+  return B[k] || {name:String(k||"ball"), m:0.05, D:0.05, cd:0.47}; }
+function simBeta(b,cd){ return 0.5*SIM_RHO*cd*Math.PI*(b.D/2)*(b.D/2); }
+function simVt(b,cd){ return Math.sqrt(b.m*SIM_G/simBeta(b,cd)); }
+function lncosh(x){ x=Math.abs(x); return x>20 ? x-Math.LN2 : Math.log(Math.cosh(x)); }
+// Dropped from rest through h with quadratic drag: Class K's closed form, y = h - (v_t²/g) ln cosh(g t/v_t),
+// solved for the time to reach y = 0. Past x ≈ 30 the cosh overflows long before the answer does.
+function simFallTime(b,cd,h){ const vt=simVt(b,cd), x=SIM_G*h/(vt*vt);
+  return x>30 ? h/vt+vt/SIM_G*Math.LN2 : vt/SIM_G*Math.acosh(Math.exp(x)); }
+function simFallY(b,cd,h,t){ const vt=simVt(b,cd); return h - vt*vt/SIM_G*lncosh(SIM_G*t/vt); }
+
+function simFields(st){
+  const F=fieldsOf(st);
+  const times=(Array.isArray(st.simKeys)&&st.simKeys.length) ? st.simKeys.slice() : F.filter(f=>f.unit==="s").map(f=>f.key);
+  const fitF=F.find(f=>f.unit!=="s") || null;
+  return {times:times, fit:fitF?fitF.key:null, fitField:fitF};
+}
+// the measured times, in order, stopping at the first box not yet filled
+function simTimes(st){ const out=[]; for(const k of simFields(st).times){ const v=S.answers[k];
+  if(!Number.isFinite(v)||v<=0) break; out.push(v); } return out; }
+// The unit a key was asked in, looked up across the whole deck (a height is typed on one step, used on others).
+function simKeyUnit(k){ for(const s2 of NARR){ const f=fieldsOf(s2).find(x=>x.key===k); if(f) return f.unit||""; } return ""; }
+// Drop height in meters. A step names the input that holds it with `simHeight:`; otherwise CONFIG.sim.heightKey.
+// An input asked in "m" is meters; anything else is counted in cinder blocks (CONFIG.sim.blockM each).
+function simHeight(st){ const c=simCfg(), bm=c.blockM||0.2032;
+  if(st.sim==="superball") return (c.superballBlocks||9)*bm;
+  const key=st.simHeight||c.heightKey;
+  if(key && c.fixedHeights && Number.isFinite(c.fixedHeights[key])) return c.fixedHeights[key];   // a posted height, in meters, nobody types
+  const v=key ? S.answers[key] : NaN, inM=key && simKeyUnit(key)==="m";
+  if(Number.isFinite(v)&&v>0) return inM ? v : v*bm;
+  return inM ? (c.defaultMeters||10) : (c.defaultBlocks||13)*bm; }
+
+// ---- bounce: one hop with drag, integrated (no closed form once the ball goes UP and comes back down)
+function simHop(b,cd,v,dt,keep){
+  const k=simBeta(b,cd)/b.m; let y=0, vy=v, t=0; const pts=keep?[[0,0]]:null;
+  for(;;){ const a=-SIM_G-k*Math.abs(vy)*vy, vn=vy+a*dt, yn=y+vn*dt;
+    if(yn<0 && vn<0){ const f=y/(y-yn); t+=f*dt; if(keep) pts.push([t,0]); return {T:t, u:Math.abs(vy+(vn-vy)*f), pts:pts}; }
+    vy=vn; y=yn; t+=dt;
+    if(keep && t-pts[pts.length-1][0]>=0.004) pts.push([t,y]);
+    if(t>20) return {T:t, u:Math.abs(vy), pts:pts}; } }
+const _launchCache={};
+// the launch speed whose hop (with drag) lasts exactly tau — the model starts from the student's FIRST hop
+function simLaunchFor(b,cd,tau,dt){ const key=[b.m,b.D,cd,tau,dt].join(",");
+  if(_launchCache[key]!=null) return _launchCache[key];
+  let lo=0.01, hi=60; for(let i=0;i<50;i++){ const m=(lo+hi)/2; if(simHop(b,cd,m,dt,false).T<tau) lo=m; else hi=m; }
+  return (_launchCache[key]=(lo+hi)/2); }
+function simParab(T,h0){ const pts=[]; const n=60; for(let i=0;i<=n;i++){ const s=T*i/n; pts.push([s,(h0||0)+0.5*SIM_G*s*(T-s)]); } return pts; }
+// the model's hops for restitution e: n hop durations (and their shapes, when `keep`)
+function simBounceModel(st,e,n,keep){
+  const tau=simTimes(st); if(!tau.length) return null;
+  const hops=[];
+  if(st.simfit!=="e-drag"){ for(let k=0;k<n;k++){ const T=tau[0]*Math.pow(e,k); hops.push({T:T, pts:keep?simParab(T):null}); } return hops; }
+  const b=simBall((st.balls||[])[0]), cd=b.cd, dt=keep?1e-4:2.5e-4;
+  let v=simLaunchFor(b,cd,tau[0],dt);
+  for(let k=0;k<n;k++){ const H=simHop(b,cd,v,dt,keep); hops.push(H); v=e*H.u; }
+  return hops;
+}
+// The number the student minimizes: the AVERAGE distance in time between the model's bounces and theirs.
+// Bounce 1 is t = 0 for both, and the model's first hop is pinned to theirs, so bounce 2 always agrees;
+// the comparison is bounces 3 onward. Timestamps, not hop durations, because a timestamp is what the
+// stopwatch heard and what the blue lines show.
+function simMisfit(st,e){ const tau=simTimes(st); if(tau.length<2) return null;
+  const M=simBounceModel(st,e,tau.length,false); let tm=0, tmod=0, sum=0;
+  for(let k=0;k<tau.length;k++){ tm+=tau[k]; tmod+=M[k].T; if(k>=1) sum+=Math.abs(tm-tmod); }
+  return sum/(tau.length-1); }
+// ---- superball: release from h, then hops of 2·t₁·eᵏ (no air — at 1.8 m a superball barely notices it)
+function simSuperT(e,h,N){ const t1=Math.sqrt(2*h/SIM_G); return t1*(1+2*e*(1-Math.pow(e,N-1))/(1-e)); }
+// ---- drop: the objects in the step, each at its C_d for slider value cd
+function simDropSet(st,cd){ const bs=(st.balls||[]).map(simBall);
+  if(st.simfit==="fixed") return bs.map(b=>({b:b,cd:b.cd}));
+  // `stack`: same object, more of it (nested coffee filters) — every curve at ONE C_d, the student's own fit
+  // from the step named by `simCdKey` when there is one, else CONFIG's
+  if(st.simfit==="stack"){ const c=st.simCdKey ? S.answers[st.simCdKey] : NaN; return bs.map(b=>({b:b, cd:Number.isFinite(c)&&c>0 ? c : b.cd})); }
+  if(st.simfit==="cd-shared") return bs.map(b=>({b:b,cd:cd}));
+  if(st.simfit==="cd-second") return [{b:bs[0],cd:bs[0].cd},{b:bs[1],cd:cd}];
+  return [{b:bs[0],cd:cd}]; }
+function simDropPred(st,cd){ const h=simHeight(st), P=simDropSet(st,cd);
+  if(P.length===1) return simFallTime(P[0].b,P[0].cd,h);
+  return simFallTime(P[1].b,P[1].cd,h)-simFallTime(P[0].b,P[0].cd,h); }
+function simBisect(f,target,lo,hi){ const flo=f(lo)-target, fhi=f(hi)-target;
+  if(!(flo<=0 && fhi>=0)) return null;
+  for(let i=0;i<60;i++){ const m=(lo+hi)/2; if(f(m)<target) lo=m; else hi=m; } return (lo+hi)/2; }
+function simGolden(f,lo,hi){ for(let i=0;i<60;i++){ const a=lo+(hi-lo)*0.382, b=lo+(hi-lo)*0.618; if(f(a)<f(b)) hi=b; else lo=a; } return (lo+hi)/2; }
+
+/* The value the slider SHOULD sit at, given what the student measured — what `simfit` grades against.
+   Pure (reads S.answers, never the DOM) and cached on its inputs, because stepComplete runs it on every
+   keystroke and the drag-bounce fit integrates a few hundred thousand steps. */
+const _bestCache={};
+function simBest(st){
+  const sig=JSON.stringify([st.id, st.sim, st.simfit, simTimes(st), simHeight(st)]);
+  if(sig in _bestCache) return _bestCache[sig];
+  let out=null;
+  if(st.sim==="bounce"){ const tau=simTimes(st);
+    if(tau.length>=2) out={kind:"e", value:simGolden(e=>simMisfit(st,e), 0.2, 0.995), tol:0.02}; }
+  else if(st.sim==="superball"){ const T=simTimes(st)[0], c=simCfg(), N=c.superballBounces||10, h=simHeight(st);
+    if(Number.isFinite(T)){ const e=simBisect(x=>simSuperT(x,h,N), T, 0.05, 0.995);
+      out = e==null ? {kind:"e", value:null, reach:true} : {kind:"e", value:e, tol:0.015}; } }
+  else if(st.sim==="drop" && st.simfit!=="cd-second" && st.simfit!=="fixed" && st.simfit!=="stack"){ const meas=simTimes(st)[0];
+    if(Number.isFinite(meas)){ const cd=simBisect(c=>simDropPred(st,c), meas, 0.05, 3);
+      out={kind:"cd", value:cd, reach:cd==null, meas:meas,
+           tolT: st.simfit==="cd" ? Math.max(0.1,0.05*meas) : Math.max(0.003,0.15*meas)}; } }
+  return (_bestCache[sig]=out);
+}
+
+function makeSim(root,st){
+  const cv=root.querySelector("canvas"), ro=root.querySelector(".plotreadout"),
+        sl=root.querySelector("input[type=range]"), val=root.querySelector(".simval");
+  const ctx2=cv.getContext("2d"), F=simFields(st);
+  const isE = st.sim!=="drop";
+  const lo = st.sim==="superball" ? 0.50 : isE ? 0.30 : st.simfit==="cd-second" ? 0.20 : 0.10;
+  const hi = st.sim==="superball" ? 0.98 : isE ? 0.99 : st.simfit==="cd-second" ? 1.20 : 2.50;
+  if(sl){ sl.min=lo; sl.max=hi; sl.step=0.01; }
+  const stateKey = F.fit || ("sim_"+st.id);          // a step with no fit box still remembers its slider
+  const dpFit = F.fitField && Number.isFinite(F.fitField.dp) ? F.fitField.dp : 2;
+  const start = Number.isFinite(S.answers[stateKey]) ? S.answers[stateKey]
+              : (isE ? (st.sim==="superball" ? 0.55 : 0.40) : 2.20);   // far from any real ball or filter, so the fit is a find
+  // A follow-up step with no fit box of its own (a concept question asked over the same data) opens the
+  // slider where the student left it on the step it follows, not at the default.
+  let start0=start, priorFit=false;
+  if(!F.fit && !Number.isFinite(S.answers[stateKey])){
+    for(let i=S.step-1;i>=0;i--){ const p=NARR[i];
+      if(p.top==="sim" && p.sim===st.sim && String(p.balls)===String(st.balls)){ const f=simFields(p).fit;
+        if(f && Number.isFinite(S.answers[f])){ start0=S.answers[f]; priorFit=true; break; } } } }
+  if(sl) sl.value=Math.min(hi,Math.max(lo,start0));
+  let raf=null, alive=true;
+  // `simSlider: no` (Sportsball's ping-pong finale, Daniel 2026-10-11): no slider; the model sits at the e the
+  // student fit on the earlier step, or — if they never did (teacher mode, sample data) — at the best fit.
+  const noSlider = st.simSlider==="no";   // bounce/superball: e; a drop (the coffee filter's concept questions): C_d
+  const cur=()=>sl ? parseFloat(sl.value) : noSlider ? (priorFit ? start0 : ((simBest(st)||{}).value ?? start0)) : NaN;
+  const showVal=()=>{ if(val) val.textContent=cur().toFixed(2); };
+  if(sl) sl.addEventListener("input",()=>{
+    const v=cur(); S.answers[stateKey]=v;
+    if(F.fit){ S.raw[F.fit]=v.toFixed(dpFit); S.answers[F.fit]=parseFloat(v.toFixed(dpFit));
+      const box=document.querySelector('#stepbody input[data-key="'+F.fit+'"]'); if(box) box.value=S.raw[F.fit];
+      S.answers["ok"+S.step]=false; const fb=$("deckfb"); if(fb) fb.innerHTML=""; if(typeof refreshNext==="function") refreshNext(); }
+    showVal(); schedule(); });
+  function schedule(){ if(raf) return; raf=requestAnimationFrame(()=>{ raf=null; if(alive) draw(); }); }
+
+  // ---------- drawing helpers (canvas-local; the same house axis rule as the analyzer) ----------
+  let W=0,H=0;
+  function fit(){ const r=cv.getBoundingClientRect(), d=window.devicePixelRatio||1;
+    cv.width=Math.max(1,r.width*d); cv.height=Math.max(1,r.height*d); ctx2.setTransform(d,0,0,d,0,0); W=r.width; H=r.height; }
+  const C=v=>getCss(v);
+  function frame(x0,x1,y0,y1,yVar,yUnit,box){
+    const mL=box.l, mT=box.t, pw=box.w, ph=box.h;
+    let Tx=niceTicks(x0,x1,box.xt||7); const Ty=niceTicks(y0,y1,box.yt||5);
+    // `exactX`: use the asked-for time range rather than snapping it out to round ticks — the bounce plot
+    // starts a hair before t = 0, and snapping that to −0.5 s would waste a seventh of the panel
+    if(box.exactX) Tx={lo:x0, hi:x1, step:Tx.step, ticks:Tx.ticks.filter(v=>v>=x0-1e-9 && v<=x1+1e-9)};
+    const X=t=>mL+(t-Tx.lo)/(Tx.hi-Tx.lo)*pw, Y=y=>mT+(Ty.hi-y)/(Ty.hi-Ty.lo)*ph;
+    ctx2.font=font(11); ctx2.textAlign="right"; ctx2.textBaseline="middle";
+    Ty.ticks.forEach(v=>{ const y=Y(v); ctx2.strokeStyle=C(v===0?"--zero":"--grid"); ctx2.lineWidth=1;
+      ctx2.beginPath(); ctx2.moveTo(mL,y); ctx2.lineTo(mL+pw,y); ctx2.stroke();
+      if(!box.noLabels){ ctx2.fillStyle=C("--muted"); ctx2.fillText(fmt(v), mL-7, y); } });
+    ctx2.strokeStyle=C("--line"); ctx2.beginPath(); ctx2.moveTo(mL,mT); ctx2.lineTo(mL,mT+ph); ctx2.lineTo(mL+pw,mT+ph); ctx2.stroke();
+    if(!box.noLabels){
+      ctx2.textAlign="center"; ctx2.textBaseline="top"; ctx2.fillStyle=C("--muted");
+      Tx.ticks.forEach(v=>ctx2.fillText(fmt(v), X(v), mT+ph+6));
+      // axis titles: variable italic, unit roman (house style)
+      ctx2.save(); ctx2.translate(mL-44,mT+ph/2); ctx2.rotate(-Math.PI/2); ctx2.textBaseline="alphabetic"; ctx2.textAlign="left";
+      ctx2.font=ifont(12); const vw=ctx2.measureText(yVar).width; ctx2.font=font(12); const uw=ctx2.measureText(" ("+yUnit+")").width;
+      ctx2.fillStyle=C("--muted"); ctx2.font=ifont(12); ctx2.fillText(yVar,-(vw+uw)/2,0); ctx2.font=font(12); ctx2.fillText(" ("+yUnit+")",-(vw+uw)/2+vw,0);
+      ctx2.restore();
+      ctx2.textAlign="left"; ctx2.textBaseline="alphabetic"; ctx2.font=ifont(12); const tw=ctx2.measureText("t").width; ctx2.font=font(12);
+      const tw2=ctx2.measureText(" (s)").width, xx=mL+pw/2-(tw+tw2)/2; ctx2.fillStyle=C("--muted");
+      ctx2.font=ifont(12); ctx2.fillText("t",xx,mT+ph+32); ctx2.font=font(12); ctx2.fillText(" (s)",xx+tw,mT+ph+32); }
+    return {X,Y,Tx,Ty,box};
+  }
+  function curve(F2,pts,dx,color,w,dash){ ctx2.save(); ctx2.beginPath(); ctx2.rect(F2.box.l,F2.box.t,F2.box.w,F2.box.h); ctx2.clip();
+    ctx2.strokeStyle=C(color); ctx2.lineWidth=w; if(dash) ctx2.setLineDash(dash); ctx2.beginPath();
+    pts.forEach((p,i)=>{ const x=F2.X(p[0]+dx), y=F2.Y(p[1]); i?ctx2.lineTo(x,y):ctx2.moveTo(x,y); }); ctx2.stroke(); ctx2.restore(); }
+  function vline(F2,t,color,dash,w){ const x=F2.X(t); ctx2.save(); ctx2.strokeStyle=C(color); ctx2.lineWidth=w||1.5; if(dash) ctx2.setLineDash(dash);
+    ctx2.beginPath(); ctx2.moveTo(x,F2.box.t); ctx2.lineTo(x,F2.box.t+F2.box.h); ctx2.stroke(); ctx2.restore(); }
+  // AMBER dimension arrows for the difference between where the model lands and where the student's blue
+  // line is: two short arrows OUTSIDE the gap pointing in, the way a drawing dimensions a gap too narrow to
+  // hold its own arrows — the same amber as the deviation text in the readout (Daniel, 2026-10-11).
+  const ARROW_FRAC=0.4;
+  // Drawn only once the fit is CLOSE (the caller passes `tol`, s): far off, the model's k-th bounce sits nearer
+  // the student's (k±1)-th, and arrows pairing the wrong lines read as nonsense. A zero gap still draws — the
+  // two arrowheads meet tip to tip, which is the picture of "on it" (Daniel, 2026-10-11).
+  function gapArrows(F2,ta,tb,tol){
+    if(tol!=null && !(Math.abs(ta-tb)<=tol)) return;
+    let x1=F2.X(Math.min(ta,tb)), x2=F2.X(Math.max(ta,tb));
+    const y=F2.box.t+F2.box.h-8, L=16, hd=6, col=C("--edge");
+    ctx2.save(); ctx2.beginPath(); ctx2.rect(F2.box.l-L-2,F2.box.t,F2.box.w+2*L+4,F2.box.h); ctx2.clip();
+    ctx2.strokeStyle=col; ctx2.fillStyle=col; ctx2.lineWidth=1.6;
+    const arrow=(xTip,dir)=>{ ctx2.beginPath(); ctx2.moveTo(xTip-dir*L,y); ctx2.lineTo(xTip-dir*1.5,y); ctx2.stroke();
+      ctx2.beginPath(); ctx2.moveTo(xTip,y); ctx2.lineTo(xTip-dir*hd,y-hd*0.6); ctx2.lineTo(xTip-dir*hd,y+hd*0.6); ctx2.closePath(); ctx2.fill(); };
+    arrow(x1,+1); arrow(x2,-1);
+    ctx2.restore();
+  }
+  function tick(F2,t,color,up){ const x=F2.X(t), y=F2.box.t+F2.box.h; ctx2.strokeStyle=C(color); ctx2.lineWidth=2;
+    ctx2.beginPath(); ctx2.moveTo(x,y); ctx2.lineTo(x,y-(up||8)); ctx2.stroke(); }
+  function legend(items,xRight,y0){ ctx2.font=font(12); ctx2.textBaseline="middle"; ctx2.textAlign="left";
+    let y=y0||16; const xR=xRight||W-14; const wmax=Math.max.apply(null,items.map(it=>ctx2.measureText(it[1]).width));
+    items.forEach(it=>{ const x=xR-wmax-26; ctx2.strokeStyle=C(it[0]); ctx2.lineWidth=2.5; if(it[2]) ctx2.setLineDash(it[2]);
+      ctx2.beginPath(); ctx2.moveTo(x,y); ctx2.lineTo(x+18,y); ctx2.stroke(); ctx2.setLineDash([]);
+      ctx2.fillStyle=C("--ink"); ctx2.fillText(it[1],x+24,y); y+=18; }); }
+  function message(txt){ ctx2.fillStyle=C("--muted"); ctx2.font=font(15); ctx2.textAlign="center"; ctx2.textBaseline="middle"; ctx2.fillText(txt,W/2,H/2); ro.style.display="none"; }
+  function readout(html){ ro.style.display="block"; ro.innerHTML=html; }
+  const ms=x=>Math.abs(x)<0.0095 ? (x*1000).toFixed(1) : (x*1000).toFixed(0);
+
+  // EMPTY STATE: until the step has the student's number, the plot area shows the object's title card — name,
+  // mass, size, drawn to scale — with one line saying what to type (Daniel, 2026-10-11). A blind drop keeps its
+  // card until the number has passed Enter.
+  const plotEl=root.querySelector(".sim-plot"), ctlEl=root.querySelector(".sim-ctl");
+  const cardEl=document.createElement("div"); cardEl.className="sim-card"; (plotEl.parentElement||plotEl).appendChild(cardEl);   // over the whole top panel, so it sits where a plain ball card does
+  // `cardBalls:` — the card and the corner avatar show only these (the five-filter test: just the stack).
+  const cardKs=(st.cardBalls ? String(st.cardBalls).split(",").map(x=>x.trim()) : (st.balls||[])).filter(k=>ballCfg()[k]);
+  // The stairwell comparisons (`simfit:"fixed"`) color each ball's model curve with CONFIG.sim.pairColors and name
+  // the colors by the avatar labels instead of a legend (Daniel, 2026-10-11).
+  const pairCol = (st.sim==="drop" && st.simfit==="fixed" && Array.isArray(simCfg().pairColors)) ? simCfg().pairColors : null;
+  // Every drop step names its curves by the avatar labels in the corner, colored to match, and the legend keeps
+  // only "no drag" (Daniel, 2026-10-11): stairwell purple/red, coffee filters green/purple. The avatars there are
+  // ALL the step's balls (the five-filter test's card shows just the stack, but its plot draws both models).
+  const dropCol = st.sim==="drop" ? (pairCol || ["--result","--mma-purple"]) : null;
+  const badgeKs = st.sim==="drop" ? (st.balls||[]).filter(k=>ballCfg()[k]) : cardKs;
+  let cardOn=null;
+  // …and once the data is in and the card gives way to the plot, the ball stays on as a small avatar + name in
+  // the plot's top-right corner, so the graph still says WHAT fell or bounced (Daniel, 2026-10-11). To scale
+  // among themselves when there are two; the larger is ~22 px tall.
+  const badgeEl = badgeKs.length ? (()=>{ const B=ballCfg(), el=document.createElement("div"); el.className="sim-badge";
+    el.innerHTML=badgeKs.map((k,j)=>'<span class="sb-item"><span class="sb-art">'+ballArt(B[k])+'</span><span class="sb-name"'
+      +(dropCol&&dropCol[j]?' style="color:'+getCss(dropCol[j])+'"':'')+'>'+ballName(B[k])+'</span></span>').join("");
+    const maxH=Math.max.apply(null,badgeKs.map(k=>(B[k].D||0.05)*100*ballAspect(B[k]))), maxD=Math.max.apply(null,badgeKs.map(k=>(B[k].D||0.05)*100));
+    const pxcm=Math.min(22/maxH, 34/maxD); el.querySelectorAll(".bc-ball").forEach(x=>sizeBall(x,pxcm));
+    plotEl.appendChild(el); return el; })() : null;
+  function cardHint(){
+    if(simBlind(st)) return st.simfit==="stack" ? ""      // the five-filter card speaks for itself (Daniel, 2026-10-11)
+                                                : "Type your gap below. The model appears here once it&rsquo;s in.";
+    return "";   // a plain data step: the card itself is the cue, and the instructions are in the prose below (Daniel, 2026-10-11)
+  }
+  function needsCard(){
+    if(!cardKs.length) return false;
+    if(simBlind(st)) return S.answers["ok"+S.step]!==true;
+    const t=simTimes(st);
+    return st.sim==="bounce" ? !t.length : !Number.isFinite(t[0]);
+  }
+  function showCard(on){
+    if(on===cardOn){ if(on) fitBallCard(cardEl,cardKs,parseFloat(st.ballScale)||1); return; }
+    cardOn=on; cardEl.classList.toggle("on",on); cv.style.visibility=on?"hidden":""; if(ctlEl) ctlEl.style.visibility=on?"hidden":"";
+    if(badgeEl) badgeEl.classList.toggle("on",!on);
+    if(on){ ro.style.display="none"; cardEl.innerHTML=ballCardHTML(cardKs, st.simTitle||"", cardHint()); fitBallCard(cardEl,cardKs,parseFloat(st.ballScale)||1); }
+  }
+  function draw(){
+    fit(); ctx2.clearRect(0,0,W,H);
+    if(needsCard()){ showCard(true); return; }
+    showCard(false);
+    const box={l:62, t:30, w:Math.max(50,W-62-20), h:Math.max(40,H-30-44)};   // t:30 — the readout line sits above the plot, not on it
+    const v=cur();
+    if(st.sim==="bounce") return drawBounce(box,v);
+    if(st.sim==="superball") return drawSuper(box,v);
+    return drawDrop(box,v);
+  }
+  // the readout line: GREEN says what the model is, AMBER says how far it sits from what you measured
+  // GREEN (or white, when two model curves share the plot) says what the model is; AMBER is the difference
+  const roLine=(model,ctx,ink)=>readout('<span class="ro"'+(ink?' style="color:var(--ink)"':'')+'>'+model+(ctx?'<span class="ro-ctx"> · '+ctx+'</span>':'')+'</span>');
+  function drawBounce(box,e){
+    const tau=simTimes(st), n=Math.max(F.times.length,tau.length);
+    if(!tau.length) return message("Type your hop times below — each bounce appears here as a blue line.");
+    const M=simBounceModel(st,e,n,true);
+    const stamps=[0]; tau.forEach(T=>stamps.push(stamps[stamps.length-1]+T));      // what the stopwatch heard
+    // The model's way IN to bounce 1: the last 15 cm of the fall, at the arrival speed its first hop implies
+    // (leaving at g·τ₁/2, arriving at that over e), fading in over the top 5 cm. It shows that t = 0 is the
+    // first bounce, not the release (Daniel, 2026-10-08).
+    const APPROACH=0.15, FADE=0.05, vin = st.simfit==="e-drag" ? null : SIM_G*M[0].T/2/Math.max(e,0.05);
+    let sIn=0; if(vin){ const d=vin*vin-2*SIM_G*APPROACH; sIn = d>=0 ? (vin-Math.sqrt(d))/SIM_G : vin/SIM_G; }
+    let tmod=0, peak=APPROACH; M.forEach(H2=>{ tmod+=H2.T; H2.pts.forEach(p=>peak=Math.max(peak,p[1])); });
+    const tEnd=Math.max(stamps[stamps.length-1],tmod)*1.03;
+    const F2=frame(-Math.max(sIn*1.6, tEnd*0.03), tEnd, 0, peak*100*1.12, "y","cm",Object.assign({exactX:true},box));
+    stamps.forEach(t=>vline(F2,t,"--trace",null,2));
+    if(vin){ const yAt=t=>-vin*t-0.5*SIM_G*t*t, N=48;
+      ctx2.save(); ctx2.beginPath(); ctx2.rect(box.l,box.t,box.w,box.h); ctx2.clip();
+      ctx2.strokeStyle=C("--result"); ctx2.lineWidth=1.75;
+      for(let i=0;i<N;i++){ const ta=-sIn+sIn*i/N, tb=-sIn+sIn*(i+1)/N, ym=yAt((ta+tb)/2);
+        ctx2.globalAlpha=Math.max(0,Math.min(1,(APPROACH-ym)/FADE));
+        ctx2.beginPath(); ctx2.moveTo(F2.X(ta),F2.Y(yAt(ta)*100)); ctx2.lineTo(F2.X(tb),F2.Y(yAt(tb)*100)); ctx2.stroke(); }
+      ctx2.restore(); }
+    const toCm=pts=>pts.map(p=>[p[0],p[1]*100]);
+    let t1=0; const gaps=[]; M.forEach((H2,k)=>{ curve(F2,toCm(H2.pts),t1,"--result",1.75); t1+=H2.T;
+      if(k+1<stamps.length) gaps.push([t1,stamps[k+1],stamps[k+1]-stamps[k]]); });
+    // all or none: every model bounce within 40% of that hop of the student's line, or no arrows at all
+    if(gaps.length && gaps.every(g=>Math.abs(g[0]-g[1])<=ARROW_FRAC*g[2])) gaps.forEach(g=>gapArrows(F2,g[0],g[1]));
+    // `simRatios: yes` — over each hop after the first, the student's own τ(k+1)/τ(k), in their blue, so the creep
+    // in the ratios (ping-pong: air drag) is read straight off the plot (Daniel, 2026-10-11).
+    if(st.simRatios && tau.length>1){
+      ctx2.save(); ctx2.fillStyle=C("--trace"); ctx2.textAlign="center"; ctx2.textBaseline="top";
+      const sub=n=>String(n).split("").map(d=>"₀₁₂₃₄₅₆₇₈₉"[+d]).join("");
+      for(let k=1;k<tau.length;k++){ const xm=F2.X((stamps[k]+stamps[k+1])/2), r=tau[k]/tau[k-1];
+        ctx2.font=font(12); ctx2.fillText("τ"+sub(k+1)+" / τ"+sub(k), xm, box.t+8);
+        ctx2.font="600 18px "+getCss("--font-sans"); ctx2.fillText(r.toFixed(3), xm, box.t+26); }
+      ctx2.restore(); }
+    const mf=simMisfit(st,e);
+    roLine('model: constant <i>e</i>, '+(st.simfit==="e-drag"?'with':'no')+' drag in air',
+           mf!=null ? 'average deviation from your bounces: '+ms(mf)+' ms' : 'type another hop time to compare');
+  }
+  function drawSuper(box,e){
+    const c=simCfg(), N=c.superballBounces||10, h=simHeight(st), t1=Math.sqrt(2*h/SIM_G);
+    const Tm=simTimes(st)[0], Tmod=simSuperT(e,h,N);
+    const F2=frame(0,Math.max(Tmod,Number.isFinite(Tm)?Tm:0)*1.04,0,h*1.08,"y","m",box);
+    if(Number.isFinite(Tm)){ vline(F2,Tm,"--trace",null,2);
+      ctx2.fillStyle=C("--trace"); ctx2.font=font(12); ctx2.textAlign="right"; ctx2.textBaseline="bottom";
+      ctx2.fillText("your "+N+"th bounce", F2.X(Tm)-6, box.t+box.h-20); }
+    const fall=[]; for(let i=0;i<=40;i++){ const s=t1*i/40; fall.push([s,h-0.5*SIM_G*s*s]); }
+    curve(F2,fall,0,"--result",1.75);
+    let t=t1;
+    for(let k=1;k<N;k++){ const T=2*t1*Math.pow(e,k); curve(F2,simParab(T),t,"--result",1.75); t+=T; }
+    if(Number.isFinite(Tm)) gapArrows(F2,t,Tm,2*t1*Math.pow(e,N-1));   // within one (last) hop: a 0.01 step in e moves the 10th bounce ~0.25 s
+    const d=Number.isFinite(Tm) ? Tmod-Tm : null;
+    roLine('model: constant <i>e</i>, no drag in air',
+      d==null ? 'type your time below' : Math.abs(d)<0.005 ? 'its '+N+'th bounce lands on yours'
+              : 'its '+N+'th bounce is '+Math.abs(d).toFixed(2)+' s '+(d>=0?'after':'before')+' yours');
+  }
+  function drawDrop(box,cd){
+    if(simBlind(st) && S.answers["ok"+S.step]!==true){
+      ctx2.textAlign="center"; ctx2.textBaseline="middle"; ctx2.fillStyle=C("--ink"); ctx2.font="600 44px "+getCss("--font-sans");
+      ctx2.fillText(st.simTitle||"Your measurement first", W/2, H/2-14);
+      ctx2.fillStyle=C("--muted"); ctx2.font=font(15);
+      ctx2.fillText("The model appears here once your gap is in.", W/2, H/2+30);
+      ro.style.display="none"; return; }
+    const h=simHeight(st), P=simDropSet(st,cd), meas=simTimes(st)[0];
+    const lands=P.map(p=>simFallTime(p.b,p.cd,h)), t0=Math.sqrt(2*h/SIM_G);
+    const stack=st.simfit==="stack", two=P.length===2 && !stack, fixed=st.simfit==="fixed";
+    const xMax=Math.max.apply(null,lands.concat([t0, (!two&&Number.isFinite(meas))?meas:0]))*1.05;
+    // the two-ball steps keep the right third of the panel for the zoom on the landing
+    const mainBox = two ? {l:box.l,t:box.t,w:box.w*0.56,h:box.h} : box;
+    const F2=frame(0,xMax,0,h*1.08,"y","m",mainBox);
+    const nofall=[]; for(let i=0;i<=40;i++){ const s=t0*i/40; nofall.push([s,h-0.5*SIM_G*s*s]); }
+    // The stairwell comparisons (`simfit:"fixed"`) leave the no-drag curve out: the question there is the GAP
+    // between two drag curves, and a third line only crowds it (Daniel, 2026-10-11). The filter steps keep it.
+    if(!fixed) curve(F2,nofall,0,"--muted",1.25,[5,4]);
+    const COL=dropCol;
+    P.forEach((p,j)=>{ const pts=[]; const T=lands[j]; for(let i=0;i<=80;i++){ const s=T*i/80; pts.push([s,Math.max(0,simFallY(p.b,p.cd,h,s))]); }
+      curve(F2,pts,0,COL[j],2); });
+    if(!two && Number.isFinite(meas)){ vline(F2,meas,"--trace",null,2);
+      ctx2.fillStyle=C("--trace"); ctx2.font=font(12); ctx2.textAlign="right"; ctx2.textBaseline="bottom"; ctx2.fillText("you timed "+meas.toFixed(2)+" s", F2.X(meas)-6, box.t+box.h-20); }
+    // the balls are named by the colored avatar labels; the legend is just the dashed no-drag curve
+    const items = fixed ? [] : [["--muted","no drag",[5,4]]];
+    if(items.length) legend(items, two ? mainBox.l+mainBox.w-6 : null, two || !badgeEl ? null : 46);   // stairwell: the colored avatar labels are the key   // one-ball legend sits under the avatar
+    const gap = two ? lands[1]-lands[0] : null;
+    if(two){
+      // ZOOM on the landings: the whole fall is about a second and the gap is tens of ms, a few pixels on the
+      // main plot. A thin gray box marks the patch of the main plot that is magnified, another frames the
+      // magnified view, and a line joins them (Daniel, 2026-10-08).
+      const zb={l:mainBox.l+mainBox.w+100, t:box.t+24, w:box.w-mainBox.w-108, h:box.h-44, xt:4, yt:4};
+      const a=Math.min(lands[0],lands[1]), b=Math.max(lands[0],lands[1], lands[0]+(Number.isFinite(meas)?meas:0));
+      const pad=Math.max(0.012,(b-a)*0.5); const za=a-pad, zbb=b+pad;
+      let yTop=0; P.forEach(p=>{ yTop=Math.max(yTop, simFallY(p.b,p.cd,h,Math.max(0,za))); });
+      yTop=Math.max(0.02,yTop);
+      const Z=frame(za,zbb,0,yTop,"y","m",zb);
+      const zTop=Z.Ty.hi, zLo=Z.Tx.lo, zHi=Z.Tx.hi;
+      if(Number.isFinite(meas)){ vline(Z,lands[0],"--trace",null,2); vline(Z,lands[0]+meas,"--trace",null,2); }
+      P.forEach((p,j)=>{ const pts=[]; for(let i=0;i<=60;i++){ const s=zLo+(Math.min(zHi,lands[j])-zLo)*i/60; pts.push([s,Math.max(0,simFallY(p.b,p.cd,h,s))]); } curve(Z,pts,0,COL[j],2); });
+      // the two boxes and the line that says they are the same place
+      const g=C("--muted"); ctx2.save(); ctx2.strokeStyle=g; ctx2.lineWidth=1; ctx2.globalAlpha=0.7;
+      let sx0=F2.X(zLo), sx1=F2.X(zHi); if(sx1-sx0<8){ const m=(sx0+sx1)/2; sx0=m-4; sx1=m+4; }
+      let sy0=F2.Y(zTop), sy1=F2.Y(0); if(sy1-sy0<8) sy0=sy1-8;
+      ctx2.strokeRect(sx0,sy0,sx1-sx0,sy1-sy0);
+      const ob={x:zb.l-60, y:zb.t-24, w:zb.w+68, h:zb.h+64};
+      ctx2.strokeRect(ob.x,ob.y,ob.w,ob.h);
+      ctx2.beginPath(); ctx2.moveTo(sx1,(sy0+sy1)/2); ctx2.lineTo(ob.x,ob.y+ob.h/2); ctx2.stroke();
+      ctx2.restore();
+      ctx2.fillStyle=C("--muted"); ctx2.font=font(11); ctx2.textAlign="left"; ctx2.textBaseline="top"; ctx2.fillText("zoom: the last moments", ob.x+6, ob.y+5);
+      const yb=Z.box.t+Z.box.h;
+      const bracket=(x1,x2,y,color,label)=>{ ctx2.strokeStyle=C(color); ctx2.fillStyle=C(color); ctx2.lineWidth=2;
+        ctx2.beginPath(); ctx2.moveTo(x1,y-5); ctx2.lineTo(x1,y); ctx2.lineTo(x2,y); ctx2.lineTo(x2,y-5); ctx2.stroke();
+        ctx2.font=font(12); ctx2.textAlign="left"; ctx2.textBaseline="bottom"; ctx2.fillText(label, Math.min(x1,x2)+3, y-7); };
+      bracket(Z.X(lands[0]),Z.X(lands[1]),yb-46,"--result","model gap "+ms(gap)+" ms");
+      if(Number.isFinite(meas)) bracket(Z.X(lands[0]),Z.X(lands[0]+meas),yb-14,"--trace","you measured "+ms(meas)+" ms");
+    }
+    if(!two && Number.isFinite(meas)) gapArrows(F2,lands[lands.length-1],meas,0.15*meas);   // within 15% of their time
+    if(fixed){                     // the zoom's brackets already carry both gaps; the label just names the model
+      const cds=[...new Set(P.map(p=>p.cd.toFixed(2)))];
+      roLine('model: smooth spheres, <i>C</i><sub>d</sub> = '+cds.join(" and "), null, true);
+    } else if(two){
+      roLine('model: quadratic drag', 'model gap '+ms(gap)+' ms'+(Number.isFinite(meas)?' · you measured '+ms(meas)+' ms':''), true);
+    } else {
+      const L=lands[lands.length-1], d=Number.isFinite(meas) ? L-meas : null, who=stack ? (P[P.length-1].b.name||"the model")+": " : "";
+      roLine(stack ? 'model: quadratic drag, <i>C</i><sub>d</sub> = '+P[0].cd.toFixed(2)+(st.simCdKey&&Number.isFinite(S.answers[st.simCdKey])?' (your fit)':'') : 'model: quadratic drag',
+        d==null ? 'type your time below' : who+(Math.abs(d)<0.005 ? 'lands on yours'
+        : 'lands '+Math.abs(d).toFixed(2)+' s '+(d>=0?'after':'before')+' yours'), stack);
+    }
+  }
+
+  showVal(); schedule();
+  return {
+    stop(){ alive=false; if(raf) cancelAnimationFrame(raf); },
+    redraw(){ schedule(); },
+    onInput(key){ if(sl && F.fit && key===F.fit && Number.isFinite(S.answers[key])){ sl.value=Math.min(hi,Math.max(lo,S.answers[key])); showVal(); } schedule(); },
+    // test hooks
+    _draw: draw, _slider: sl
+  };
+}
+function simSliderLabel(st){
+  if(st.sim!=="drop") return "<i>e</i>";
+  if(st.simfit==="cd-second") return (simBall((st.balls||[])[1]).name||"second ball")+" <i>C</i><sub>d</sub>";
+  return st.simfit==="cd-shared" ? "<i>C</i><sub>d</sub> (both balls)" : "<i>C</i><sub>d</sub>";
+}
 
 /* ============================================================== */
 /*  PONG — the impulse/momentum capstone (top:"pong")                                             */
@@ -2003,6 +2770,7 @@ function makePong(root){
 
 /* ============================ boot ============================ */
 window.addEventListener("resize",resize);
+window.addEventListener("resize",()=>{ if(activeSim) activeSim.redraw(); if(activeBallFit) activeBallFit(); });
 updateCtx(); renderStep(); resize();
 // Debug build: preload demo data. `DEMO_CSV` fills the FIRST slot (every workshop before slots existed had
 // exactly one, and build_instructor.py still writes that global unchanged); `DEMO_CSVS` is an optional
