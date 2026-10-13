@@ -1987,17 +1987,47 @@ function renderStep(){
     btn.addEventListener("click",tryCode);
     inp.addEventListener("keydown",e=>{ if(e.key==="Enter"){ e.preventDefault(); tryCode(); } });
   }
+  // THE DETOUR — "work ahead" around a gate the whole class passes together (Sportsball's stairwell field
+  // trip, Daniel 2026-10-12). A step with `aheadTo:` offers a button that jumps there; from then until the
+  // `aheadUntil:` step is complete, every step from `aheadTo` on carries a banner back to the gate, and Back is
+  // locked on the `aheadTo` step itself, so the pages between the gate and the detour can't be reached around
+  // the passwords. Once the class has done it, the steps between `aheadUntil` and `aheadTo` offer the way back to
+  // wherever the student had got to. Answers live in S.answers, so nothing is lost on the round trip.
+  { const at=id=>NARR.findIndex(s=>s.id===id), D=S.answers.detour;
+    const mkRow=(label,cls,go)=>{ const row=document.createElement("div"); row.className="detourrow "+cls;
+      const b=document.createElement("button"); b.className="deck-go"; b.textContent=label;
+      b.addEventListener("click",go); row.appendChild(b); return row; };
+    if(st.aheadTo && at(st.aheadTo)>S.step){
+      const to=at(st.aheadTo), until=at(st.aheadUntil||"");
+      const done = until>=0 && stepComplete(until);
+      if(!done) prose.appendChild(mkRow((st.aheadLabel||"Work ahead")+" \u2192","ahead",()=>{
+        const d=S.answers.detour && S.answers.detour.home===S.step ? S.answers.detour
+              : (S.answers.detour={home:S.step, to:to, until:until, far:to, back:st.aheadBack||"Back to the class step"});
+        S.step=Math.max(d.far,d.to); renderStep(); }));
+    }
+    if(D){ const done = D.until>=0 && stepComplete(D.until);
+      if(!done && S.step>=D.to){ D.far=Math.max(D.far,S.step);
+        prose.insertBefore(mkRow(D.back,"back",()=>{ S.step=D.home; renderStep(); }), prose.firstChild); }
+      // …offered once every step since the class one is done (so the "why" box after the drops isn't skipped)
+      let caught=true; for(let i=D.until+1;i<=S.step;i++) if(!stepComplete(i)) caught=false;
+      if(done && D.far>D.to && S.step>D.until && S.step<D.to && caught)
+        prose.insertBefore(mkRow("Pick up where you left off (step "+(D.far+1)+") \u2192","resume",()=>{
+          S.step=D.far; delete S.answers.detour; renderStep(); }), prose.firstChild);
+    }
+  }
   if(st.figure){ const im=document.createElement("img"); im.className="deck-fig"; im.src=st.figure; im.alt=""; prose.appendChild(im); }
   body.appendChild(main);
   body.appendChild(fb);
   if(st.challenge) renderHighscore(fb);              // the R² colorbar lives in the feedback box on the challenge step
   $("prog").textContent="Step "+(S.step+1)+" / "+NARR.length;
-  $("prev").disabled=S.step===0;
+  $("prev").disabled = S.step===0 || backLocked();
   $("next").style.display = (S.step===NARR.length-1) ? "none" : "";   // hide Next on the last step, don't just gray it
   refreshNext();
   typesetMath(body);
 }
-$("prev").addEventListener("click",()=>{ if(S.step>0){ S.step--; renderStep(); } });
+// Back is locked on the detour's landing step while the detour is open (see THE DETOUR in renderStep).
+function backLocked(){ const D=S.answers.detour; return !!(D && !ungated() && S.step===D.to && !(D.until>=0 && stepComplete(D.until))); }
+$("prev").addEventListener("click",()=>{ if(S.step>0 && !backLocked()){ S.step--; renderStep(); } });
 $("next").addEventListener("click",()=>{
   if(S.step>=NARR.length-1) return;
   if(!ungated() && !stepComplete(S.step)){ if(!S.lockTimer){ const p=$("deckfb"); if(p) p.innerHTML=blockReason(S.step); } return; }

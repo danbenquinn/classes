@@ -224,6 +224,9 @@
   #topmedia .bigeq .frac{display:inline-flex;flex-direction:column;vertical-align:middle;text-align:center;margin:0 .18em;}
   #topmedia .bigeq .frac .num{border-bottom:2px solid var(--ink);padding:0 .28em;}
   #topmedia .bigeq .frac .den{padding:0 .28em;}
+  /* a short list of rules on a title card (Sportsball's stairwell safety) */
+  #topmedia .bigeq ol.rules{text-align:left;font-size:clamp(17px,2vw,28px);line-height:1.4;max-width:34em;margin:.5em auto 0;padding-left:1.4em;}
+  #topmedia .bigeq ol.rules li{margin:.35em 0;}
   #topmedia .bigeq .units{color:var(--muted);font-size:.62em;margin-left:.35em;}
   /* The mission kicker: a small uppercase line over a `bigeq` statement. Workshop 1 opens on one
      ("TODAY'S MISSION" / "Estimate the g-forces…") in the same white-on-black type as the "Nice work."

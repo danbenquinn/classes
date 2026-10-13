@@ -46,14 +46,15 @@ const CONFIG = { title: "Workshop 3 · Sportsball", tools: ["point","slope"],
                  },
                  // 1 cinder block = 8 in. `heightKey` is the input that holds Part 2's drop height, in blocks.
                  sim: { blockM:0.2032, heightKey:"h_drop", defaultBlocks:9, superballBlocks:9, superballBounces:10,
-                        fixedHeights:{ h_stair:7.6 },
-                        pairColors:["#6a4fcf","#c8102e"] } };   // classroom drops: 9 cinder blocks, no tables; stairwell by the elevator: the taped dot, 7.6 m
-// TEACHER MODE's "Load sample data" on the typed-measurement steps: the stairwell gaps (s, from 7.6 m).
-// PLACEHOLDERS near the model (190 / 68 ms from 7.6 m) — replace with a real stairwell run.
+                        fixedHeights:{ h_stair:14.37 },
+                        pairColors:["#6a4fcf","#c8102e"] } };   // classroom drops: 9 cinder blocks, no tables; stairwell by the elevator: the taped dot, 14.37 m
+// TEACHER MODE's "Load sample data" on the typed-measurement steps: the stairwell gaps (s, from 14.37 m).
+// plyo vs dodgeball = Daniel's real run, 2026-10-12 (191 ms; model 178). Squash vs ping-pong is still a
+// PLACEHOLDER near the model (495 ms) — replace with a real stairwell run.
 // Bounce pages (s): basketball = the TA handout's illustrative set (e ≈ 0.79–0.80); the rest are SIMULATED from
 // 9 blocks with this deck's own drag model and a slightly rising e, ±2 ms jitter — guesses, not measurements
 // (racquetball e ≈ 0.82, tennis ≈ 0.74, ping-pong ≈ 0.90 with drag, superball ≈ 0.86 → 10th bounce at 5.71 s).
-CONFIG.samples = { dt_sp:"0.196", dt_dl:"0.073",
+CONFIG.samples = { dt_sp:"0.503", dt_dl:"0.191",
   tb1:"0.700", tb2:"0.552", tb3:"0.438", tb4:"0.350",
   tr1:"0.961", tr2:"0.774", tr3:"0.633", tr4:"0.520",
   tt1:"0.855", tt2:"0.619", tt3:"0.457", tt4:"0.345",
@@ -197,8 +198,8 @@ const NARR = [
   { id:"squash-hot-get",
     top:"ball",
     balls:["racquetball", "squash", "squashhot"],
-    lead:"<p>Regulation squash balls are tested both at 23 °C (room temperature) and 45 °C. Why? <b>Get a hot squash ball to find out.</b> There's a bowl of hot water with squash balls in this room. Find it and enter the password posted by the bowl.</p>",
-    code:{"hash": 3766598920344419, "label": "Password by the bowl", "wrong": "The password is posted next to the bowl of hot water."} },
+    lead:"<p>Regulation squash balls are tested both at 23 °C (room temperature) and 45 °C. Why? <b>Get a hot squash ball to find out.</b> There's a thermos of hot water with squash balls in this room. Find it and enter the password posted by the thermos.</p>",
+    code:{"hash": 3766598920344419, "label": "Password by the thermos", "wrong": "The password is posted next to the thermos of hot water."} },
 
   { id:"squash-hot",
     top:"ball",
@@ -207,7 +208,7 @@ const NARR = [
     check:"Which has the higher coefficient of restitution?",
     choices:["The cold one", "The hot one", "About the same"],
     answer:1,
-    feedback:"Right — the hot ball comes back up about twice as high. A squash ball's $e$ depends strongly on temperature. It's why players open a match by hammering the ball against the wall: every bounce turns energy into heat, and a dozen hard hits warms it up.",
+    feedback:"Right — the hot ball comes back up much higher. A squash ball's $e$ depends strongly on temperature. It's why players open a match by hammering the ball against the wall: every bounce turns energy into heat, and a dozen hard hits warms it up.",
     feedbackWhen:{"wrong": "<b>Discuss for a minute.</b> You don't need a stopwatch for this one. Which ball came back up higher?"} },
 
   { id:"bounce-tennis",
@@ -324,14 +325,18 @@ const NARR = [
 
   { id:"s2-trip",
     top:"html",
+    aheadTo:"capture-filter",
+    aheadUntil:"drop-r2",
+    aheadLabel:"Work ahead on the coffee filters",
+    aheadBack:"When everyone's ready for the field trip, click here (your work will be saved)",
     html:"<div class='bigeq'><span class='kicker'>Field trip</span>To the stairwell</div>",
-    lead:"<p><b>Field trip.</b> Pair up with another group; you'll share measurements for this next part. Bring your phone and this laptop to the <b>stairwell by the elevator</b>. There's a spot there for a longer drop. A ping-pong ball, squash ball, plyo ball and dodgeball are there waiting for you, and the password is written on the masking tape on the railing.</p>",
-    code:{"hash": 4686641835642061, "label": "Stairwell password", "wrong": "The password is on the masking tape on the stairwell railing."} },
+    lead:"<p>For the next part, we'll go to the stairwell <b>as a class, together</b>. If you got here early, you can wait for everyone else to reach this step, or work ahead and come back when the class is ready. Your instructor will give the password once everyone is here.</p>",
+    code:{"hash": 4686641835642061, "label": "Field trip password", "wrong": "Your instructor will give the password once the whole class is ready."} },
 
-  { id:"s2-stair",
+  { id:"s2-safety",
     top:"html",
-    html:"<div class='bigeq'><span class='kicker'>Two experiments</span>dropped from 7.6 m</div>",
-    lead:"<p><b>Set up for the long drop.</b></p><ol><li>Send 1 person down to the bottom of the stairwell and have them do steps 2-6.</li><li>Lay posterboard flat in the landing zone. This will give a sharper landing sound.</li><li>Open <b>phyphox → Timers → Acoustic Stopwatch</b>.</li><li>Set <b>Threshold</b> to <b>0.1</b> and <b>Minimum delay</b> to <b>0.01 s</b>.</li><li>Stay on the <b>Simple</b> pane this time; you'll only need one measurement.</li><li>Ensure that Time is at <b>0.000</b>; if not, hit Reset.</li><li>One person at the top: hold the squash and ping-pong balls, a couple inches apart, with their bottoms level with the dot that the \"DROP FROM HERE\" arrow on the masking tape points to.</li><li>Person at the bottom: press <b>▶ Play</b>, give a silent thumbs-up (noise will trigger the timer), then <b>step away from the landing zone</b> and <b>stand in front of the door to the hallway, holding the phone</b>.</li><li>Person at the top: when the <b>landing zone is clear</b>, the door to the hallway is <b>blocked by the student at the bottom</b>, and you have <b>received a thumbs up</b>, release the two balls at the same time.</li><li>Person at the bottom: watch carefully to see which lands first.</li><li>Record the gap between the two landings. Share it with your whole team (your group plus another).</li><li>Repeat for the plyo ball and dodgeball.</li></ol>" },
+    html:"<div class='bigeq'><span class='kicker'>Stairwell safety</span><ol class='rules'><li>Never lean over the railing, for any reason, at any point during the test.</li><li>Walk the balls back up to the drop zone. Never throw them.</li><li>The person at the bottom makes sure the landing zone is clear, then gives a double thumbs-up to cue the drop.</li></ol></div>",
+    lead:"<p><b>Your instructor will explain the procedure for what comes next.</b> Keep the three safety rules above in mind the whole time. When we're back from the stairwell, click <b>Next</b>.</p>" },
 
   { id:"drop-r1",
     top:"sim",
@@ -341,9 +346,9 @@ const NARR = [
     simHeight:"h_stair",
     ballScale:"0.5",
     checkKind:"gapgate",
-    lead:"<p><b>Squash ball vs. ping-pong ball.</b> Type in the time difference you got from the drop in the stairwell. Compare the difference you got to what you'd expect from assuming smooth spheres ($C_d=0.47$).</p>",
+    lead:"<p><b>Squash ball vs. ping-pong ball.</b> Type in the time difference we got for the first drop test. Compare the difference you got to what you'd expect from assuming smooth spheres ($C_d=0.47$), illustrated by the model curves above.</p>",
     feedback:"The squash ball wins. Same size, so the one with higher mass won the race.",
-    feedbackWhen:{"empty": "Type the gap — the stopwatch's first interval.", "dp": "To the millisecond: 3 decimal places.", "low": "That's shorter than a millisecond. The release may not have been simultaneous — try again, opening both hands at once.", "high": "Over a second is not a gap between two landings. Check that <b>Minimum delay</b> is 0.01 s and that the stopwatch stopped on the second ball.", "check": "That's a long way from anything two balls like these should do from this height. Check that <b>Minimum delay</b> is 0.01 s, open both hands at once, and drop again."},
+    feedbackWhen:{"empty": "Type the gap — the time interval we measured.", "dp": "To the millisecond: 3 decimal places.", "low": "That's shorter than a millisecond. Double-check the number we measured with your instructor.", "high": "Over a second is not a gap between two landings. Double-check the number we measured with your instructor.", "check": "That's a long way from anything two balls like these should do from this height. Double-check the number we measured with your instructor."},
     inputs:[
       {"label": "gap between landings $\\Delta t$", "key": "dt_sp", "unit": "s", "range": [0.001, 1.0], "dp": 3} ] },
 
@@ -354,9 +359,9 @@ const NARR = [
     simfit:"fixed",
     simHeight:"h_stair",
     checkKind:"gapgate",
-    lead:"<p><b>Plyo ball vs. dodgeball.</b> Type in the time difference you got from the drop in the stairwell. Compare the difference you got to what you'd expect from assuming smooth spheres ($C_d=0.47$).</p>",
+    lead:"<p><b>Plyo ball vs. dodgeball.</b> Type in the time difference we got for the second drop. Compare the difference you got to what you'd expect from assuming smooth spheres ($C_d=0.47$), illustrated by the model curves above.</p>",
     feedback:"The plyo ball wins. Same mass, so the one with less frontal area won the race.",
-    feedbackWhen:{"empty": "Type the gap — the stopwatch's first interval.", "dp": "To the millisecond: 3 decimal places.", "low": "That's shorter than a millisecond. The release probably wasn't simultaneous — drop again, opening both hands at once.", "high": "Over a second is not a gap between two landings. Check that <b>Minimum delay</b> is 0.01 s and that the stopwatch stopped on the second ball.", "check": "That's a long way from anything two balls like these can do from this height. Check that <b>Minimum delay</b> is 0.01 s, open both hands at once, and drop again."},
+    feedbackWhen:{"empty": "Type the gap — the time interval we measured.", "dp": "To the millisecond: 3 decimal places.", "low": "That's shorter than a millisecond. Double-check the number we measured with your instructor.", "high": "Over a second is not a gap between two landings. Double-check the number we measured with your instructor.", "check": "That's a long way from anything two balls like these should do from this height. Double-check the number we measured with your instructor."},
     inputs:[
       {"label": "gap between landings $\\Delta t$", "key": "dt_dl", "unit": "s", "range": [0.001, 1.0], "dp": 3} ] },
 
@@ -405,7 +410,7 @@ const NARR = [
     check:"Most of the filter's $y(t)$ is a straight line. What does a straight line on a $y(t)$ plot mean?",
     choices:["Its velocity is constant, and the slope of the line is that velocity", "The filter has stopped accelerating because gravity switched off", "Its acceleration is constant", "The model has stopped working"],
     answer:0,
-    feedback:"Right — on $y(t)$, slope is $\\dot y$, and a straight stretch means $\\dot y$ isn't changing: terminal speed. That's the tool for Part 3.",
+    feedback:"Right — on $y(t)$, slope is $\\dot y$, and a straight stretch means $\\dot y$ isn't changing: terminal speed.",
     feedbackWhen:{"wrong": "<b>Discuss for a minute.</b> What is the slope of $y(t)$ — and what does it mean when the slope doesn't change?"} },
 
   { id:"filter5-predict",
@@ -511,7 +516,7 @@ const NARR = [
 
   { id:"summary",
     top:"html",
-    summary:{"rows": 8, "lines": ["Workshop 3 · Sportsball", "Restitution e (constant e, no air): basketball {e_bb}, racquetball {e_rac}, tennis {e_ten}, ping-pong {e_pp}", "Superball: 10th bounce at {T10} s, e = {e_sup}", "Coffee filter from 9 cinder blocks: {t_filter} s, C_d {cd_filter}; five nested filters: {t_filter5} s", "Stairwell drop 7.6 m. Gaps: squash vs ping-pong {dt_sp} s, plyo vs dodgeball {dt_dl} s", "Why the gaps differ from the model: {why_gap}", "Radiosonde: {v_hi} m/s at 24 km, {v_mid} m/s at 5 km"]},
+    summary:{"rows": 8, "lines": ["Workshop 3 · Sportsball", "Restitution e (constant e, no air): basketball {e_bb}, racquetball {e_rac}, tennis {e_ten}, ping-pong {e_pp}", "Superball: 10th bounce at {T10} s, e = {e_sup}", "Coffee filter from 9 cinder blocks: {t_filter} s, C_d {cd_filter}; five nested filters: {t_filter5} s", "Stairwell drop 14.37 m. Gaps: squash vs ping-pong {dt_sp} s, plyo vs dodgeball {dt_dl} s", "Why the gaps differ from the model: {why_gap}", "Radiosonde: {v_hi} m/s at 24 km, {v_mid} m/s at 5 km"]},
     html:"<div class='bigeq'>Nice work.</div>",
     lead:"<p><b>You're done.</b> Copy the summary below into the <b>Workshop 3 — Exit Quiz</b> on Canvas — that's the whole deliverable, no report.</p><p><b>Everyone submits — not just whoever's laptop is open.</b> If you worked as a pair or a three, each of you pastes the same summary. The quiz is per student.</p>" }
 ];
