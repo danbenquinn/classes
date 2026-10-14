@@ -77,21 +77,32 @@ function show(dot, title, sub, { button = null, value = false } = {}) {
 let conn = null, state = "start", analyzerHere = false;
 let latest = null, sensorSeen = false;
 let run = null, axis = "z", buf = { t: [], a: [] }, seq = 0, count = 0, t0 = 0, flushTimer = null;
+// LIN3 mode (the workshop deck, 2026-10-14): all three axes of Acceleration (without g), batched at the
+// analyzer's requested rate. The prototype analyzer sends neither `src` nor `axis:"all"` and keeps the old
+// single-axis, gravity-included stream.
+let lin3 = false, showAxis = "z", batchMs = 200;
 let wakeLock = null;
 
 if (!ROOM) show("warn", "No analyzer code", "Scan the QR code on the classroom screen to open this page.");
 if (SIM) { $("tag").hidden = false; $("tag").textContent = "Simulated sensor"; }
 
 // ── sensor ────────────────────────────────────────────────────
-function onSample(t, g) {
+function onSample(t, g, lin) {
   sensorSeen = true;
-  latest = g;
+  latest = lin3 ? lin : g;
   if (state !== "collecting") return;
   if (!t0) t0 = t;
-  buf.t.push(+((t - t0) / 1000).toFixed(4));
-  buf.a.push(+g[axis].toFixed(4));
+  if (lin3) {
+    if (!lin) { linMissing++; return; }
+    buf.t.push(+((t - t0) / 1000).toFixed(4));
+    buf.x.push(+lin.x.toFixed(4)); buf.y.push(+lin.y.toFixed(4)); buf.z.push(+lin.z.toFixed(4));
+  } else {
+    buf.t.push(+((t - t0) / 1000).toFixed(4));
+    buf.a.push(+g[axis].toFixed(4));
+  }
   count++;
 }
+let linMissing = 0;
 let sensorStarted = false;
 function startSensor() {
   if (sensorStarted) return;
@@ -101,16 +112,19 @@ function startSensor() {
     setInterval(() => {
       const now = performance.now(), s = (now - start) / 1000;
       const n = () => (Math.random() - 0.5) * 0.15;
-      onSample(now, { x: 0.3 * Math.sin(2 * Math.PI * 0.7 * s) + n(),
-                      y: n(),
-                      z: 9.81 + 2 * Math.sin(2 * Math.PI * 1.2 * s) + n() });
+      // after 2 s of recording, a release: z rings like a ruler (ω 30 rad/s, ζ 0.02), x like an arm (ω 5, ζ 0.25)
+      const r = state === "collecting" && t0 ? (now - t0) / 1000 - 2 : -1;
+      const ring = (w, z, A) => r < 0 ? 0 : A * Math.exp(-z * w * r) * Math.cos(w * Math.sqrt(1 - z * z) * r);
+      const lin = { x: ring(5, 0.25, 3) + n(), y: n(), z: ring(30, 0.02, 4) + n() };
+      onSample(now, { x: lin.x, y: lin.y, z: 9.81 + lin.z }, lin);
     }, 1000 / 60);
     return;
   }
   window.addEventListener("devicemotion", (e) => {
-    const g = e.accelerationIncludingGravity;
+    const g = e.accelerationIncludingGravity, a = e.acceleration;
     if (!g || g.x == null) return;
-    onSample(e.timeStamp || performance.now(), { x: g.x, y: g.y, z: g.z });
+    const lin = (a && a.x != null) ? { x: a.x, y: a.y, z: a.z } : null;
+    onSample(e.timeStamp || performance.now(), { x: g.x, y: g.y, z: g.z }, lin);
   });
 }
 
@@ -183,14 +197,14 @@ function onMessage(m) {
     else if (state === "connecting") busy();
   } else if (m.type === "busy" && m.phone === me.id) busy();
   else if (m.phone !== me.id) return;
-  else if (m.type === "start") startCollecting(m.run, m.axis);
+  else if (m.type === "start") startCollecting(m.run, m.axis, m);
   else if (m.type === "stop" && m.run === run) { stopCollecting(true); connected(); }
   else if (m.type === "release") release();
 }
 
 function connected() {
   state = "connected";
-  show("ok", "Connected to analyzer", "Keep this page open and wait for your instructor.");
+  show("ok", "Connected to analyzer", "Keep this page open. The laptop starts and stops each recording.");
 }
 function busy() {
   state = "released";
@@ -199,12 +213,25 @@ function busy() {
 }
 
 // ── collecting ────────────────────────────────────────────────
-function startCollecting(r, ax) {
-  run = r; axis = ax; seq = 0; count = 0; t0 = 0; buf = { t: [], a: [] };
+function startCollecting(r, ax, m) {
+  m = m || {};
+  lin3 = m.src === "lin" && ax === "all";
+  showAxis = m.show || "z"; batchMs = Math.max(100, +m.batchMs || 200);
+  run = r; axis = lin3 ? showAxis : ax; seq = 0; count = 0; t0 = 0; linMissing = 0;
+  buf = lin3 ? { t: [], x: [], y: [], z: [] } : { t: [], a: [] };
   state = "collecting";
-  show("rec", "Collecting · " + ax.toUpperCase(), "Recording acceleration along the phone's " + ax + " axis.", { value: true });
+  show("rec", "Recording", lin3 ? "Keep this page open. The laptop stops the recording."
+                               : "Recording acceleration along the phone's " + ax + " axis.", { value: true });
   clearInterval(flushTimer);
-  flushTimer = setInterval(flush, 200);   // 5 batches/s
+  flushTimer = setInterval(flush, lin3 ? batchMs : 200);
+  if (lin3) setTimeout(() => {
+    if (state === "collecting" && count === 0 && linMissing > 0) {
+      stopCollecting(false);
+      conn.send({ type: "error", phone: me.id, msg: "this phone doesn't report acceleration without gravity. Use a partner's phone, or phyphox" });
+      state = "nosensor";
+      show("warn", "This phone can't do this one", "It doesn't report acceleration without gravity. Use a partner's phone.");
+    }
+  }, 1500);
   requestAnimationFrame(tick);
 }
 function tick() {
@@ -214,8 +241,8 @@ function tick() {
 }
 function flush() {
   if (!buf.t.length) return;
-  conn.send({ type: "data", phone: me.id, run, seq: seq++, t: buf.t, a: buf.a });
-  buf = { t: [], a: [] };
+  if (lin3) { conn.send({ type: "data", phone: me.id, run, seq: seq++, t: buf.t, x: buf.x, y: buf.y, z: buf.z }); buf = { t: [], x: [], y: [], z: [] }; }
+  else { conn.send({ type: "data", phone: me.id, run, seq: seq++, t: buf.t, a: buf.a }); buf = { t: [], a: [] }; }
 }
 function stopCollecting(report) {
   if (state !== "collecting") return;

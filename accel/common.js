@@ -11,7 +11,8 @@
 const SUPABASE_URL = "https://rdbacwwbeyeqdkswwvjt.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_IQNxMMynit0aWtOS3tjiRQ_h5sNo159";
 
-const LOCAL_MODE = !SUPABASE_URL || !SUPABASE_ANON_KEY;
+// ?local=1 forces local mode even with keys set (testing on one laptop; the workshop deck's ?livetest=1 uses it)
+const LOCAL_MODE = !SUPABASE_URL || !SUPABASE_ANON_KEY || new URLSearchParams(location.search).has("local");
 const PEER_TIMEOUT_MS = 4000;
 
 function randomId(n = 8) {
@@ -105,11 +106,12 @@ function openLocalRoom(room, me, onMessage, onPeers, status) {
   const beat = () => bc.postMessage({ __hb: 1, id: me.id, role: me.role });
   beat();
   const hb = setInterval(() => { beat(); emitPeers(); }, 1000);
-  const bye = () => bc.postMessage({ __hb: 1, id: me.id, leave: 1 });
+  let closed = false;
+  const bye = () => { if (!closed) bc.postMessage({ __hb: 1, id: me.id, leave: 1 }); };
   window.addEventListener("pagehide", bye);
   status("SUBSCRIBED");
   return Promise.resolve({
-    send: (msg) => bc.postMessage(msg),
-    close: () => { clearInterval(hb); bye(); bc.close(); },
+    send: (msg) => { if (!closed) bc.postMessage(msg); },
+    close: () => { clearInterval(hb); bye(); closed = true; bc.close(); },
   });
 }
