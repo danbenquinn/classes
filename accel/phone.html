@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Accelerometer</title>
+<style>
+  :root {
+    --bg: #f7f7f5; --fg: #1a1a1a; --muted: #6b6b6b; --line: #e2e2de;
+    --accent: #1f6feb; --ok: #1a7f37; --rec: #cf222e; --warn: #9a6700;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #111213; --fg: #ececec; --muted: #9a9a9a; --line: #2a2b2d;
+      --accent: #4c8dff; --ok: #3fb950; --rec: #ff6b6b; --warn: #d29922; }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg); color: var(--fg);
+    font: 17px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    display: flex; align-items: center; justify-content: center;
+    padding: max(24px, env(safe-area-inset-top)) 24px max(24px, env(safe-area-inset-bottom));
+    -webkit-user-select: none; user-select: none;
+  }
+  main { width: 100%; max-width: 360px; text-align: center; }
+  .dot { width: 72px; height: 72px; border-radius: 50%; margin: 0 auto 28px;
+    background: var(--line); position: relative; }
+  .dot.ok { background: var(--ok); }
+  .dot.rec { background: var(--rec); animation: pulse 1s ease-in-out infinite; }
+  .dot.warn { background: var(--warn); }
+  .dot.wait { background: transparent; border: 6px solid var(--line); border-top-color: var(--accent);
+    animation: spin .9s linear infinite; }
+  @keyframes pulse { 50% { transform: scale(.82); opacity: .7; } }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .dot.rec, .dot.wait { animation: none; } }
+  h1 { font-size: 26px; font-weight: 600; margin: 0 0 10px; letter-spacing: -.01em; }
+  p { margin: 0; color: var(--muted); }
+  .val { font: 600 44px/1 ui-monospace, "SF Mono", Menlo, monospace; margin-top: 22px;
+    font-variant-numeric: tabular-nums; color: var(--fg); }
+  .unit { font-size: 16px; color: var(--muted); font-weight: 400; }
+  button {
+    margin-top: 32px; width: 100%; padding: 18px; border: 0; border-radius: 14px;
+    background: var(--accent); color: #fff; font-family: inherit; font-weight: 600; font-size: 18px; line-height: 1;
+  }
+  .tag { display: inline-block; margin-top: 28px; font-size: 13px; color: var(--muted);
+    border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <div id="dot" class="dot"></div>
+  <h1 id="title">Accelerometer</h1>
+  <p id="sub">Tap below to connect this phone to the analyzer.</p>
+  <div id="val" class="val" hidden></div>
+  <button id="go">Tap to connect</button>
+  <div id="tag" class="tag" hidden></div>
+</main>
+
+<script src="common.js"></script>
+<script>
+const params = new URLSearchParams(location.search);
+const ROOM = (params.get("room") || "").toUpperCase();
+const SIM = params.has("sim");
+const me = { id: "p-" + randomId(), role: "phone" };
+
+const $ = (id) => document.getElementById(id);
+function show(dot, title, sub, { button = null, value = false } = {}) {
+  $("dot").className = "dot " + dot;
+  $("title").textContent = title;
+  $("sub").textContent = sub;
+  $("go").hidden = !button;
+  if (button) $("go").textContent = button;
+  $("val").hidden = !value;
+}
+
+let conn = null, state = "start", analyzerHere = false;
+let latest = null, sensorSeen = false;
+let run = null, axis = "z", buf = { t: [], a: [] }, seq = 0, count = 0, t0 = 0, flushTimer = null;
+let wakeLock = null;
+
+if (!ROOM) show("warn", "No analyzer code", "Scan the QR code on the classroom screen to open this page.");
+if (SIM) { $("tag").hidden = false; $("tag").textContent = "Simulated sensor"; }
+
+// ── sensor ────────────────────────────────────────────────────
+function onSample(t, g) {
+  sensorSeen = true;
+  latest = g;
+  if (state !== "collecting") return;
+  if (!t0) t0 = t;
+  buf.t.push(+((t - t0) / 1000).toFixed(4));
+  buf.a.push(+g[axis].toFixed(4));
+  count++;
+}
+let sensorStarted = false;
+function startSensor() {
+  if (sensorStarted) return;
+  sensorStarted = true;
+  if (SIM) {
+    const start = performance.now();
+    setInterval(() => {
+      const now = performance.now(), s = (now - start) / 1000;
+      const n = () => (Math.random() - 0.5) * 0.15;
+      onSample(now, { x: 0.3 * Math.sin(2 * Math.PI * 0.7 * s) + n(),
+                      y: n(),
+                      z: 9.81 + 2 * Math.sin(2 * Math.PI * 1.2 * s) + n() });
+    }, 1000 / 60);
+    return;
+  }
+  window.addEventListener("devicemotion", (e) => {
+    const g = e.accelerationIncludingGravity;
+    if (!g || g.x == null) return;
+    onSample(e.timeStamp || performance.now(), { x: g.x, y: g.y, z: g.z });
+  });
+}
+
+async function keepAwake() {
+  try { if ("wakeLock" in navigator) wakeLock = await navigator.wakeLock.request("screen"); } catch {}
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && state !== "released") keepAwake();
+});
+
+// ── connect ───────────────────────────────────────────────────
+$("go").onclick = async () => {
+  if (state !== "start" || !ROOM) return;
+  // iOS: the permission request must be the first thing in the tap handler.
+  if (!SIM && typeof DeviceMotionEvent !== "undefined" &&
+      typeof DeviceMotionEvent.requestPermission === "function") {
+    let r = "denied";
+    try { r = await DeviceMotionEvent.requestPermission(); } catch {}
+    if (r !== "granted") {
+      show("warn", "Motion access needed",
+        "Allow motion access when asked. If you tapped Don't Allow, close this tab and scan the QR code again.",
+        { button: "Try again" });
+      return;
+    }
+  }
+  state = "connecting";
+  show("wait", "Connecting…", "Finding the analyzer.");
+  startSensor();
+  keepAwake();
+  try {
+    conn = await openRoom(ROOM, me, { onMessage, onPeers });
+  } catch (err) {
+    state = "start";
+    show("warn", "Couldn't connect", err.message, { button: "Try again" });
+    return;
+  }
+  conn.send({ type: "hello", phone: me.id });
+  setTimeout(() => {
+    if (!sensorSeen && state !== "released") {
+      state = "nosensor";
+      show("warn", "No accelerometer found",
+        "This browser isn't sending motion data. Try Safari or Chrome, or pair up with a classmate.");
+      conn.send({ type: "error", phone: me.id, msg: "No accelerometer data from this phone" });
+    }
+  }, 2000);
+  setTimeout(() => {
+    if (state === "connecting") show("wait", "Waiting for the analyzer…", "Make sure the analyzer screen is open.");
+  }, 4000);
+};
+
+function onPeers(list) {
+  const here = list.some((p) => p.role === "analyzer");
+  if (here && !analyzerHere && (state === "connecting" || state === "lost")) {
+    conn.send({ type: "hello", phone: me.id });
+  }
+  if (!here && analyzerHere && (state === "connected" || state === "collecting")) {
+    stopCollecting(false);
+    state = "lost";
+    show("wait", "Analyzer offline", "Waiting for it to come back…");
+  }
+  analyzerHere = here;
+}
+
+function onMessage(m) {
+  if (state === "released" || state === "nosensor") return;
+  if (m.type === "whois") {
+    if (state === "connecting" || state === "lost") conn.send({ type: "hello", phone: me.id });
+  } else if (m.type === "claim") {
+    if (m.phone === me.id) { if (state !== "collecting") connected(); }
+    else if (state === "connecting") busy();
+  } else if (m.type === "busy" && m.phone === me.id) busy();
+  else if (m.phone !== me.id) return;
+  else if (m.type === "start") startCollecting(m.run, m.axis);
+  else if (m.type === "stop" && m.run === run) { stopCollecting(true); connected(); }
+  else if (m.type === "release") release();
+}
+
+function connected() {
+  state = "connected";
+  show("ok", "Connected to analyzer", "Keep this page open and wait for your instructor.");
+}
+function busy() {
+  state = "released";
+  show("warn", "Analyzer is busy", "Another phone is already connected. Rescan the QR code when it's free.");
+  conn && conn.close();
+}
+
+// ── collecting ────────────────────────────────────────────────
+function startCollecting(r, ax) {
+  run = r; axis = ax; seq = 0; count = 0; t0 = 0; buf = { t: [], a: [] };
+  state = "collecting";
+  show("rec", "Collecting · " + ax.toUpperCase(), "Recording acceleration along the phone's " + ax + " axis.", { value: true });
+  clearInterval(flushTimer);
+  flushTimer = setInterval(flush, 200);   // 5 batches/s
+  requestAnimationFrame(tick);
+}
+function tick() {
+  if (state !== "collecting") return;
+  if (latest) $("val").innerHTML = latest[axis].toFixed(2) + ' <span class="unit">m/s²</span>';
+  requestAnimationFrame(tick);
+}
+function flush() {
+  if (!buf.t.length) return;
+  conn.send({ type: "data", phone: me.id, run, seq: seq++, t: buf.t, a: buf.a });
+  buf = { t: [], a: [] };
+}
+function stopCollecting(report) {
+  if (state !== "collecting") return;
+  clearInterval(flushTimer);
+  flush();
+  if (report) conn.send({ type: "done", phone: me.id, run, n: count, batches: seq });
+  state = "connected";
+}
+
+function release() {
+  state = "released";
+  show("", "Disconnected", "Rescan the QR code to reconnect.");
+  try { wakeLock && wakeLock.release(); } catch {}
+  setTimeout(() => conn && conn.close(), 300);
+}
+</script>
+</body>
+</html>
