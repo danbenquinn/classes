@@ -4598,16 +4598,58 @@
         <label><span class="var"><i>k</i>:</span> <input type="range" class="s-k" min="2" max="30" step="0.5"><input type="number" class="n-k" step="0.5"><span class="u">N/m</span></label>
       </div>`;
 
+  // FREE MODE controls (2026-10-14, Daniel): m1, m2 and k all live, because in the free pair the
+  // masses ARE the lesson (who swings further, and by how much). No energy strip in free mode either:
+  // the class's take-home is what a multi-body system is, and a graph is one more thing to read.
+  const COUPLED_FREE_CONTROLS_HTML = `
+      <canvas class="simcanvas"></canvas>
+      <button class="simbtn toggle-readout" title="show / hide numbers">123</button>
+      <div class="simctrls">
+        <button class="simbtn play">▶ Play</button>
+        <button class="simbtn reset">↺ Reset</button>
+        <button class="simbtn slomo" title="Slow motion">🐢</button>
+        <label><span class="var"><i>m</i><sub>1</sub>:</span> <input type="range" class="s-m1" min="0.5" max="10" step="0.5"><input type="number" class="n-m1" step="0.5"><span class="u">kg</span></label>
+        <label><span class="var"><i>m</i><sub>2</sub>:</span> <input type="range" class="s-m2" min="0.5" max="10" step="0.5"><input type="number" class="n-m2" step="0.5"><span class="u">kg</span></label>
+        <label><span class="var"><i>k</i>:</span> <input type="range" class="s-k" min="2" max="30" step="0.5"><input type="number" class="n-k" step="0.5"><span class="u">N/m</span></label>
+      </div>`;
+
+  // SHAKEN MODE controls (2026-10-14): the body's motion is PRESCRIBED, so only the neck is adjustable —
+  // stiffness k and damping alpha.
+  const COUPLED_SHAKEN_CONTROLS_HTML = `
+      <canvas class="simcanvas"></canvas>
+      <button class="simbtn toggle-readout" title="show / hide numbers">123</button>
+      <div class="simctrls">
+        <button class="simbtn play">⏸ Pause</button>
+        <button class="simbtn reset">↺ Reset</button>
+        <button class="simbtn slomo" title="Slow motion">🐢</button>
+        <label><span class="var"><i>k</i>:</span> <input type="range" class="s-k" min="1" max="60" step="0.5"><input type="number" class="n-k" step="0.5"><span class="u">N/m</span></label>
+      </div>`;
+
   class CoupledMass extends SimBase {
     constructor(canvas, opts = {}) {
       super(canvas);
+      // FREE MODE (`data-free`, Class N 2026-10-13): no shaker. The pair opens HELD apart by D_FREE
+      // with the center of mass where it sits at rest, waits for → (or Play), and is released from
+      // rest. No damping and no drive, so the lid is flat and the motion is Board 3's x_1(t), x_2(t)
+      // exactly: one frequency sqrt(k/m12), opposite directions, amplitudes in the ratio m2 : m1.
+      this.free = !!opts.free;
+      // SHAKEN MODE (`data-shaken`, Class N 2026-10-14): board-5 made visible. The body's motion is
+      // prescribed, x_1 = A_1 cos(omega_d t), and the head sits in board-5's undamped steady state,
+      // x_2 = R x_1 with R = k/(k - m_2 omega_d^2). ONE slider, the neck stiffness k (Daniel, 2026-10-14 —
+      // a slider on R itself was circular: it showed the answer, not the cause). Stiff: R ~ 1, rides along.
+      // Softer: R grows toward resonance at k = m_2 omega_d^2, where the drawn swing is CAPPED at RCAP_SHAKE
+      // and the label says "resonance" instead of breaking. Soft: R small and negative, the head barely
+      // moves. x_2/x_1 is always on screen. No integration, so no transients and nothing to collide.
+      this.shaken = !!opts.shaken;
+      this.alpha = this.alphaT = 0;
+      this.A1 = CoupledMass.A1_SHAKE;
       this.m1 = opts.m1 ?? CoupledMass.M1_DEF;
       this.m2 = opts.m2 ?? CoupledMass.M2_DEF;
-      this.k = opts.k ?? CoupledMass.K_DEF;
+      this.k = opts.k ?? this.kDef;
       // A slider or a preset button sets the TARGET; the live value eases onto it (see _slew).
       this.m1T = this.m1; this.m2T = this.m2; this.kT = this.k;
-      this.wd = opts.wd ?? CoupledMass.WD;
-      this.F0 = opts.F0 ?? CoupledMass.F0;
+      this.wd = opts.wd ?? (this.shaken ? CoupledMass.WD_SHAKE : CoupledMass.WD);
+      this.F0 = this.free ? 0 : (opts.F0 ?? CoupledMass.F0);
       this.slomo = opts.slomo ?? false;
       // The numbers start OFF behind the `123` toggle, as in HandLiftEnergy. The energy strip is
       // ALWAYS drawn — it is part of the object, not an option (Daniel, 2026-08-25).
@@ -4631,7 +4673,18 @@
       this.crash = null;                 // {phase, t} while the collision cut is running
       this.resize();
       this.reset(true);
+      if (this.free) { this.paused = true; this.everPlayed = false; }   // held apart until → lets go
     }
+    get kDef() { return this.free ? CoupledMass.K_FREE_DEF : this.shaken ? CoupledMass.K_SHAKE_DEF : CoupledMass.K_DEF; }
+    get noGraph() { return this.free || this.shaken; }
+    /** Shaken mode: the stiffness that gives the current ratio, k = R m2 wd^2 / (R - 1). Infinite at R = 1. */
+    /** Shaken mode: board-5's ratio, and the capped version that is actually drawn. */
+    get Rtrue() { const den = this.k - this.m2 * this.wd * this.wd; return Math.abs(den) < 1e-9 ? Infinity : this.k / den; }
+    get Rshow() { const r = this.Rtrue, c = CoupledMass.RCAP_SHAKE; return isFinite(r) ? Math.max(-c, Math.min(c, r)) : c; }
+    get atResonance() { return !(Math.abs(this.Rtrue) <= CoupledMass.RCAP_SHAKE); }
+    get omega2() { return Math.sqrt(this.k / this.m2); }        // the head's own frequency, shaken mode
+    /** Free mode only: let go. (The driven sim auto-runs and never needs this.) */
+    play() { this.paused = false; this.held = false; this.everPlayed = true; this.last = performance.now(); if (this.refreshPlayBtn) this.refreshPlayBtn(); }
 
     // ---- derived quantities ------------------------------------------------------------------
     get m12() { return this.m1 * this.m2 / (this.m1 + this.m2); }
@@ -4646,9 +4699,9 @@
     }
     /** The damping that survives into the STEADY state. Off resonance this is zero by construction —
      *  see _coupling() — so what you watch there is the board's undamped answer, exactly. */
-    get alphaSteady() { return 2 * CoupledMass.ZETA_RES * this.omega * this.m12 * (1 - this.offResonance); }
+    get alphaSteady() { if (this.free) return 0; return 2 * CoupledMass.ZETA_RES * this.omega * this.m12 * (1 - this.offResonance); }
     /** The damping that acts only on the WOBBLE. Large, because it costs nothing at steady state. */
-    get alphaDev() { return 2 * CoupledMass.ZETA_DEV * this.omega * this.m12 * this.offResonance; }
+    get alphaDev() { if (this.free) return 0; return 2 * CoupledMass.ZETA_DEV * this.omega * this.m12 * this.offResonance; }
 
     /** The relative velocity the UNDAMPED board solution has right now. The deviation from this is the
      *  free vibration — the wobble — and it is the only thing the strong damping is allowed to see.
@@ -4699,7 +4752,44 @@
 
     /** Seed the state ON the analytic steady state, so the sim opens with no transient at all rather
      *  than damping one away. Called on load and on reset. NEVER on a slider change — see the header. */
+    /** Shaken mode: both bodies placed on board-5's steady state at simT — x_1 = A_1 cos, x_2 = R x_1. */
+    _placeShaken() {
+      const wd = this.wd, c = Math.cos(wd * this.simT), s = Math.sin(wd * this.simT), L0 = CoupledMass.L0;
+      this.x1 = CoupledMass.X1EQ + this.A1 * c;          this.v1 = -this.A1 * wd * s;
+      const R = this.Rshow;                       // capped, so a seed can never open mid-collision
+      this.x2 = CoupledMass.X1EQ + L0 + R * this.A1 * c; this.v2 = -R * this.A1 * wd * s;
+    }
+    /** Shaken mode: the head's steady-state complex amplitude, X2 = A1 (k + i a wd)/(k - m2 wd^2 + i a wd),
+     *  so x2 - (X1EQ + L0) = Re(X2 e^{i wd t}). Includes the REAL damper alpha; excludes the wobble damper. */
+    _shakenX2() {
+      const wd = this.wd, a = this.alpha, k = this.k;
+      const nr = k, ni = a * wd, dr = k - this.m2 * wd * wd, di = a * wd, dd = dr * dr + di * di;
+      return { Xr: this.A1 * (nr * dr + ni * di) / dd, Xi: this.A1 * (ni * dr - nr * di) / dd };
+    }
+    /** Shaken mode: 0 on the head's resonance, 1 comfortably off it (smoothstepped). */
+    get shakenOffRes() {
+      const r0 = this.m2 * this.wd * this.wd;
+      const u = Math.max(0, Math.min(1, Math.abs(this.k - r0) / r0 / CoupledMass.RES_BAND_SHAKE));
+      return u * u * (3 - 2 * u);
+    }
     reset(hard) {
+      if (this.shaken) {
+        if (hard) { this.simT = 0; this.hist = []; this.paused = false; }
+        this._placeShaken();
+        this._freezeScale(); this.last = performance.now();
+        return;
+      }
+      if (this.free) {
+        // Pulled apart by D without moving the center of mass: each mass takes the share m12/m of it.
+        const D = CoupledMass.D_FREE, m12 = this.m12;
+        this.x1 = CoupledMass.X1EQ - (m12 / this.m1) * D;
+        this.x2 = CoupledMass.X1EQ + CoupledMass.L0 + (m12 / this.m2) * D;
+        this.v1 = 0; this.v2 = 0;
+        if (hard) { this.simT = 0; this.hist = []; this.paused = true; this.held = true; }
+        this._freezeScale();
+        this.last = performance.now();
+        return;
+      }
       const { A1, A2, V1, V2 } = this._steady();
       const cap = CoupledMass.SEED_CAP;
       const s = Math.min(1, cap / Math.max(Math.abs(A1), Math.abs(A2), 1e-9));
@@ -4766,6 +4856,7 @@
     _coupling() {
       const d = (this.x2 - this.x1) - CoupledMass.L0;
       const vrel = this.v2 - this.v1;
+      if (this.shaken) return this.k * d;   // the spring alone (no damper on the board)
       return this.k * d
            + this.alphaDev * (vrel - this._relVelStar())     // kills the wobble
            + this.alphaSteady * vrel;                        // holds resonance to something finite
@@ -4806,6 +4897,34 @@
      *  behavior, which is the best thing on the slide. Integrate, do not solve. */
     _advance(dt) {
       const n = CoupledMass.SUBSTEPS, h = dt / n;
+      if (this.shaken) {
+        // INTEGRATED (2026-10-14, Daniel: "have resonance work like the first sim"). The head obeys
+        // board-6, m2 x2'' = -k (x2 - x1 - L0), with x1 prescribed. Off resonance a wobble damper on the
+        // deviation from the steady state (zero AT the steady state) settles a slider move in a second or
+        // two, so what you watch is x2 = R x1. Near resonance it fades out, the amplitude grows (linearly,
+        // undamped), and parked there the masses collide: the canvas cuts to black and comes back at
+        // k = 60. A quick drag straight through survives, as in the first sim.
+        const L0 = CoupledMass.L0, wd = this.wd;
+        for (let i = 0; i < n; i++) {
+          // The wobble controller pulls the head's DEVIATION from the steady state (position and velocity)
+          // to zero at a fixed rate, OMEGA_DEV_SHAKE, critically damped. Velocity feedback alone could not
+          // do it: with a soft neck the leftover wobble is slow whatever the damping (a soft spring plus a
+          // damper creeps), and the head took several seconds to show "barely moves".
+          const ph = wd * this.simT, R = this.Rtrue, off = this.shakenOffRes;
+          const x2star = isFinite(R) ? CoupledMass.X1EQ + L0 + R * this.A1 * Math.cos(ph) : this.x2;
+          const v2star = isFinite(R) ? -R * this.A1 * wd * Math.sin(ph) : this.v2;
+          const W = CoupledMass.OMEGA_DEV_SHAKE;
+          const kDev = Math.max(0, this.m2 * W * W - this.k) * off, cDev = 2 * this.m2 * W * off;
+          const a2 = (-this._coupling() - kDev * (this.x2 - x2star) - cDev * (this.v2 - v2star)) / this.m2;
+          this.v2 += a2 * h; this.x2 += this.v2 * h;
+          this.simT += h;
+          this.x1 = CoupledMass.X1EQ + this.A1 * Math.cos(wd * this.simT);
+          this.v1 = -this.A1 * wd * Math.sin(wd * this.simT);
+          const gap = this.x2 - this.x1;
+          if (gap <= this.rSum || gap - L0 > L0 - this.rSum) { this._beginReset(); return; }
+        }
+        return;
+      }
       for (let i = 0; i < n; i++) {
         const Fs = this._coupling();
         const a1 = (Fs + this._drive(this.simT)) / this.m1;
@@ -4861,10 +4980,18 @@
         if (c.t < C.CRASH_HOLD_S) return true;
         // The beat is over. Come back as a fresh system at the default stiffness, with the slider
         // walked home so the panel never disagrees with the physics, and no history behind it.
-        this.k = this.kT = CoupledMass.K_DEF;
-        if (this.onParams) this.onParams(this.m1, this.m2, this.k);
+        if (this.free) {
+          // Free mode: keep the sliders where they were set (snapped to their TARGETS — the live values
+          // are mid-slew, which is how the boxes came back reading 9.999) and hold the pair apart again.
+          this.m1 = this.m1T; this.m2 = this.m2T; this.k = this.kT;
+          if (this.onParams) this.onParams(this.m1T, this.m2T, this.kT);
+        } else {
+          this.k = this.kT = this.kDef;
+          if (this.onParams) this.onParams(this.m1, this.m2, this.k);
+        }
         this.bhist = null;
         this.reset(true);
+        if (this.refreshPlayBtn) this.refreshPlayBtn();
         c.phase = "in"; c.t = 0;
         return false;                       // it runs while it fades up, so it arrives already moving
       }
@@ -4884,20 +5011,41 @@
      *  reads as a jump rather than a journey. */
     _slew(dt) {
       const f = 1 - Math.exp(-dt / CoupledMass.SLEW_TAU);
-      this.m1 += (this.m1T - this.m1) * f;
-      this.m2 += (this.m2T - this.m2) * f;
+      this._setMasses(this.m1 + (this.m1T - this.m1) * f, this.m2 + (this.m2T - this.m2) * f);
       this.k += (this.kT - this.k) * f;
+      this.alpha += (this.alphaT - this.alpha) * f;
+    }
+    /** Change the masses. In FREE mode the pair is slid sideways so the center of mass does not move.
+     *  Swapping a mass mid-flight is not a physical operation — real mass cannot appear without an
+     *  outside push — and left alone it JUMPED the center of mass toward whichever body got heavier;
+     *  well-timed slider moves walked the pair across the screen, contradicting board-3 (Daniel,
+     *  2026-10-14). Shifting both bodies by the same amount leaves the stretch and the relative motion
+     *  untouched; momentum is already held at zero by _holdMomentum. Changing k never needed this: the
+     *  spring pulls both bodies equally whatever its stiffness. */
+    _setMasses(m1, m2) {
+      if (this.free && !this.held) {
+        const cm0 = (this.m1 * this.x1 + this.m2 * this.x2) / (this.m1 + this.m2);
+        const cm1 = (m1 * this.x1 + m2 * this.x2) / (m1 + m2);
+        this.x1 += cm0 - cm1; this.x2 += cm0 - cm1;
+        if (this.bhist) this.bhist.forEach(h => { h.x1 += cm0 - cm1; h.x2 += cm0 - cm1; });
+      }
+      this.m1 = m1; this.m2 = m2;
     }
 
     step(now) {
-      if (this.paused) { this.last = now; return; }
+      if (this.paused && !this.crash) { this.last = now; return; }
       const wall = Math.min((now - this.last) / 1000, 0.05);
       this.last = now;
       const dt = wall * (this.slomo ? CoupledMass.SLOMO_K : 1);
       if (this._crashStep(dt)) { this.render(); return; }   // frozen mid-crash: fade only
+      // Free mode comes back from a crash HELD apart (paused), and fades up while held. Without this
+      // line the fade-in never ran: step returned early on `paused`, the canvas stayed at alpha 0,
+      // and the slide looked frozen on black (Daniel, 2026-10-14).
+      if (this.paused) { this.render(); return; }
       this._slew(dt);
-      this._advance(dt);
-      this._holdMomentum();
+      if (!this.shaken) this._holdMomentum();   // a mass change with the velocities kept moves momentum; zero it
+      this._advance(dt);                        // BEFORE integrating, or one frame of it walks the center of mass
+      if (!this.shaken) this._holdMomentum();
       this._blurHist();
       this._pushHistory();
       this.render();
@@ -4947,6 +5095,12 @@
       this.gh = h * HOUSE.stackGraphH;
       const bar = this.c.parentElement && this.c.parentElement.querySelector(".simctrls");
       const barH = bar ? bar.getBoundingClientRect().height : h * 0.11;
+      if (this.noGraph) {                    // no energy strip: the play area is everything above the bar
+        this.playH = h - barH - h * 0.04;
+        this.scale = Math.min(w / HOUSE.frameW, this.playH / CoupledMass.PLAY_WORLD_H);
+        this.ox = (w - HOUSE.frameW * this.scale) / 2;
+        return;
+      }
       this.gy = h - barH - h * (HOUSE.stackBottomPct / 100) - this.gh;
       this.playH = this.gy - h * (HOUSE.stackGapPct / 100);
       this.scale = Math.min(w / HOUSE.frameW, this.playH / CoupledMass.PLAY_WORLD_H);
@@ -4955,7 +5109,7 @@
     /** The masses ride ABOVE the middle of the play area, not on it. The energy stack is allowed to
      *  overshoot its own ceiling and climb into this space near resonance (see _graph), so the scene
      *  gets out of its way — and the picture of the graph swallowing the animation is the point. */
-    sy(y) { return this.playH * CoupledMass.PLAY_CY - (y - this.focusY) * this.scale; }
+    sy(y) { return this.playH * (this.noGraph ? 0.5 : CoupledMass.PLAY_CY) - (y - this.focusY) * this.scale; }
 
     // ---- drawing -----------------------------------------------------------------------------
     /** The house zigzag between the two masses, in scenery gray. NEVER green: the coil is structure,
@@ -4981,6 +5135,24 @@
       ctx.lineTo(ax + s1, ay); ctx.lineTo(bx, by); ctx.stroke(); ctx.restore();
     }
 
+    /** Shaken mode: x2/x1 ALWAYS on screen, top left — the result the room watches as k moves. */
+    _ratioLabel(ctx) {
+      const fs = HOUSE.sizeCaption * this.H * 1.25;
+      ctx.save(); ctx.textAlign = "left"; ctx.textBaseline = "top"; ctx.fillStyle = HOUSE.ink;
+      ctx.font = fs + "px " + HOUSE.fontSans;
+      const r = this.Rtrue;
+      // "resonance" exactly where the steady state itself would collide: |R - 1| A1 > L0 - (r1 + r2).
+      const wouldHit = !(Math.abs(r - 1) * this.A1 <= CoupledMass.L0 - this.rSum);
+      const txt = wouldHit ? "x₂/x₁ → ∞   resonance" : "x₂/x₁ = " + (Math.abs(r) < 0.005 ? "0.00" : r.toFixed(2)).replace("-", "−");
+      ctx.fillText(txt, this.W * 0.03, this.H * 0.06);
+      ctx.restore();
+    }
+    /** Thin dotted gray vertical line at world x, three diameters (6 r) tall, centered on the masses' line. */
+    _eqLine(x, r) {
+      const ctx = this.ctx, X = this.sx(x), y0 = this.sy(0), h = 3 * r * this.scale;
+      ctx.save(); ctx.strokeStyle = "rgba(255,255,255,0.5)"; ctx.lineWidth = 1.5; ctx.setLineDash([2, 5]);
+      ctx.beginPath(); ctx.moveTo(X, y0 - h); ctx.lineTo(X, y0 + h); ctx.stroke(); ctx.setLineDash([]); ctx.restore();
+    }
     /** A quiet pearl label under a disc. Muted, caption tier — a name, not a readout. */
     _name(ctx, x, r, txt) {
       ctx.save(); ctx.fillStyle = HOUSE.muted; ctx.textAlign = "center"; ctx.textBaseline = "top";
@@ -5002,9 +5174,12 @@
       const padR = this.W * 0.02, top = this.H * 0.09, fs = HOUSE.sizeCaption * this.H;
       ctx.save(); ctx.textAlign = "right"; ctx.textBaseline = "top";
       ctx.font = fs + "px " + HOUSE.fontMono; ctx.fillStyle = HOUSE.muted;
-      [ "ω_d = " + this.wd.toFixed(2) + " rad/s",
-        "ω = √(k/m₁₂) = " + this.omega.toFixed(2) + " rad/s",
-      ].forEach((t, i) => ctx.fillText(t, this.W - padR, top + i * fs * 1.35));
+      (this.shaken ? [ "ω_d = " + this.wd.toFixed(2) + " rad/s",
+                       "m₂ω_d² = " + (this.m2 * this.wd * this.wd).toFixed(1) + " N/m" ]
+       : this.free ? [ "ω = √(k/m₁₂) = " + this.omega.toFixed(2) + " rad/s" ]
+                 : [ "ω_d = " + this.wd.toFixed(2) + " rad/s",
+                     "ω = √(k/m₁₂) = " + this.omega.toFixed(2) + " rad/s" ]
+      ).forEach((t, i) => ctx.fillText(t, this.W - padR, top + i * fs * 1.35));
       ctx.restore();
     }
 
@@ -5062,10 +5237,34 @@
       this._coil();
       // The third-law pair, from ONE scalar so the two can never disagree.
       const Fs = this._coupling();
-      this._arrow(this.x1, 0, +Fs * s, 0, HOUSE.spring, 1);      // on m1, toward m2 when stretched
-      this._arrow(this.x2, 0, -Fs * s, 0, HOUSE.spring, 1);      // on m2, the equal and opposite partner
+      if (this.noGraph) {
+        // FREE and SHAKEN modes (Daniel, 2026-10-14): each mass gets a thin dotted gray line at the place it
+        // would sit if the spring were RELAXED with the other mass where it is now — x2 - L0 for m1, x1 + L0
+        // for m2 — about three of its own diameters tall. The gap between a mass and its line IS the
+        // stretch, so a spring arrow drawn at 1/k world-units per newton ends EXACTLY on the line, and the
+        // two arrows are still the same length: one stretch, one force, both bodies. The arrows are the
+        // SPRING force only (the damper is not drawn), which is what lets them land on the lines.
+        // (The dotted relaxed-length lines were tried and dropped the same day — Daniel: "they make it
+        // worse". The arrows keep the scale: each is the stretch long.)
+        const L0 = CoupledMass.L0, e1 = this.x2 - L0, e2 = this.x1 + L0;
+        const y0 = this.sy(0);
+        this._forceToPointPx(this.sx(this.x1), y0, this.sx(e1), y0, HOUSE.spring, 1);
+        this._forceToPointPx(this.sx(this.x2), y0, this.sx(e2), y0, HOUSE.spring, 1);
+      } else {
+        this._arrow(this.x1, 0, +Fs * s, 0, HOUSE.spring, 1);      // on m1, toward m2 when stretched
+        this._arrow(this.x2, 0, -Fs * s, 0, HOUSE.spring, 1);      // on m2, the equal and opposite partner
+      }
+      // SHAKEN mode: whatever pushes the body along its prescribed path (the wings, the road), in the
+      // house applied light-blue. Qualitative only — F = m1*a1 minus the spring and damper forces on m1,
+      // scaled so the inertial part peaks at DRIVE_ARROW_LEN world units. Not explained quantitatively.
+      if (this.shaken) {
+        const a1 = -this.A1 * this.wd * this.wd * Math.cos(this.wd * this.simT);
+        const Fd = this.m1 * a1 - Fs;
+        const sc = CoupledMass.DRIVE_ARROW_LEN / (this.m1 * this.A1 * this.wd * this.wd);
+        this._arrow(this.x1, 0, Fd * sc, 0, HOUSE.applied, 1);
+      }
       // The shaker, on m1 only. Light-blue = applied (roles.applied), never the velocity blue.
-      this._arrow(this.x1, 0, this._drive(this.simT) * s, 0, HOUSE.applied, 1);
+      if (!this.free && !this.shaken) this._arrow(this.x1, 0, this._drive(this.simT) * s, 0, HOUSE.applied, 1);
       // Blur first, so the after-images sit UNDER the body (house order).
       this._motionBlur(this.r1, k => this._backAt(this.simT - k * HOUSE.blurDt, "x1"));
       this._motionBlur(this.r2, k => this._backAt(this.simT - k * HOUSE.blurDt, "x2"));
@@ -5074,7 +5273,8 @@
       this._name(ctx, this.x1, this.r1, "m₁");     // first-year class: say which mass is which
       this._name(ctx, this.x2, this.r2, "m₂");
       if (this.showReadout) this._readout(ctx);
-      this._graph(ctx);
+      if (this.shaken) this._ratioLabel(ctx);
+      if (!this.noGraph) this._graph(ctx);
       ctx.restore();
     }
   }
@@ -5086,6 +5286,18 @@
   CoupledMass.M2_DEF = 1.0;      // kg — the head. FIXED.
   CoupledMass.K_DEF = 14.0;      // N/m — ABOVE the node (9), so one downward drag walks
                                  // node (9) -> resonance (7.5) -> isolation, in board-4's order
+  CoupledMass.K_FREE_DEF = 8.0;  // N/m — free mode: omega = sqrt(8/0.833) = 3.1 rad/s, a ~2 s period
+  CoupledMass.D_FREE = 2.0;      // world m — free mode's pull. m2 takes 1.67 of it, m1 0.33; the spring
+                                 // energy (1/2) k D^2 = 16 J sits two-thirds up the 24 J strip
+  CoupledMass.OMEGA_DEV_SHAKE = 4.0; // rad/s — shaken mode's wobble controller: deviations die in about a second
+  CoupledMass.RES_BAND_SHAKE = 0.35; // |k - m2 wd^2|/(m2 wd^2) over which the wobble damper fades out
+  CoupledMass.DRIVE_ARROW_LEN = 1.4; // world m — shaken mode's applied arrow at its inertial peak
+  CoupledMass.RCAP_SHAKE = 3.5;      // shaken mode: cap on the SEED only (a reset never opens mid-collision)
+  CoupledMass.WD_SHAKE = 4.0;        // rad/s — shaken mode's fixed wingbeat; the head's resonance is k = m2 wd^2 = 16
+  CoupledMass.K_SHAKE_DEF = 60.0;    // N/m — starts STIFF: the head rides along (ratio 1.36); drag down to see it settle
+  CoupledMass.A1_SHAKE = 0.8;        // world m — the body's prescribed amplitude, big enough to read from the back
+  CoupledMass.ALPHA_SHAKE_DEF = 0.4; // N/(m/s) — light: at resonance the head runs away and hits (ratio ~10);
+                                     // raise alpha past ~2 and resonance survives, which is the damper's job
   CoupledMass.WD = 3.0;          // rad/s — fixed drive; period ~2.1 s reads clearly from the back of the room
   CoupledMass.F0 = 20.0;         // N — sized against the COLLISION HEADROOM, not just against how big the
                                // default looks. The relative amplitude is F0/(m1*(wd^2 - omega^2)), which
@@ -5127,29 +5339,43 @@
   CoupledMass.HEADROOM = 3.0;    // energy-axis headroom over the steady-state peak — see _freezeScale
 
   function mountCoupledMass(section) {
-    if (!section.querySelector(".simcanvas")) section.insertAdjacentHTML("beforeend", COUPLED_CONTROLS_HTML);
     const d = section.dataset;
+    if (!section.querySelector(".simcanvas"))
+      section.insertAdjacentHTML("beforeend", d.free !== undefined ? COUPLED_FREE_CONTROLS_HTML
+                                            : d.shaken !== undefined ? COUPLED_SHAKEN_CONTROLS_HTML : COUPLED_CONTROLS_HTML);
     const canvas = section.querySelector(".simcanvas");
     const sim = new CoupledMass(canvas, {
       m1: d.m1 !== undefined ? +d.m1 : undefined,
       m2: d.m2 !== undefined ? +d.m2 : undefined,
       k: d.k !== undefined ? +d.k : undefined,
       wd: d.wd !== undefined ? +d.wd : undefined,
-      slomo: d.slomo === "true"
+      slomo: d.slomo === "true",
+      free: d.free !== undefined,
+      shaken: d.shaken !== undefined
     });
     const q = s => section.querySelector(s);
     const readonly = window.self !== window.top;              // speaker-view copy: read-only
     // ONE SLIDER. The masses are FIXED — see the header for why; a slide that wants different ones
     // sets data-m1 / data-m2, but nobody moves them live.
-    const rng = { k: q(".s-k") };
-    const num = { k: q(".n-k") };
+    const rng = { k: q(".s-k") }, num = { k: q(".n-k") };
+    if (sim.free) { rng.m1 = q(".s-m1"); num.m1 = q(".n-m1"); rng.m2 = q(".s-m2"); num.m2 = q(".n-m2"); }
     const clamp = (el, v) => Math.max(+el.min, Math.min(+el.max, v));
-    // The slider feeds the integrator. It does NOT re-seed — see the header.
+    // The slider feeds the integrator. It does NOT re-seed — see the header. (Free mode, while still
+    // HELD apart, re-seeds the hold so each mass's share of the pull matches the new masses.)
     const apply = () => {
       sim.kT = +rng.k.value;
-      if (sim.paused) { sim.k = sim.kT; sim.render(); }
+      if (rng.m1) { sim.m1T = +rng.m1.value; sim.m2T = +rng.m2.value; }
+      if (rng.alpha) sim.alphaT = +rng.alpha.value;
+      if (sim.paused) {
+        sim.k = sim.kT; sim._setMasses(sim.m1T, sim.m2T); if (rng.alpha) sim.alpha = sim.alphaT;
+        if (sim.free && sim.held) sim.reset(false);
+        if (sim.shaken) sim._placeShaken();
+        sim.render();
+      }
     };
-    rng.k.value = sim.k;
+    if (rng.k) rng.k.value = sim.k;
+    if (rng.m1) { rng.m1.value = sim.m1; rng.m2.value = sim.m2; }
+
     Object.keys(rng).forEach(key => {
       const s = rng[key], n = num[key]; n.value = s.value;
       s.addEventListener("input", () => { n.value = s.value; apply(); });
@@ -5157,14 +5383,19 @@
       n.addEventListener("change", () => { const v = parseFloat(n.value); n.value = isNaN(v) ? s.value : clamp(s, v); s.value = n.value; apply(); });
     });
     // The collision reset walks the controls home too, so the panel never disagrees with the physics.
-    sim.onParams = (m1, m2, k) => { rng.k.value = k; num.k.value = k; };
+    sim.onParams = (m1, m2, k) => { if (rng.k) { rng.k.value = k; num.k.value = k; }
+      if (rng.m1) { rng.m1.value = m1; num.m1.value = m1; rng.m2.value = m2; num.m2.value = m2; } };
     const playBtn = q(".play");
     const refreshPlay = () => { playBtn.textContent = sim.paused ? "▶ Play" : "⏸ Pause"; };
     sim.refreshPlayBtn = refreshPlay;
-    playBtn.addEventListener("click", () => { sim.paused = !sim.paused; if (!sim.paused) sim.last = performance.now(); refreshPlay(); });
+    playBtn.addEventListener("click", () => { sim.paused = !sim.paused; if (!sim.paused) { sim.everPlayed = true; sim.held = false; sim.last = performance.now(); } refreshPlay(); });
+    refreshPlay();
     q(".reset").addEventListener("click", () => {
-      sim.k = sim.kT = CoupledMass.K_DEF;
-      sim.onParams(sim.m1, sim.m2, sim.k);
+      // Driven: walk k home. Free: keep whatever m1, m2, k are set and just hold the pair apart again,
+      // so a live demo can try a new mass ratio and let go again.
+      if (sim.shaken) { sim.k = sim.kT; }   // keep the stiffness; restart the clock
+      else if (!sim.free) { sim.k = sim.kT = sim.kDef; sim.onParams(sim.m1, sim.m2, sim.k); }
+      else { sim.held = true; sim.m1 = sim.m1T; sim.m2 = sim.m2T; sim.k = sim.kT; }
       sim.crash = null;                       // cancel a collision cut in flight, or Reset does nothing
       sim.bhist = null;
       sim.reset(true); refreshPlay(); sim.render();
@@ -5177,11 +5408,11 @@
     apply();
     if (readonly) {
       canvas.style.pointerEvents = "none";
-      [playBtn, q(".reset"), slo, rt, rng.k, num.k].forEach(el => { if (el) el.disabled = true; });
+      [playBtn, q(".reset"), slo, rt, rng.k, num.k, rng.m1, num.m1, rng.m2, num.m2, rng.ratio, num.ratio].forEach(el => { if (el) el.disabled = true; });
       const c = q(".simctrls"); if (c) c.style.opacity = ".4";
     }
     let raf = null;
-    sim.start = () => { sim.everPlayed = true; if (raf) return; const loop = (now) => { sim.step(now); raf = requestAnimationFrame(loop); }; sim.last = performance.now(); raf = requestAnimationFrame(loop); };
+    sim.start = () => { if (!sim.free) sim.everPlayed = true; if (raf) return; const loop = (now) => { sim.step(now); raf = requestAnimationFrame(loop); }; sim.last = performance.now(); raf = requestAnimationFrame(loop); };
     sim.stop = () => { if (raf) { cancelAnimationFrame(raf); raf = null; } };
     window.addEventListener("resize", () => { sim.resize(); sim.render(); });
     sim.render();

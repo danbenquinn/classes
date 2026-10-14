@@ -456,6 +456,11 @@
     layer.style.background = d.mediabg || '';
     layer.classList.toggle('lightbg', !!d.mediabg && isLightColor(d.mediabg));
     if(d.stack){ configureStack(cur); return; }     // synced/tiled video stack — its own path
+    // Stepped four-up (data-quad + data-quadstep, Class N's lovebird capture, 2026-10-13): no opener — the
+    // grid is up on entry, each tile paused on its first frame, and each → starts the next tile in
+    // reading order (TL, TR, BL, BR); each plays once and holds its last frame. Once all four have
+    // started, the next → advances.
+    if(d.quadstep !== undefined){ showQuad(cur, true); cur._quadIdx = 0; cur._quadShown = true; return; }
     let media = d.media;
     if(d.playlist){                        // multi-clip slide: → plays clip 0, then each → jumps to the next cut
       cur._pl = { list: d.playlist.split(',').map(s => s.trim()).filter(Boolean), idx:0, started:false };
@@ -628,6 +633,7 @@
   function stageNextClip(cur){
     const all = Array.from(document.querySelectorAll('.reveal .slides > section'));
     const nxt = all[all.indexOf(cur) + 1];
+    if(nxt && nxt.dataset.quadstep !== undefined){ primeQuad(nxt); return; }   // decode the four tiles a slide early
     if(!nxt || !nxt.classList.contains('vid') || nxt.dataset.stack) return;
     const nd = nxt.dataset;
     const src = nd.playlist ? nd.playlist.split(',').map(x => x.trim()).filter(Boolean)[0] : nd.media;
@@ -1094,7 +1100,11 @@
     navigator.mediaDevices.addEventListener('devicechange', () => { if(camStream) populateCamDevices(); });
 
   // ---------- Four-up grid (data-quad, e.g. Class D's Scorched Earth): opener full-screen, then 4 looping tiles ----------
-  function showQuad(sec){
+  function primeQuad(sec){
+    const list = (sec.dataset.quad || '').split(',').map(s => s.trim()).filter(Boolean);
+    quadVideos.forEach((v,i) => { const src = list[i]; if(src && resolveSrc(src) !== v.src){ v.src = src; v.load(); } });
+  }
+  function showQuad(sec, hold){
     const list = (sec.dataset.quad || '').split(',').map(s => s.trim()).filter(Boolean);
     player.pause(); player.style.display = 'none'; still.style.display = 'none';
     activeVideo = false; hideAttrib(); yeartag.style.display = 'none';
@@ -1104,14 +1114,23 @@
       v.style.visibility = 'visible';
       if(resolveSrc(src) !== v.src){ v.src = src; v.load(); }
       try{ v.currentTime = 0; }catch(e){}
-      v.play().catch(()=>{});
+      v.loop = !hold;                               // a stepped quad plays each tile once and holds its last frame
+      if(hold){
+        // A paused <video> paints nothing until it has decoded a frame AND been asked for one: setting
+        // currentTime before the data arrives is a no-op, which is why a cold first visit showed four
+        // black tiles and a second visit (cache warm) showed the first frames. Seek once data is in.
+        v.pause();
+        const paint = () => { if(v.paused){ try{ v.currentTime = 0.001; }catch(e){} } };
+        if(v.readyState >= 2) paint(); else v.addEventListener('loadeddata', paint, { once:true });
+      } else v.play().catch(()=>{});
     });
+    quadgrid.classList.toggle('fill', !!hold);       // stepped quad: full frame, no gaps, tiles cropped to fill (deck.css)
     quadgrid.style.display = 'grid';
   }
   function resetSpecials(){
     quadgrid.style.display = 'none';
     quadVideos.forEach(v => { try{ v.pause(); }catch(e){} });
-    document.querySelectorAll('[data-quad]').forEach(s => { s._quadShown = false; });
+    document.querySelectorAll('[data-quad]').forEach(s => { s._quadShown = false; s._quadIdx = 0; });
     stopCamera();
     yeartag.style.display = 'none';
     player._swapped = false;
@@ -1570,6 +1589,12 @@
     // invisible span — which is exactly how it shipped broken with nothing to look at.)
     if(cur && cur.classList.contains('sim') && cur._sim && cur._sim.everPlayed
        && typeof cur._sim.advanceStage === 'function' && cur._sim.advanceStage() !== false){ return; }
+    // Stepped quad (data-quadstep): each → starts the next paused tile; once all are running, → advances.
+    if(cur && cur.dataset.quadstep !== undefined){
+      const n = (cur.dataset.quad || '').split(',').map(s => s.trim()).filter(Boolean).length;
+      if((cur._quadIdx || 0) < n){ const v = quadVideos[cur._quadIdx || 0]; cur._quadIdx = (cur._quadIdx || 0) + 1;
+        if(v){ try{ v.currentTime = 0; }catch(e){} v.play().catch(()=>{}); } return; }
+    }
     // Quad slide (data-quad): first → plays the full-screen opener, second → tiles the four-up grid, next → advances.
     if(cur && cur.dataset.quad !== undefined && !cur._quadShown){
       if(activeVideo && cur.dataset.autoplay === undefined && player.paused && atHead(player, 0.05) && !player.ended){ player.play().catch(()=>{}); return; }
