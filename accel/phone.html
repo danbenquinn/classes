@@ -177,7 +177,9 @@ $("go").onclick = async () => {
 
 function onPeers(list) {
   const here = list.some((p) => p.role === "analyzer");
-  if (here && !analyzerHere && (state === "connecting" || state === "lost")) {
+  // Presence can report the analyzer BEFORE openRoom() has resolved and `conn` exists; the hello sent
+  // right after it resolves covers that case, so only say hello here when there is a connection to say it on.
+  if (here && !analyzerHere && conn && (state === "connecting" || state === "lost")) {
     conn.send({ type: "hello", phone: me.id });
   }
   if (!here && analyzerHere && (state === "connected" || state === "collecting")) {
@@ -189,7 +191,7 @@ function onPeers(list) {
 }
 
 function onMessage(m) {
-  if (state === "released" || state === "nosensor") return;
+  if (!conn || state === "released" || state === "nosensor") return;
   if (m.type === "whois") {
     if (state === "connecting" || state === "lost") conn.send({ type: "hello", phone: me.id });
   } else if (m.type === "claim") {

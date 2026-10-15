@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Class run</title>
+<!--
+  instructor.html — Daniel's phone as the instrument for a CLASS experiment (2026-10-15).
+
+  Everything happens on the phone: pick the axis, Start, watch the trace draw, Stop, then Try again or
+  Accept. Accept saves the run to Supabase (`save_class_run`, guarded by the instructor key, see
+  lab-suite/accel-prototype/class-runs-setup.sql). Decks fetch the newest run when a student reaches
+  the class section (`get_class_run`). Nothing streams to the laptops, so it doesn't matter where in the
+  lab each group is when the run is recorded.
+
+  URL: accel/instructor.html?w=W4-SpringsUneternal-live&axis=z      (+ &sim=1 for a fake sensor)
+  The key is typed once and remembered on this phone.
+-->
+<style>
+  :root { --bg:#f7f7f5; --fg:#1a1a1a; --muted:#6b6b6b; --line:#e2e2de; --panel:#fff;
+          --accent:#1f6feb; --ok:#1a7f37; --rec:#cf222e; --warn:#9a6700; --trace:#1f6feb; --grid:#ececea; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#111213; --fg:#ececec; --muted:#9a9a9a; --line:#2a2b2d; --panel:#1a1b1d;
+            --accent:#4c8dff; --ok:#3fb950; --rec:#ff6b6b; --warn:#d29922; --trace:#6ea2ff; --grid:#26272a; } }
+  * { box-sizing:border-box; }
+  html,body { margin:0; }
+  body { background:var(--bg); color:var(--fg); font:16px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+         padding:max(14px,env(safe-area-inset-top)) 16px max(18px,env(safe-area-inset-bottom)); -webkit-user-select:none; user-select:none; }
+  header { display:flex; align-items:baseline; justify-content:space-between; gap:10px; margin-bottom:10px; }
+  h1 { font-size:20px; margin:0; }
+  .w { font-size:12px; color:var(--muted); }
+  .axes { display:flex; gap:6px; margin:6px 0 12px; }
+  .axes button { flex:1; padding:10px 0; font:600 18px ui-monospace,Menlo,monospace; border-radius:10px;
+                 border:2px solid var(--line); background:var(--panel); color:var(--fg); }
+  .axes button.on { border-color:var(--accent); color:var(--accent); }
+  .plot { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:6px; }
+  canvas { width:100%; height:240px; display:block; }
+  .stats { display:flex; justify-content:space-between; font:14px ui-monospace,Menlo,monospace; color:var(--muted);
+           margin:8px 2px 12px; font-variant-numeric:tabular-nums; }
+  .status { min-height:24px; margin:4px 2px 10px; font-weight:600; }
+  .status.rec { color:var(--rec); } .status.ok { color:var(--ok); } .status.err { color:var(--rec); } .status.warn { color:var(--warn); }
+  .row { display:flex; gap:10px; }
+  .row button, .big { flex:1; padding:16px; font:600 18px inherit; font-family:inherit; border-radius:12px; border:0;
+                      background:var(--accent); color:#fff; }
+  .big.stop { background:var(--rec); }
+  .ghost { background:var(--panel) !important; color:var(--fg) !important; border:2px solid var(--line) !important; }
+  .acc { background:var(--ok) !important; }
+  button:disabled { opacity:.5; }
+  .key { margin-top:16px; padding-top:12px; border-top:1px solid var(--line); font-size:14px; color:var(--muted); }
+  .key input { font:15px ui-monospace,Menlo,monospace; padding:8px 10px; border-radius:8px; border:1px solid var(--line);
+               background:var(--panel); color:var(--fg); width:60%; }
+  .key button { padding:8px 12px; border-radius:8px; border:1px solid var(--line); background:var(--panel); color:var(--fg); font:inherit; }
+  a { color:var(--accent); }
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<header><h1>Class run</h1><span class="w" id="w"></span></header>
+<div class="axes" id="axes"><button data-a="x">x</button><button data-a="y">y</button><button data-a="z">z</button></div>
+<div class="plot"><canvas id="cv"></canvas></div>
+<div class="stats"><span id="s-t">0.0 s</span><span id="s-n">0 samples</span><span id="s-r">— Hz</span><span id="s-v">—</span></div>
+<div class="status" id="status">Acceleration without g. Pick the axis, then Start.</div>
+<div id="ctl"></div>
+<div class="key" id="keybox"></div>
+
+<script>
+const SUPABASE_URL = "https://rdbacwwbeyeqdkswwvjt.supabase.co";
+const SUPABASE_KEY = "sb_publishable_IQNxMMynit0aWtOS3tjiRQ_h5sNo159";
+const Q = new URLSearchParams(location.search);
+const WORKSHOP = Q.get("w") || "W4-SpringsUneternal-live";
+const SIM = Q.has("sim");
+let axis = (Q.get("axis") || "z").toLowerCase();
+const $ = id => document.getElementById(id);
+$("w").textContent = WORKSHOP;
+
+let state = "idle";        // idle | rec | review | saving | saved
+let B = null, t0 = 0, startedAt = 0, wake = null, sensorOn = false, lastSaved = null, linSeen = false;
+const store = { get(k){ try { return localStorage.getItem(k); } catch(e){ return null; } },
+                set(k,v){ try { localStorage.setItem(k,v); } catch(e){} } };
+let KEY = store.get("classrun-key") || "";
+
+/* ---------- sensor ---------- */
+function onLin(t, a) {
+  linSeen = true;
+  if (state !== "rec") return;
+  if (!t0) t0 = t;
+  B.t.push(+((t - t0)/1000).toFixed(4)); B.x.push(+a.x.toFixed(4)); B.y.push(+a.y.toFixed(4)); B.z.push(+a.z.toFixed(4));
+}
+function startSensor() {
+  if (sensorOn) return; sensorOn = true;
+  if (SIM) {   // driven at 2 Hz for 4 s, then let go: rings at ω 9 rad/s, ζ 0.15
+    setInterval(() => { const now = performance.now(), r = t0 ? (now - t0)/1000 : 0, n = () => (Math.random()-.5)*.12;
+      const drive = r < 4 ? 1.5*Math.sin(2*Math.PI*2*r) : 0;
+      const ring = r >= 4 ? 1.2*Math.exp(-0.15*9*(r-4))*Math.cos(9*Math.sqrt(1-0.0225)*(r-4)) : 0;
+      onLin(now, { x:n(), y:n(), z:drive+ring+n() }); }, 1000/60);
+    return;
+  }
+  addEventListener("devicemotion", e => { const a = e.acceleration;
+    if (a && a.x != null) onLin(e.timeStamp || performance.now(), { x:a.x, y:a.y, z:a.z }); });
+}
+async function keepAwake(){ try { if ("wakeLock" in navigator) wake = await navigator.wakeLock.request("screen"); } catch(e){} }
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && state === "rec") keepAwake(); });
+
+/* ---------- plot ---------- */
+function css(v){ return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
+function draw() {
+  const cv = $("cv"), d = devicePixelRatio || 1, W = cv.clientWidth, H = cv.clientHeight;
+  if (cv.width !== W*d) { cv.width = W*d; cv.height = H*d; }
+  const g = cv.getContext("2d"); g.setTransform(d,0,0,d,0,0); g.clearRect(0,0,W,H);
+  const t = B ? B.t : [], a = B ? B[axis] : [];
+  const L = 34, R = 6, T = 8, Bm = 20, pw = W-L-R, ph = H-T-Bm;
+  let lo = -1, hi = 1; for (const v of a) { if (v < lo) lo = v; if (v > hi) hi = v; }
+  const pad = (hi-lo)*.08; lo -= pad; hi += pad;
+  const tMax = Math.max(5, t.length ? t[t.length-1] : 0);
+  const X = v => L + v/tMax*pw, Y = v => T + (1-(v-lo)/(hi-lo))*ph;
+  g.font = "11px -apple-system,sans-serif"; g.fillStyle = css("--muted"); g.strokeStyle = css("--grid"); g.lineWidth = 1;
+  const step = (r,n) => { const raw = r/n, p = 10**Math.floor(Math.log10(raw)), f = raw/p; return (f<1.5?1:f<3?2:f<7?5:10)*p; };
+  const ys = step(hi-lo,4); g.textAlign = "right"; g.textBaseline = "middle";
+  for (let v = Math.ceil(lo/ys)*ys; v <= hi; v += ys) { g.beginPath(); g.moveTo(L,Y(v)); g.lineTo(L+pw,Y(v)); g.stroke(); g.fillText(+v.toFixed(3), L-4, Y(v)); }
+  const xs = step(tMax,5); g.textAlign = "center"; g.textBaseline = "top";
+  for (let v = 0; v <= tMax+1e-9; v += xs) g.fillText(+v.toFixed(3), X(v), T+ph+4);
+  if (a.length > 1) { g.strokeStyle = css("--trace"); g.lineWidth = 1.5; g.beginPath();
+    for (let i = 0; i < a.length; i++) { const x = X(t[i]), y = Y(a[i]); i ? g.lineTo(x,y) : g.moveTo(x,y); } g.stroke(); }
+  g.fillStyle = css("--muted"); g.textAlign = "left"; g.textBaseline = "top"; g.fillText(axis + " (m/s²)", L+4, T+2);
+}
+function stats() {
+  const n = B ? B.t.length : 0, dur = n > 1 ? B.t[n-1]-B.t[0] : 0;
+  $("s-t").textContent = (state === "rec" ? (performance.now()-startedAt)/1000 : dur).toFixed(1) + " s";
+  $("s-n").textContent = n + " samples";
+  $("s-r").textContent = dur > 0 ? Math.round((n-1)/dur) + " Hz" : "— Hz";
+  $("s-v").textContent = n ? B[axis][n-1].toFixed(2) : "—";
+}
+function loop(){ if (state !== "rec") return; draw(); stats(); requestAnimationFrame(loop); }
+
+/* ---------- controls ---------- */
+function status(cls, html){ const s = $("status"); s.className = "status " + (cls||""); s.innerHTML = html; }
+function ctl(html){ $("ctl").innerHTML = html; }
+function paint() {
+  document.querySelectorAll("#axes button").forEach(b => { b.classList.toggle("on", b.dataset.a === axis); b.disabled = state === "rec" || state === "saving"; });
+  if (state === "idle") ctl('<button class="big" id="go">Start</button>');
+  else if (state === "rec") ctl('<button class="big stop" id="stop">Stop</button>');
+  else if (state === "review") ctl('<div class="row"><button class="ghost" id="again">Try again</button><button class="acc" id="accept">Accept</button></div>');
+  else if (state === "saving") ctl('<button class="big" disabled>Saving…</button>');
+  else if (state === "saved") ctl('<div class="row"><button class="ghost" id="csv">Download CSV</button><button id="again">Record another</button></div>');
+  const on = (id, f) => { const el = $(id); if (el) el.onclick = f; };
+  on("go", start); on("stop", stop); on("again", () => { B = null; state = "idle"; draw(); stats();
+    status("", lastSaved ? "Saved run stays live until you accept a new one." : "Pick the axis, then Start."); paint(); });
+  on("accept", accept); on("csv", downloadCsv);
+  paintKey();
+}
+function paintKey() {
+  const k = $("keybox");
+  if (KEY) { k.innerHTML = 'Instructor key saved on this phone. <a href="#" id="kc">Change</a>';
+    $("kc").onclick = e => { e.preventDefault(); KEY = ""; store.set("classrun-key",""); paintKey(); }; return; }
+  k.innerHTML = 'Instructor key (needed to save a run): <div style="margin-top:6px;display:flex;gap:6px">'
+    + '<input id="ki" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="key"><button id="ks">Save</button></div>';
+  $("ks").onclick = () => { KEY = $("ki").value.trim(); store.set("classrun-key", KEY); paintKey(); };
+}
+document.querySelectorAll("#axes button").forEach(b => b.onclick = () => { axis = b.dataset.a; draw(); stats(); paint(); });
+
+async function start() {
+  if (!SIM && typeof DeviceMotionEvent !== "undefined" && typeof DeviceMotionEvent.requestPermission === "function") {
+    let r = "denied"; try { r = await DeviceMotionEvent.requestPermission(); } catch(e){}
+    if (r !== "granted") { status("err", "Motion access was refused. Close this tab and open the link again."); return; }
+  }
+  startSensor(); keepAwake();
+  B = { t:[], x:[], y:[], z:[] }; t0 = 0; startedAt = performance.now(); state = "rec";
+  status("rec", "● Recording");
+  paint(); loop();
+  setTimeout(() => { if (state === "rec" && !linSeen) status("err", "No motion data from this phone. Try Safari or Chrome."); }, 2000);
+}
+function stop() {
+  state = "review"; draw(); stats();
+  const n = B.t.length;
+  status(n > 20 ? "" : "warn", n > 20 ? "Keep this run? It replaces any earlier one for this workshop." : "Barely any data came through. Try again.");
+  paint();
+}
+async function accept() {
+  if (!KEY) { status("warn", "Enter the instructor key below first."); return; }
+  state = "saving"; paint();
+  const n = B.t.length, dur = n > 1 ? B.t[n-1]-B.t[0] : 0;
+  const run = { axis, n, dur, rate: dur > 0 ? (n-1)/dur : 0, headers:["Time (s)","Linear Acceleration x (m/s^2)","Linear Acceleration y (m/s^2)","Linear Acceleration z (m/s^2)"],
+                t:B.t, x:B.x, y:B.y, z:B.z, ua:navigator.userAgent, sim:SIM, at:new Date().toISOString() };
+  try {
+    const r = await fetch(SUPABASE_URL + "/rest/v1/rpc/save_class_run", { method:"POST",
+      headers:{ "Content-Type":"application/json", apikey:SUPABASE_KEY },
+      body: JSON.stringify({ p_key:KEY, p_workshop:WORKSHOP, p_run:run }) });
+    const txt = await r.text();
+    if (!r.ok) throw new Error(/instructor key/i.test(txt) ? "key" : (txt || ("HTTP " + r.status)).slice(0,140));
+    lastSaved = new Date(); state = "saved";
+    status("ok", "✓ Saved at " + lastSaved.toLocaleTimeString([], { hour:"numeric", minute:"2-digit" }) + ". Decks load it when students reach the class section.");
+  } catch(e) {
+    state = "review";
+    status("err", /key/.test(e.message) ? "Not saved: the instructor key was not accepted. Tap Change below, re-enter it, and press Accept again."
+                                        : "Not saved: " + e.message + ". Check the connection and press Accept again.");
+  }
+  paint();
+}
+function downloadCsv() {
+  const rows = ["Time (s),Linear Acceleration x (m/s^2),Linear Acceleration y (m/s^2),Linear Acceleration z (m/s^2)"]
+    .concat(B.t.map((t,i) => [t, B.x[i], B.y[i], B.z[i]].join(",")));
+  const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([rows.join("\n")], { type:"text/csv" }));
+  a.download = WORKSHOP + "-class-run.csv"; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+addEventListener("resize", draw);
+draw(); stats(); paint();
+</script>
+</body>
+</html>
