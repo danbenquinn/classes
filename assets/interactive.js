@@ -1734,6 +1734,7 @@
       // f (Hz) and a (the amplitude A, meters) are the ONLY free parameters — see the class comment.
       this.mass = 1; this.f = opts.f ?? 0.2; this.a = opts.a ?? 3;
       this.theta = 0; this.everPlayed = false; this.running = false; this.paused = false;
+      this.dir = opts.cw ? -1 : 1;                     // +1 counterclockwise (default); -1 clockwise (data-cw)
       this.released = false; this.frozenTheta = 0; this.freeX = 0; this.freeY = 0; this.freeVX = 0; this.freeVY = 0;
       this.posHist = []; this.now = 0;                // true recent positions → motion-blur reflects the real path
       this.showReadout = true; this.last = 0;
@@ -1766,7 +1767,7 @@
       if (this.released) return;
       const b = this._ballScreen(), spd = this.v * this.orbScale;
       this.freeX = b.x; this.freeY = b.y;
-      this.freeVX = -Math.sin(this.theta) * spd; this.freeVY = -Math.cos(this.theta) * spd;   // screen tangent
+      this.freeVX = -this.dir * Math.sin(this.theta) * spd; this.freeVY = -this.dir * Math.cos(this.theta) * spd;   // screen tangent (sense follows dir)
       this.frozenTheta = this.theta; this.released = true;
       this.running = true; this.paused = false; this.everPlayed = true; this.last = performance.now();
     }
@@ -1778,7 +1779,7 @@
           this.freeX += this.freeVX * dt; this.freeY += this.freeVY * dt;
           if (this.freeX < -300 || this.freeX > this.W + 300 || this.freeY < -300 || this.freeY > this.H + 300) this.running = false;  // gone; stays off until Reset
         } else {
-          this.theta += this.omega * dt;               // ω = 2πf, CCW
+          this.theta += this.dir * this.omega * dt;    // ω = 2πf; CCW by default, CW with data-cw
         }
         const bp = this.released ? { x: this.freeX, y: this.freeY } : this._ballScreen();
         this._recordPos(bp.x, bp.y, now);        // record the true path (circle, then straight after release)
@@ -1840,7 +1841,7 @@
       this._mrdotLabel(ox + s * 0.35, oy - s * 1.35, HOUSE.sizeBody * this.H);   // label the inset (body tier)
       // momentum vector: velocity direction (tangent) = (−sinθ, −cosθ); frozen at release when force is zeroed
       const th = this.released ? this.frozenTheta : this.theta;
-      this._arrow(ox, oy, ox - Math.sin(th) * pLen, oy - Math.cos(th) * pLen, HOUSE.velocity, 1);
+      this._arrow(ox, oy, ox - this.dir * Math.sin(th) * pLen, oy - this.dir * Math.cos(th) * pLen, HOUSE.velocity, 1);
     }
     _readout() {
       const ctx = this.ctx, s = this.scale, fs = HOUSE.sizeBody * this.H;   // readout = body tier
@@ -1866,7 +1867,7 @@
     if (!section.querySelector(".simcanvas")) section.insertAdjacentHTML("beforeend", CIRCLE_CONTROLS_HTML);
     const d = section.dataset;
     const canvas = section.querySelector(".simcanvas");
-    const sim = new Circular(canvas, { f: d.f !== undefined ? +d.f : 0.2, a: d.a !== undefined ? +d.a : 3 });
+    const sim = new Circular(canvas, { f: d.f !== undefined ? +d.f : 0.2, a: d.a !== undefined ? +d.a : 3, cw: d.cw !== undefined });
     const q = s => section.querySelector(s);
     const readonly = window.self !== window.top;
     const rng = { f: q(".s-f"), a: q(".s-a") }, num = { f: q(".n-f"), a: q(".n-a") };
@@ -1889,6 +1890,10 @@
     if (zf) zf.addEventListener("click", () => { sim.zeroForce(); refreshPlay(); });
     q(".reset").addEventListener("click", () => { sim.reset(); refreshPlay(); });
     sim.showReadout = true;                                    // readout is permanent on this sim (no 123 toggle)
+    // data-fixed (Class O, 2026-10-15): the same sim with NO parameters to change — only Play, Zero Force
+    // and Reset. For a slide whose one job is the fly-off, not an exploration of f and A.
+    if (d.fixed !== undefined) section.querySelectorAll(".simctrls label").forEach(l => { l.style.display = "none"; });
+    if (d.noreadout !== undefined) sim.showReadout = false;     // data-noreadout: no "F = … N" box (Class O)
     apply();
     if (readonly) { canvas.style.pointerEvents = "none"; [playBtn, zf, q(".reset"), rng.v, rng.a, num.v, num.a].forEach(el => { if (el) el.disabled = true; }); const c = q(".simctrls"); if (c) c.style.opacity = ".4"; }
     refreshPlay();                                             // set initial button states (Zero Force starts disabled)

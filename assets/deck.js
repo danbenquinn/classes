@@ -463,7 +463,10 @@
     if(d.quadstep !== undefined){ showQuad(cur, true); cur._quadIdx = 0; cur._quadShown = true; return; }
     let media = d.media;
     if(d.playlist){                        // multi-clip slide: → plays clip 0, then each → jumps to the next cut
-      cur._pl = { list: d.playlist.split(',').map(s => s.trim()).filter(Boolean), idx:0, started:false };
+      // An AUTOPLAY playlist (Class O's solid-resolution, 2026-10-15) starts its first cut on arrival — the
+      // click that brought the slide up IS the click that plays it — so it is already `started`, and the
+      // first → goes straight to cut 2 instead of being spent re-playing cut 1. Later cuts still wait for →.
+      cur._pl = { list: d.playlist.split(',').map(s => s.trim()).filter(Boolean), idx:0, started: d.autoplay !== undefined };
       media = cur._pl.list[0];
     }
     nativeMedia = d.native !== undefined;               // show at original pixel size, centered on black
@@ -547,7 +550,14 @@
     if(isStill(media)){                                     // still image, animated GIF, or an inlined freeze frame (shown via <img>)
       activeVideo = false; player.pause(); player.style.display = 'none';
       still.style.display = 'block';
-      if(resolveSrc(media) !== still.src){ still.style.visibility='hidden'; still.onload = layoutActive; still.src = media; } else { layoutActive(); }
+      // AN SVG RESTARTS ON EVERY ARRIVAL (2026-10-16, Class O's MoonPoke). A SMIL animation inside an <img>
+      // runs on the SVG DOCUMENT's clock, and the browser shares one document per URL across every <img>
+      // — so the overview thumbnail's pre-warm (see below) started the five pokes when the deck loaded,
+      // and by the time the slide came up they were long over. A fresh query string is a fresh document,
+      // so the clock starts when the slide does. Static SVGs just reload (they are small).
+      if(/\.svg$/i.test(media || '')){ still.style.visibility='hidden'; still.onload = layoutActive;
+        still.src = media + (media.indexOf('?') < 0 ? '?' : '&') + 'r=' + Date.now(); }
+      else if(resolveSrc(media) !== still.src){ still.style.visibility='hidden'; still.onload = layoutActive; still.src = media; } else { layoutActive(); }
     } else if(frameMatch && crossFadeTo(media, d, matchAt, cur)){  // handled by the cross-fade path
       return;                                         // crossFadeTo owns the swap AND re-stages the buffer
     } else {                                          // video clip
@@ -716,7 +726,9 @@
   // ---- Playlist double-buffer: decode the NEXT cut in the hidden playerB so advancing swaps to a ready
   // first frame with no black flash. Falls back to a plain (visible) load if the buffer isn't ready. ----
   function applyMedia(v, d){                         // volume / mute / loop for a playlist clip
-    v.loop = false;
+    // data-loop on a playlist loops EVERY cut until → (2026-10-16, Class O's sound-fast: three loops, each
+    // a faster version of the last). No playlist carried data-loop before, so every other one is unchanged.
+    v.loop = d.loop !== undefined;
     const vr = parseFloat(d.volume), vv = isNaN(vr) ? 1 : Math.max(0, Math.min(1, vr));
     v.volume = vv; v.muted = (d.mute !== undefined) || vv === 0;
   }
@@ -879,12 +891,25 @@
       els = [anim, ...stripEls];
       animEl = anim;
     }
-    cur._stack = { els, stripEls, axisEls, animEl, sync, loop, started: false, frozen: false };
+    // data-pauses="t1,t2,…" (Class O's wave-closed-steps, 2026-10-16): STOP POINTS on a play-once sync
+    // stack. The master clock holds every clip at each time in turn; → resumes from there (it does not
+    // restart); → while playing jumps straight to the next stop. After the last stop it plays out, and
+    // the next → advances. A mouse click on a held stack resumes rather than restarting.
+    const pauses = (d.pauses || '').split(',').map(x => parseFloat(x)).filter(x => !isNaN(x)).sort((a, b) => a - b);
+    cur._stack = { els, stripEls, axisEls, animEl, sync, loop, started: false, frozen: false, pauses, pi: 0, held: false };
     if(autoplay || loop){ els.forEach(v => v.play().catch(() => {})); cur._stack.started = true; if(sync) startStackSync(cur._stack); }
     layoutStack(cur);
   }
+  function holdStack(st, t){                                   // stop every clip at exactly t (a data-pauses stop)
+    st.els.forEach(v => { v.pause(); try{ v.currentTime = t; }catch(e){} });
+    st.held = true; st.pi++;
+  }
+  function resumeStack(st){
+    st.held = false; st.els.forEach(v => v.play().catch(() => {}));
+    if(st.sync) startStackSync(st);
+  }
   function playStack(cur){
-    const st = cur._stack; if(!st) return; st.started = true; st.frozen = false;
+    const st = cur._stack; if(!st) return; st.started = true; st.frozen = false; st.pi = 0; st.held = false;
     st.els.forEach(v => { try{ v.currentTime = 0; }catch(e){} v.play().catch(() => {}); });
     if(st.sync) startStackSync(st);
   }
@@ -903,6 +928,9 @@
     if(stackRaf) cancelAnimationFrame(stackRaf);
     const master = st.els[0];
     const tick = () => {
+      if(st.pauses && st.pi < st.pauses.length && !st.held && master.currentTime >= st.pauses[st.pi]){
+        holdStack(st, st.pauses[st.pi]); stackRaf = null; return;
+      }
       for(let i = 1; i < st.els.length; i++){ const v = st.els[i];
         if(!v.seeking && Math.abs(v.currentTime - master.currentTime) > 0.06){ try{ v.currentTime = master.currentTime; }catch(e){} } }
       stackRaf = requestAnimationFrame(tick);
@@ -919,6 +947,7 @@
     const curS = Reveal.getCurrentSlide();
     if(curS && curS._stack){                                   // stack slide: click toggles all tiles together
       const st = curS._stack;
+      if(st.held){ resumeStack(st); return; }
       if(st.els.some(v => !v.paused)) pauseStack(); else playStack(curS);
       return;
     }
@@ -1569,6 +1598,78 @@
   window.addEventListener('storage', ev => { if(window.self === window.top && ev.key === '__deckNav' && ev.newValue) handleRemoteNav(ev.newValue); });
   window.addEventListener('message', ev => { if(window.self === window.top && ev.data && ev.data.__deck === 'smartNext') handleRemoteNav(ev.data.nonce); });
 
+  // ---------- Magic move into the next slide (data-magicpos, Class O 2026-10-15) ----------
+  // A looping chain clip that, on →, flies into the NEXT slide's stacked animation box and settles to
+  // rest there — so a clip running at any phase lands exactly on the next slide's first frame. The
+  // clip can't do this itself (where it is when you click is not known in advance), so the deck does:
+  // `data-magicpos` carries, for every frame of the loop, each mass's world x (written by the clip's
+  // generator, e.g. gen/wave_closed_loop.py), plus the rest positions, radius, fps and world extent.
+  // On →: pause the loop, cross-fade it to dots drawn at the same places on a canvas (coils, arrows and
+  // the trace fade away), glide the frame into the house stack box (graph.stack_* tokens — the same
+  // arithmetic as layoutStack) while the dots settle to rest, then advance and fade the canvas out
+  // over the next slide's first frame, which shows those very dots at rest.
+  function magicMove(cur){
+    let D; try{ D = JSON.parse(cur.dataset.magicpos); }catch(e){ Reveal.next(); return; }
+    cur._magicRunning = true;
+    const v = player, LW = layer.clientWidth, LH = layer.clientHeight;
+    const r0 = mrect ? {x:mrect.x, y:mrect.y, w:mrect.w, h:mrect.h} : {x:0, y:0, w:LW, h:LH};
+    const n = D.frames, f = ((Math.round((v.currentTime || 0) * D.fps) % n) + n) % n;
+    try{ v.pause(); }catch(e){}
+    const xs0 = D.x[f], rest = D.rest, X0 = D.world[0], X1 = D.world[1], Y0 = D.world[2], Y1 = D.world[3];
+    // Where the next slide's animation sits. An animfit stack shrinks it into the box above the strip
+    // (layoutStack's arithmetic); a stack WITHOUT animfit keeps it full size, contained in the frame and
+    // lifted by data-animshift % (Class O's wave-closed since 2026-10-16, with a full-width strip below).
+    const nx = cur.nextElementSibling, nd = (nx && nx.dataset) || {};
+    let r1;
+    if(nd.animfit !== undefined){
+      const sh = Math.min(LH * STACK.graphH, LW * 0.96 / (1200 / 360));
+      const ah = LH - (sh + LH * STACK.bottomPct / 100 + LH * STACK.gapPct / 100);
+      const aw = Math.min(LW, ah * 16 / 9); r1 = {x:(LW - aw) / 2, y:0, w:aw, h:aw * 9 / 16};
+    } else {
+      const aw = Math.min(LW, LH * 16 / 9), ah = aw * 9 / 16, sh = parseFloat(nd.animshift) || 0;
+      r1 = {x:(LW - aw) / 2, y:(LH - ah) / 2 - LH * sh / 100, w:aw, h:ah};
+    }
+    const dpr = window.devicePixelRatio || 1, cv = document.createElement('canvas');
+    cv.width = Math.round(LW * dpr); cv.height = Math.round(LH * dpr);
+    cv.style.cssText = 'position:absolute;left:0;top:0;width:' + LW + 'px;height:' + LH + 'px;z-index:50;pointer-events:none;';
+    layer.appendChild(cv);
+    const ctx = cv.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const core = (getComputedStyle(document.documentElement).getPropertyValue('--mass') || '').trim() || '#f0f0f5';
+    // Optional D.colors: the next slide's per-dot shades (hex). The dots leave in --mass and arrive in
+    // those, blended over the glide, so the landing on a shaded first frame does not pop. Absent → --mass.
+    const rgb = h => { const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(h || '');
+      return m ? [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)] : null; };
+    const c0 = rgb(core) || [240, 240, 245], cTo = Array.isArray(D.colors) ? D.colors.map(rgb) : null;
+    const draw = (R, xs, a, e) => {
+      ctx.clearRect(0, 0, LW, LH); ctx.globalAlpha = a; ctx.fillStyle = core;
+      const rad = D.radius / (X1 - X0) * R.w, py = R.y + (Y1 - D.y) / (Y1 - Y0) * R.h;
+      xs.forEach((x, i) => {
+        const c1 = cTo && cTo[i];
+        if(c1){ const k = e || 0; ctx.fillStyle = 'rgb(' + c0.map((v, j) => Math.round(v + (c1[j] - v) * k)).join(',') + ')'; }
+        ctx.beginPath(); ctx.arc(R.x + (x - X0) / (X1 - X0) * R.w, py, rad, 0, 2 * Math.PI); ctx.fill(); });
+    };
+    const ease = t => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+    const T_FADE = 180, T_MOVE = 1000, T_OUT = 280, t0 = performance.now();
+    const lerp = (a, b, e) => a + (b - a) * e;
+    const step = now => {
+      const t = now - t0;
+      if(t < T_FADE){ const a = t / T_FADE; v.style.opacity = String(1 - a); draw(r0, xs0, a); requestAnimationFrame(step); return; }
+      v.style.opacity = '0';
+      const u = Math.min(1, (t - T_FADE) / T_MOVE), e = ease(u);
+      const R = {x:lerp(r0.x, r1.x, e), y:lerp(r0.y, r1.y, e), w:lerp(r0.w, r1.w, e), h:lerp(r0.h, r1.h, e)};
+      draw(R, xs0.map((x, i) => lerp(x, rest[i], e)), 1, e);
+      if(u < 1){ requestAnimationFrame(step); return; }
+      cur._magicRunning = false; cur._magicDone = true;
+      Reveal.next();
+      const t1 = performance.now();
+      const out = now2 => { const a = 1 - (now2 - t1) / T_OUT;
+        if(a <= 0){ cv.remove(); v.style.opacity = ''; return; }
+        cv.style.opacity = String(a); requestAnimationFrame(out); };
+      setTimeout(() => requestAnimationFrame(out), 120);       // give the next slide's first frame a beat to paint
+    };
+    requestAnimationFrame(step);
+  }
+
   function smartNext(){
     // In the speaker-view iframe (a read-only mirror), NEVER act locally — forward the advance to the MAIN deck
     // window, so the sim/clip/poll/exit-quiz fires on the projector, not in the little speaker preview.
@@ -1577,6 +1678,8 @@
       return;
     }
     const cur = Reveal.getCurrentSlide();
+    if(cur && cur._magicRunning) return;                      // a magic move is in flight — swallow the press
+    if(cur && cur.dataset.magicpos){ magicMove(cur); return; }   // data-magicpos: fly into the next slide (above)
     // Sim slide: the first → plays the animation; once it's been played (→ or a Play click), → advances.
     if(cur && cur.classList.contains('sim') && cur._sim && !cur._sim.everPlayed){ cur._sim.play(); return; }
     // A STAGED sim: once it has played, the next → advances the sim's OWN stage before the press
@@ -1611,7 +1714,12 @@
     if(cur && cur.dataset.stack && cur.dataset.sync !== undefined){
       const st = cur._stack;
       if(cur.dataset.loop !== undefined){ if(st && !st.frozen){ freezeStack(cur); return; } }
-      else { if(!st || !st.started){ playStack(cur); return; } }
+      else {
+        if(!st || !st.started){ playStack(cur); return; }
+        if(st.held){ resumeStack(st); return; }                                            // data-pauses: go on
+        if(st.pauses && st.pi < st.pauses.length && !st.els[0].ended){ if(stackRaf){ cancelAnimationFrame(stackRaf); stackRaf = null; }
+          holdStack(st, st.pauses[st.pi]); return; }                                        // → mid-run: jump to the next stop
+      }
     }
     // Multi-clip playlist slide (e.g. the Lewin cuts): first → plays clip 0; each later → jumps to the next
     // clip and plays it; after the last clip, fall through and advance the slide normally.
