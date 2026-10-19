@@ -80,7 +80,7 @@ let run = null, axis = "z", buf = { t: [], a: [] }, seq = 0, count = 0, t0 = 0, 
 // LIN3 mode (the workshop deck, 2026-10-14): all three axes of Acceleration (without g), batched at the
 // analyzer's requested rate. The prototype analyzer sends neither `src` nor `axis:"all"` and keeps the old
 // single-axis, gravity-included stream.
-let lin3 = false, showAxis = "z", batchMs = 200;
+let lin3 = false, lin1 = false, showAxis = "z", batchMs = 200;   // lin1: ONE axis of linear acceleration (the deck, 2026-10-15)
 let wakeLock = null;
 
 if (!ROOM) show("warn", "No analyzer code", "Scan the QR code on the classroom screen to open this page.");
@@ -89,10 +89,14 @@ if (SIM) { $("tag").hidden = false; $("tag").textContent = "Simulated sensor"; }
 // ── sensor ────────────────────────────────────────────────────
 function onSample(t, g, lin) {
   sensorSeen = true;
-  latest = lin3 ? lin : g;
+  latest = (lin3 || lin1) ? lin : g;
   if (state !== "collecting") return;
   if (!t0) t0 = t;
-  if (lin3) {
+  if (lin1) {
+    if (!lin) { linMissing++; return; }
+    buf.t.push(+((t - t0) / 1000).toFixed(4));
+    buf.a.push(+lin[axis].toFixed(4));
+  } else if (lin3) {
     if (!lin) { linMissing++; return; }
     buf.t.push(+((t - t0) / 1000).toFixed(4));
     buf.x.push(+lin.x.toFixed(4)); buf.y.push(+lin.y.toFixed(4)); buf.z.push(+lin.z.toFixed(4));
@@ -218,15 +222,16 @@ function busy() {
 function startCollecting(r, ax, m) {
   m = m || {};
   lin3 = m.src === "lin" && ax === "all";
+  lin1 = m.src === "lin" && /^[xyz]$/.test(ax);
   showAxis = m.show || "z"; batchMs = Math.max(100, +m.batchMs || 200);
   run = r; axis = lin3 ? showAxis : ax; seq = 0; count = 0; t0 = 0; linMissing = 0;
-  buf = lin3 ? { t: [], x: [], y: [], z: [] } : { t: [], a: [] };
+  buf = lin3 ? { t: [], x: [], y: [], z: [] } : { t: [], a: [] };   // lin1 uses {t, a}, like the prototype
   state = "collecting";
-  show("rec", "Recording", lin3 ? "Keep this page open. The laptop stops the recording."
+  show("rec", "Recording", (lin3 || lin1) ? "Keep this page open. The laptop stops the recording."
                                : "Recording acceleration along the phone's " + ax + " axis.", { value: true });
   clearInterval(flushTimer);
-  flushTimer = setInterval(flush, lin3 ? batchMs : 200);
-  if (lin3) setTimeout(() => {
+  flushTimer = setInterval(flush, (lin3 || lin1) ? batchMs : 200);
+  if (lin3 || lin1) setTimeout(() => {
     if (state === "collecting" && count === 0 && linMissing > 0) {
       stopCollecting(false);
       conn.send({ type: "error", phone: me.id, msg: "this phone doesn't report acceleration without gravity. Use a partner's phone, or phyphox" });

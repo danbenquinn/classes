@@ -3,8 +3,8 @@
    An add-on to analyzer-engine.js, like live-capture.js: it wraps engine globals and changes nothing
    inside the engine. First used by the live-capture copy of Workshop 4.
 
-   THE GROUP STEP (`group:{max:N}` on a step; the deck's first step, so students fill it in while they
-   wait for the access code). One box per person, up to N. Each computing ID is checked AS IT IS TYPED
+   THE GROUP BOXES (`group:{max:N}` on a step; Workshop 4 puts them on the title step, above the access
+   code, so students fill them in while they wait for the code). One box per person, up to N. Each computing ID is checked AS IT IS TYPED
    against CONFIG.group.roster: a green ✓ when it is on the class list, "not on the class list" when it is
    not. Next unlocks once every filled box is green, at least one is filled, and no ID appears twice.
 
@@ -111,7 +111,10 @@ function mountGroup(st, prose){
     }
   };
   draw();
-  prose.appendChild(wrap);
+  // On the title step the group goes ABOVE the access code (Daniel, 2026-10-15): sign in while you wait, then
+  // the code once it's announced.
+  const code=prose.querySelector(".coderow");
+  if(code) prose.insertBefore(wrap, code); else prose.appendChild(wrap);
 }
 
 /* ------------------------------ the payload ------------------------------ */
@@ -192,6 +195,56 @@ function mountSubmit(st, prose){
   paintSubmit(st);
 }
 
+/* ------------------------------ the wrap-up row (2026-10-16, Daniel) ------------------------------
+   `wrapup` on the summary step: two cards side by side under the top region's "Nice work." — a comments box
+   ("what would have made this go more smoothly?") and consent to use the group's data as a future sample,
+   anonymous or credited to a team name. Both are optional and never gate Submit. They are stored in
+   S.answers (wrap_comments, wrap_share, wrap_credit, wrap_team, so the payload carries them) AND written
+   into the summary text, which is the receipt the group sees and the record that is kept. */
+function wrapupText(){
+  const a=S.answers, c=String(a.wrap_comments||"").trim(), team=String(a.wrap_team||"").trim();
+  const share = a.wrap_share==="yes" ? "yes, " + (a.wrap_credit==="team" ? "credited to " + (team||"(no team name given)") : "anonymous")
+              : a.wrap_share==="no" ? "no" : "(not answered)";
+  return "\n\nComments for future years: " + (c ? c.replace(/\s*\n\s*/g," / ") : "(none)")
+       + "\nOK to use our raw acceleration data as a sample in future years: " + share;
+}
+function refreshWrapSummary(st){
+  const ta=document.querySelector("#stepbody .summary-wrap textarea"); if(!ta) return;
+  ta.value = buildSummary(st.summary) + wrapupText();
+  ta.rows = (st.summary.rows||9) + 3;
+}
+function mountWrapup(st){
+  const host=document.querySelector("#topmedia .topcustom"); if(!host) return;
+  const a=S.answers, box=document.createElement("div"); box.className="wrapup";
+  box.innerHTML =
+     '<div class="wu-card"><label class="wu-q" for="wu-comments">Is there anything that would have made this workshop go more smoothly? We read every comment when we plan next year.</label>'
+    +'<textarea id="wu-comments" rows="4" placeholder="Optional"></textarea></div>'
+    +'<div class="wu-card"><div class="wu-q">Is it OK if we use your raw acceleration data as a sample in future years?</div>'
+    +'<div class="wu-opts"><label><input type="radio" name="wu-share" value="yes"> Yes</label><label><input type="radio" name="wu-share" value="no"> No</label></div>'
+    +'<div class="wu-credit"><div class="wu-q2">I want the data to be</div>'
+    +'<div class="wu-opts"><label><input type="radio" name="wu-credit" value="anon"> anonymous</label>'
+    +'<label><input type="radio" name="wu-credit" value="team"> credited to</label>'
+    +'<input type="text" id="wu-team" maxlength="60" placeholder="Team Awesome" autocomplete="off"></div></div></div>';
+  host.appendChild(box);
+  const com=box.querySelector("#wu-comments"), team=box.querySelector("#wu-team"), cred=box.querySelector(".wu-credit");
+  const radios=n=>[...box.querySelectorAll('input[name="'+n+'"]')];
+  const paint=()=>{ cred.style.display = a.wrap_share==="yes" ? "" : "none";
+    radios("wu-share").forEach(r=>r.checked = r.value===a.wrap_share);
+    radios("wu-credit").forEach(r=>r.checked = r.value===a.wrap_credit);
+    refreshWrapSummary(st); };
+  com.value=a.wrap_comments||""; team.value=a.wrap_team||"";
+  com.addEventListener("input",()=>{ a.wrap_comments=com.value; refreshWrapSummary(st); });
+  radios("wu-share").forEach(r=>r.addEventListener("change",()=>{ a.wrap_share=r.value;
+    if(r.value==="yes" && !a.wrap_credit) a.wrap_credit="anon"; paint(); }));
+  radios("wu-credit").forEach(r=>r.addEventListener("change",()=>{ a.wrap_credit=r.value; paint();
+    if(r.value==="team") team.focus(); }));
+  // the gray example name goes the moment the box is clicked, not when typing starts (Daniel)
+  team.addEventListener("focus",()=>{ team.placeholder=""; });
+  team.addEventListener("blur",()=>{ if(!team.value) team.placeholder="Team Awesome"; });
+  team.addEventListener("input",()=>{ a.wrap_team=team.value; if(team.value.trim()) a.wrap_credit="team"; paint(); });
+  paint();
+}
+
 /* ------------------------------ the hooks ------------------------------ */
 const _renderStep=renderStep;
 renderStep=function(){
@@ -202,6 +255,7 @@ renderStep=function(){
   try{
     if(st.group) mountGroup(st, prose);
     if(st.submit) mountSubmit(st, prose);
+    if(st.wrapup && st.summary) mountWrapup(st);
   }catch(e){ console.error("group-submit:", e); }
 };
 const _stepComplete=stepComplete;

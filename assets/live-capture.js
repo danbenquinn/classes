@@ -4,7 +4,7 @@
    (first: the live-capture copy of Workshop 4, Springs Uneternal). A `live:` step shows a QR code. A
    student scans it with the phone they are measuring with; the phone page
    (danbenquinn.github.io/classes/accel/phone.html) streams Acceleration (without g) back over Supabase
-   Realtime, and the step's plot fills as it records. Begin / Stop / Try again / Accept live in a card
+   Realtime, and the step's plot fills as it records. Record / Stop / Try again / Accept live in a card
    beside the step's prose. Accept leaves the run in the slot exactly as a loaded phyphox file would, so
    every later step (Fit Damped, the axis lock, the range checks) is unchanged.
 
@@ -16,8 +16,10 @@
    Teacher mode is untouched: `ungated()` still opens every gate, mid-capture included.
 
    THE DATA. The deck receives a table with phyphox's own headers ("Time (s)", "Linear Acceleration
-   x (m/s^2)", …) and hands it to ingestParsed(), the same entry point a file uses. All three axes are
-   kept; the step's `requireAxis` picks the plotted one, as it does for a file.
+   z (m/s^2)") and hands it to ingestParsed(), the same entry point a file uses. ONLY the step's
+   `requireAxis` is recorded (2026-10-15, Daniel: z for the ruler, x for the arm), a third of the traffic,
+   so the Signal dropdown holds one entry and is frozen there. The dropdown stays, for a step that someday
+   wants more than one axis.
 
    RATE. Supabase's free plan allows 100 Realtime messages a second for the whole project, and a batch
    counts twice (sent, then delivered). The phone sends ONE batch a second, so a room of 25 pairs all
@@ -120,7 +122,7 @@ function onMsg(m){
   if(m.phone!==LC.phone) return;
   if(m.type==="data" && m.run===LC.run && LC.buf){
     if(LC.seen.has(m.seq)) return; LC.seen.add(m.seq);
-    const B=LC.buf; for(let i=0;i<m.t.length;i++){ B.t.push(m.t[i]); B.x.push(m.x[i]); B.y.push(m.y[i]); B.z.push(m.z[i]); }
+    const B=LC.buf; for(let i=0;i<m.t.length;i++){ B.t.push(m.t[i]); B.a.push(m.a[i]); }
     drawLive();
     if(LC.recState==="finishing" && LC.expected!=null && LC.seen.size>=LC.expected) finish();
   } else if(m.type==="done" && m.run===LC.run){
@@ -148,11 +150,12 @@ function nextTarget(st){ const ks=liveSlots(st); return ks.find(k=>{ const P=pan
 function begin(){
   const P=panelByKey(LC.target); if(!P || !LC.phone) return;
   LC.run=Math.random().toString(36).slice(2,8);
-  LC.buf={ t:[], x:[], y:[], z:[] }; LC.seen=new Set(); LC.expected=null;
+  LC.axis=(NARR[S.step].requireAxis||"z").replace(/^g/,"");
+  LC.buf={ t:[], a:[] }; LC.seen=new Set(); LC.expected=null;
   LC.recState="rec"; LC.startedAt=performance.now();
   P._lc="rec"; P._lcFirst=true; LC.error=null;
   P.ds=null; P.sel=null; P.point=null; P.dfit=null; P.fit=null; P.crop=null; P.fileName=null;
-  LC.conn.send({ type:"start", phone:LC.phone, run:LC.run, src:"lin", axis:"all", show:(NARR[S.step].requireAxis||"z"), batchMs:LCFG.batchMs });
+  LC.conn.send({ type:"start", phone:LC.phone, run:LC.run, src:"lin", axis:LC.axis, show:LC.axis, batchMs:LCFG.batchMs });
   logEv("begin", { slot:P.key });
   render(); paint(); tick();
 }
@@ -173,8 +176,8 @@ function stop(){
 function toParsed(B){
   const idx=B.t.map((_,i)=>i).sort((i,j)=>B.t[i]-B.t[j]);
   const pick=a=>idx.map(i=>a[i]);
-  const H=["Time (s)","Linear Acceleration x (m/s^2)","Linear Acceleration y (m/s^2)","Linear Acceleration z (m/s^2)"];
-  const cols={}; cols[H[0]]=pick(B.t); cols[H[1]]=pick(B.x); cols[H[2]]=pick(B.y); cols[H[3]]=pick(B.z);
+  const H=["Time (s)","Linear Acceleration "+LC.axis+" (m/s^2)"];
+  const cols={}; cols[H[0]]=pick(B.t); cols[H[1]]=pick(B.a);
   return { headers:H, cols };
 }
 function drawLive(){
@@ -281,8 +284,8 @@ function paint(){
   } else {
     h+='<div class="lc-big lc-ok">✓ Phone connected</div>'
      +'<p class="lc-sub">'+(multi?'Next: the <b>'+esc(((T&&T.label)||"").replace(/^.*—\s*/,"").toLowerCase())+'</b> run. ':'')
-     +'Press <b>Begin</b>, then do the experiment.</p>'
-     +'<button class="deck-go lc-begin" data-lc="begin">Begin</button>';
+     +'Press <b>Record</b>, then do the experiment.</p>'
+     +'<button class="deck-go lc-begin" data-lc="begin"><span class="lc-dot"></span>Record</button>';
     if(LC.error) h+='<div class="lc-err">'+esc(LC.error)+'</div>';
   }
   h+='<div class="lc-foot"><a href="#" data-lc="file">'+(LC.showFile?"Hide the file picker":"Use phyphox instead")+'</a></div>';
@@ -325,7 +328,9 @@ renderStep=function(){
   // leaving a step mid-recording abandons that run: nothing half-recorded survives into a later step
   if(LC.recState!=="idle" && !(st && st.live && liveSlots(st).indexOf(LC.target)>=0)){ if(LC.conn&&LC.phone) LC.conn.send({type:"stop",phone:LC.phone,run:LC.run}); abortRun(); }
   if(st && st.live){ try { mount(st); } catch(e){ console.error("live-capture:", e); } }
-  else S.panels.forEach(P=>{ if(P.file && !P.supplied) P.file.style.display=""; });
+  // Off a capture step the pickers come back, except over a run that was captured live: "Choose File · No
+  // file chosen" beside a trace the phone recorded reads as a demand for a file nobody needs.
+  else S.panels.forEach(P=>{ if(P.file && !P.supplied) P.file.style.display = P.liveRun ? "none" : ""; });
 };
 // An empty live slot says how it gets data, not "load the export with the picker above".
 const _renderPanel=renderPanel;
@@ -336,7 +341,7 @@ renderPanel=function(P){
     c.fillStyle=getCss("--muted"); c.font=font(14); c.textAlign="center"; c.textBaseline="middle";
     const lab=(P.label||"").replace(/^.*—\s*/,"").toLowerCase();
     c.fillText(LC.target!==P.key ? "The "+lab+" run goes here, after the "+((panelByKey(LC.target)||{}).label||"").replace(/^.*—\s*/,"").toLowerCase()+" one."
-             : LC.phone ? "Press Begin below, then do the experiment. The recording draws here."
+             : LC.phone ? "Press Record below, then do the experiment. The recording draws here."
              : "Scan the code below with your phone to record into this plot.", W/2, H/2);
     return;
   }
@@ -385,6 +390,10 @@ css.textContent=`
 .lc-card .lc-stats{font-family:var(--font-mono);color:var(--ink);margin:0 0 10px;font-variant-numeric:tabular-nums;}
 .lc-card .lc-btns{display:flex;gap:8px;flex-wrap:wrap;}
 .lc-card .lc-stop{border-color:var(--mma-red);color:var(--mma-red);}
+/* Record (2026-10-16, Daniel): a red, filled record button, not a neutral Begin. */
+.lc-card .lc-begin{background:var(--mma-red);border-color:var(--mma-red);color:#fff;font-weight:700;display:inline-flex;align-items:center;gap:8px;}
+.lc-card .lc-begin:hover{filter:brightness(1.12);}
+.lc-card .lc-begin .lc-dot{width:10px;height:10px;border-radius:50%;background:#fff;}
 .lc-card .lc-stop:hover{background:var(--mma-red);color:var(--bg);}
 .lc-card .lc-accept{border-color:var(--ok);color:var(--ok);}
 .lc-card .lc-accept:hover{background:var(--ok);color:var(--bg);}

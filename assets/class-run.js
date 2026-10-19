@@ -3,13 +3,13 @@
    An add-on to analyzer-engine.js, like live-capture.js and group-submit.js (it wraps renderStep only).
 
    `classrun:{ slot:"car" }` on a step: the first time any such step renders, the deck asks Supabase for
-   the newest run of this workshop (`get_class_run`, see lab-suite/accel-prototype/class-runs-setup.sql)
+   the newest run of this workshop, whenever it was saved (`get_class_run`, see lab-suite/accel-prototype/class-runs-setup.sql)
    and loads it into the slot like a supplied dataset: no file picker, no capture card. Daniel records
    that run on accel/instructor.html during the lab, so a group reaching the class section an hour later
    finds it waiting.
 
-   THE FAILSAFE. If the run can't be fetched (no network, server down) or none was recorded in the last
-   four hours, the slot gets the deck's baked sample (`DEMO_CSVS[slot]`, Daniel's own run from
+   THE FAILSAFE. If the run can't be fetched (no network, server down) or none has been recorded in the last
+   week, the slot gets the deck's baked sample (`DEMO_CSVS[slot]`, Daniel's own run from
    2026-10-15) and the step says so. Students never get stuck on an empty plot. A note under the lead
    shows which one is loaded and offers "check for a newer class run"; in teacher mode it also offers
    "use the baked sample", for projecting a known-good trace. */
@@ -21,11 +21,15 @@ const C=Object.assign({
   url:"https://rdbacwwbeyeqdkswwvjt.supabase.co",
   key:"sb_publishable_IQNxMMynit0aWtOS3tjiRQ_h5sNo159",
   workshop:(CONFIG.submit && CONFIG.submit.workshop) || CONFIG.title,
-  maxAgeMin:240,
+  // "The newest run, full stop" (Daniel, 2026-10-15): the class sees whatever was saved last. The SQL caps the
+  // look-back at a week, which is the same thing in practice; older than that falls back to the sample.
+  maxAgeMin:10080,
 }, (typeof CONFIG!=="undefined" && CONFIG && CONFIG.classrun) || {});
 const R={ state:"idle", source:null, at:null, n:0, err:null, slot:null };
 window.__classRun=R;
-const fmtTime=d=>d.toLocaleTimeString([], { hour:"numeric", minute:"2-digit" });
+// Today's run says only the time; an older one carries its day too, so a rehearsal can't pass for today's.
+const fmtTime=d=>{ const t=d.toLocaleTimeString([], { hour:"numeric", minute:"2-digit" });
+  return d.toDateString()===new Date().toDateString() ? t : d.toLocaleDateString([], { weekday:"short", month:"short", day:"numeric" })+", "+t; };
 
 function toParsed(run){
   const H=run.headers || ["Time (s)","Linear Acceleration x (m/s^2)","Linear Acceleration y (m/s^2)","Linear Acceleration z (m/s^2)"];
@@ -87,7 +91,10 @@ renderStep=function(){
   P.supplied=true; if(P.file) P.file.style.display="none";
   const prose=document.querySelector("#stepbody .deck-prose");
   if(prose){ const n=document.createElement("p"); n.id="cr-note"; n.className="aside cr-note"; n.addEventListener("click", onClick); prose.appendChild(n); }
-  if(!P.ds) load(P, false); else paint();
+  // Always ask, even if the slot already holds data: teacher mode's "Load sample data" fills EVERY slot
+  // from DEMO_CSVS, this one included, and that must not stop the real class run from loading over it.
+  // load() is a no-op once the run (or the fallback) is in, so later steps don't refetch.
+  load(P, false); paint();
 };
 
 const css=document.createElement("style");

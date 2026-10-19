@@ -176,6 +176,7 @@
   #ctx .fitctl{display:inline-flex;align-items:center;gap:4px;color:var(--ink);white-space:nowrap;}
   #ctx .fitctl>label{color:var(--muted);}
   #ctx .fitctl input[type=number]{width:56px;padding:3px 5px;}
+  #ctx .fitctl input#dfzval{width:64px;}   /* Fit Damped's ζ prints 3 decimals (2026-10-13) */
   #ctx .fitctl .unit{color:var(--muted);font-size:var(--fs-label);}
   #ctx .chk{cursor:pointer;white-space:nowrap;}
   #ctx .chk input{accent-color:var(--result);margin:0 2px 0 0;}
@@ -463,3 +464,18 @@
 #topmedia img.coursestrip{ position:absolute; left:0; top:0; width:100%; height:auto;
               max-width:none; max-height:none; object-fit:fill; z-index:4; pointer-events:none;
               opacity:.92; filter:drop-shadow(0 2px 14px rgba(0,0,0,.85)); }
+
+/* `autofill` dampfit boxes (2026-10-16): filled from the fit, not typed — read as output, not as a field. */
+#stepbody input.autofill{ background:transparent; border-style:dashed; cursor:default; }
+#stepbody input.autofill:focus{ outline:none; }
+
+/* `wrapup` (2026-10-16): comments + data-consent cards, side by side under the summary step's "Nice work." */
+#topmedia .wrapup{display:flex;gap:16px;margin:28px auto 0;max-width:900px;text-align:left;flex-wrap:wrap;}
+#topmedia .wu-card{flex:1 1 300px;background:var(--raised);border:1px solid var(--line);border-radius:8px;padding:12px 14px;font-size:var(--fs-ui);line-height:1.4;color:var(--ink);}
+#topmedia .wu-q{display:block;font-weight:600;margin:0 0 8px;}
+#topmedia .wu-q2{margin:10px 0 6px;color:var(--muted);}
+#topmedia .wu-card textarea{width:100%;box-sizing:border-box;resize:vertical;font:inherit;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:6px 8px;}
+#topmedia .wu-opts{display:flex;gap:16px;align-items:center;flex-wrap:wrap;}
+#topmedia .wu-opts label{display:inline-flex;gap:6px;align-items:center;cursor:pointer;}
+#topmedia .wu-card input[type=text]{font:inherit;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:4px 8px;width:150px;}
+#topmedia .wu-card input[type=text]::placeholder{color:var(--muted);opacity:.7;}
