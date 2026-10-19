@@ -27,8 +27,19 @@
   }
   *{box-sizing:border-box;}
   html,body{height:100%;margin:0;}
+  /* A floor on the page height (2026-10-20, a group on Edge/Windows). The 3fr/2fr split shares 100vh, so a short
+     viewport (Windows display scaling at 125–150 %, browser zoom, a favorites bar) squeezed both: at 600 px tall
+     each of two plots got ~117 px and the deck clipped its own input boxes. Below 780 px the page now keeps its
+     780 px layout and the window scrolls instead (html scrolls; body still clips its own panes). */
+  html{overflow-y:auto;}
   body{font-family:var(--font-sans);color:var(--ink);background:var(--bg);
-       display:grid;grid-template-rows:3fr 2fr;height:100vh;overflow:hidden;}
+       display:grid;grid-template-rows:3fr 2fr;grid-auto-rows:0;height:100vh;min-height:780px;overflow:hidden;}
+  /* PINNED to their rows (2026-10-20, the same Edge group: top 60% blank, both plots crushed into a strip). The
+     page is a two-row grid on <body>, and anything a browser or extension inserts at the START of <body> after
+     load becomes the first grid item: it took the 3fr row, pushed #topzone into the 2fr row, and #deck into an
+     extra row. Reproduced headless by prepending one empty <div>. Explicit rows keep the panes where they
+     belong; grid-auto-rows:0 gives any stray child a zero-height row of its own. */
+  body>#topzone{grid-row:1;} body>#deck{grid-row:2;}
   /* ---- top zone (analyzer, or a video / figure overlay) ---- */
   #topzone{position:relative;min-height:0;overflow:hidden;}
   #analyzer{height:100%;display:flex;flex-direction:column;min-height:0;}
