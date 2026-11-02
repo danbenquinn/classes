@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<!-- Unlisted demo of the MAE 2501 HTML decks (two slides). Not linked from the contents page; noindex.
+     Built by hand from Class D's sim-2d, and a still of Class S's S3-2_PressureBase beside Class S's board-1. -->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<title>MAE 2501 — HTML deck demo</title>
+<link rel="stylesheet" href="../assets/fonts.css">
+<link rel="stylesheet" href="../assets/reveal.min.css">
+<link rel="stylesheet" href="../assets/black.min.css" id="theme">
+<link rel="stylesheet" href="../assets/tokens.css">
+<link rel="stylesheet" href="../assets/deck.css">
+<style>
+  /* Slide 2 only: a frozen frame beside its boardwork, the way a narrated clip would pair them. */
+  .reveal .slides section.mathfig{ top:0 !important; height:100%; padding:0; }
+  .mathfig .page{ position:absolute; inset:0; background:#000; color:#f2f2ef;
+                  display:flex; align-items:center; gap:3%; padding:3% 4% 3% 3%; box-sizing:border-box; }
+  .mathfig .fig{ height:100%; flex:0 0 auto; display:flex; align-items:center; }
+  .mathfig .fig img{ height:100%; width:auto; max-height:none; margin:0; border:0; box-shadow:none; display:block; }
+  .mathfig .math{ flex:1 1 auto; display:flex; flex-direction:column; justify-content:center; align-items:center; }
+  .mathfig .eq{ font-size:42px; line-height:1.1; margin:.05em 0; }
+  .mathfig .eq mjx-container[display="true"]{ margin:.25em 0 !important; }
+  .mathfig .rule{ width:85%; border-top:2px solid #33343f; margin:.4em 0; }
+</style>
+</head>
+<body>
+<div class="reveal">
+
+  <div id="media-layer"></div>
+
+  <div class="slides">
+
+    <!-- 1 · An interactive animation: Class D's 2-D projectile sim (drag the arrow or use the sliders, then launch). -->
+    <section id="sim-2d" data-title="Interactive sim — 2-D projectile (Class D)" class="stage sim" data-sim="projectile2d" data-type="sim">
+    </section>
+
+    <!-- 2 · Math beside a graphic: a frozen frame of Class S's piston clip (S3-2_PressureBase at 3 s, cropped and
+         turned upright so the piston pushes down) next to Class S board-1, with x → y to match the turned frame. -->
+    <section id="piston-board" data-title="Frozen schematic + boardwork — pressure from bounces (Class S)" class="stage mathfig" data-background-color="#000000" data-type="slide">
+      <div class="page">
+        <div class="fig"><img src="piston-portrait.jpg" alt="Gas molecules in a tall box, held in by a piston pushed down from above"></div>
+        <div class="math">
+          <div class="eq">$$\Delta(m\dot y)=2m|\dot y|\ \text{per hit}$$</div>
+          <div class="eq">$$F_\text{avg}=\frac{2m|\dot y|}{2\ell/|\dot y|}=\frac{m\dot y^2}{\ell}$$</div>
+          <div class="rule"></div>
+          <div class="eq">$$p=\frac{F_\text{avg}}{\ell^2}=\frac{n\,m}{\ell^3}\,\overline{\dot y^2}=\rho\,\overline{\dot y^2}$$</div>
+          <div class="eq">$$\Longrightarrow\quad\boxed{\ p=\tfrac13\,\rho\,\overline{|\dot{\underline r}|^2}\ }$$</div>
+        </div>
+      </div>
+    </section>
+
+  </div>
+</div>
+
+<script src="../assets/reveal.min.js"></script>
+<script src="../assets/mathjax-config.js"></script>
+<script src="../assets/tex-svg.js"></script>
+<script src="../assets/interactive.js"></script>
+<script>
+  // Published-mode config: no poll secret, no notes. Same shape as a site_build.py copy.
+  window.DECK_CONFIG = { published: true, iconBase: '', classId: "demo" };
+</script>
+<script src="../assets/deck.js"></script>
+</body>
+</html>
