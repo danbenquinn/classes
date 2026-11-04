@@ -337,9 +337,14 @@
       // accented glyph is not safe to assume. Canvas has measureText, so the positions are measured.
       if (vlabel.indexOf("mdot_") === 0) { const v = vlabel.split("_")[1];
         ctx.fillText("m", lx, ly);
-        const vx = lx + ctx.measureText("m").width, vw = ctx.measureText(v).width;
-        ctx.fillText(v, vx, ly);
+        // `mdot_x1` (Class R's two-ball strips, 2026-11-03): the letter then a SUBSCRIPT index, and the
+        // overdot centered over the letter alone — not over the letter-plus-index string.
+        const letter = v[0], sub = v.slice(1);
+        const vx = lx + ctx.measureText("m").width, vw = ctx.measureText(letter).width;
+        ctx.fillText(letter, vx, ly);
         ctx.beginPath(); ctx.arc(vx + vw * 0.5, ly - fs * 0.72, fs * 0.07, 0, TAU); ctx.fill();
+        if (sub) { ctx.font = "italic " + (fs * 0.66) + "px " + HOUSE.fontMono; ctx.fillText(sub, vx + vw, ly + fs * 0.22);
+                   ctx.font = "italic " + fs + "px " + HOUSE.fontMono; }
       } else if (vlabel.indexOf("_") >= 0) { const p = vlabel.split("_");   // e.g. F_y → base + subscript
         ctx.fillText(p[0], lx, ly); const bw = ctx.measureText(p[0]).width;
         ctx.font = "italic " + (fs * 0.66) + "px " + HOUSE.fontMono; ctx.fillText(p[1], lx + bw, ly + fs * 0.22);
@@ -5626,6 +5631,433 @@
     return sim;
   }
 
+  // ============================================================================================
+  // Collision1D (data-sim="collision") — Class R, 2026-11-03 (Daniel). Two balls, one push-only
+  // contact, two sliders and a change of frame.
+  //
+  // WHAT IT REPLACES. The elastic 1-D clips (R2-1 exchange, R2-2 light into heavy, R2-3 heavy into
+  // light) and the inelastic ones (R4-2, R4-1) — one preset, two slides. NO SPRINGS ON SCREEN (Daniel,
+  // 2026-11-04: the bumper coils distracted from the learning): the balls touch surface to surface and
+  // the contact's compression is drawn as SQUISH — each ball cut flat at the contact plane, half the
+  // overlap each, with a slight bulge so its area is kept; they pop back round as they part. A green
+  // elastic-force pair and an amber damping pair, each equal and opposite.
+  //
+  // THE TWO SLIDERS (`data-noratio` hides the mass one: Class R shows equal masses first).
+  //   m₁/m₂ — log scale, 1/10 to 10 with 1 in the middle. The masses are m₁ = √r, m₂ = 1/√r (their
+  //           geometric mean stays 1), drawn at radius ∝ ∛m like every other mass in the course.
+  //   e     — the coefficient of restitution, 0 to 1.
+  //
+  // THE CONTACT (revised 2026-11-04, Daniel: "a vertical jump in the spring force … doesn't look
+  // physical"). The first version was a spring IN PARALLEL with a dashpot, F = k s + c ṡ: at the instant
+  // of touching s = 0 but ṡ is the full closing speed, so the force JUMPED to c·U — a vertical edge on
+  // the strip, worst as e → 0. It is now the Hunt–Crossley contact, F = s (k + c ṡ), push-only: the
+  // damping is proportional to the compression, so the force starts and ends at zero for every e.
+  // With the closing speed U fixed, e depends only on β = c U / k, tabulated once (dimensionless, same
+  // scheme) and inverted. A sticky contact must still take visible time, so the stiffness SOFTENS as β
+  // grows, k = K/(1 + β/β₀): elastic is the clips' spring, and as e → 0 the damper takes over and the
+  // contact lasts about a third of a second instead of collapsing to a spike. At e = 0 the balls stay
+  // squashed and the balls move off together (they part at ~10⁻³ U, invisible). The integrator treats
+  // the damper implicitly, so a stiff damper cannot go unstable.
+  //
+  // THE FRAME. Checkbox "CM frame" (checked by default): watched from the CENTER OF MASS — zero total
+  // momentum, the heavier ball coming in slower, both striking at screen center and rebounding.
+  // Unchecked: the WHOLE picture shifted by ball 2's initial velocity, so ball 1 comes in from the left
+  // and hits ball 2 at rest — the clips' frame — with the pair CENTERED on screen at the start (Daniel,
+  // 2026-11-04). The physics is computed once, in the center-of-mass frame; the frame only adds a
+  // constant velocity to what is drawn and plotted. Toggling it resets the run.
+  //
+  // WHAT STAYS FIXED as the mass slider moves: the CLOSING SPEED U (Daniel, 2026-11-03).
+  //
+  // THE RUN IS PRECOMPUTED on every slider change, so the strips' scales are known before it starts
+  // and the strips reveal behind a curtain like the baked clips; a slider change parks it at the start
+  // and the next → (or ▶) plays it.
+  //
+  // THE GRAPHS, each behind its own checkbox: two momentum strips (m₁ẋ₁ over F₂→₁, m₂ẋ₂ over F₁→₂, one
+  // shared scale) and an energy strip (two kinetic tints, the contact spring's energy in green, heat in
+  // amber by energy balance). Every strip is scaled to ITS FRAME's own total, so the picture is the same
+  // with the masses swapped (2026-11-04). The ball band never changes size: turning a graph on or off
+  // slides the band and graphs so the whole block stays centered above the control bar.
+  //
+  // THE CENTER OF MASS is the classic quartered-circle symbol, on the balls' line, floating on top of
+  // them in purple (the normal-force color, unused here), behind its own checkbox.
+  // ============================================================================================
+  const COLLISION_CONTROLS_HTML = `
+      <canvas class="simcanvas"></canvas>
+      <div class="simctrls" style="gap:.9em">
+        <button class="simbtn play" style="padding-left:.6em;padding-right:.6em">▶ Play</button>
+        <button class="simbtn reset">↺ Reset</button>
+        <button class="simbtn slomo" title="Slow motion">🐢</button>
+        <label><span class="var" style="display:inline-flex;flex-direction:column;align-items:center;line-height:1.05;font-size:.85em"><span style="border-bottom:1px solid currentColor;padding:0 .15em"><i>m</i><sub>1</sub></span><span><i>m</i><sub>2</sub></span></span> <input type="range" class="s-ratio" min="-1" max="1" step="0.001"><input type="number" class="n-ratio" step="0.1" min="0.1" max="10"></label>
+        <label><span class="var"><i>e</i>:</span> <input type="range" class="s-e" min="0" max="1" step="0.05"><input type="number" class="n-e" step="0.05" min="0" max="1"></label>
+        <span style="display:flex;flex-direction:column;gap:.3em"><label class="netchk"><input type="checkbox" class="s-com"> CM frame</label><label class="netchk"><input type="checkbox" class="s-cm"> CM marker</label></span>
+        <span style="display:flex;flex-direction:column;gap:.3em"><label class="netchk"><input type="checkbox" class="s-mom"> momentum</label><label class="netchk"><input type="checkbox" class="s-energy"> energy</label></span>
+      </div>`;
+
+  // e(β) for the push-only Hunt–Crossley contact, dimensionless: x'' = −max(0, x(1 + βx')), x(0) = 0,
+  // x'(0) = 1, e = −x' when x comes back to 0 (0 if it never does). Same implicit damper as the run.
+  const _collisionTable = (() => {
+    const bs = [0]; for (let b = 0.01; b <= 3000; b *= 1.15) bs.push(b);
+    const es = bs.map(b => {
+      let x = 0, w = 1; const dt = 1e-3;
+      for (let i = 0; i < 4e5; i++) {
+        if (x > 0) { const a = x * dt, wn = (w - a) / (1 + b * a); if (wn < w) w = wn; }
+        x += w * dt;
+        if (x < 0 && w < 0) return -w;
+      }
+      return 0;
+    });
+    return { bs, es };
+  })();
+  function betaForE(e) {                         // e falls monotonically as β rises
+    const { bs, es } = _collisionTable;
+    if (e >= 1) return 0;
+    for (let i = 1; i < bs.length; i++) {
+      if (es[i] <= e) { const f = (es[i - 1] - e) / (es[i - 1] - es[i]); return bs[i - 1] + f * (bs[i] - bs[i - 1]); }
+    }
+    return bs[bs.length - 1];
+  }
+
+  class Collision1D extends SimBase {
+    constructor(canvas, opts = {}) {
+      super(canvas);
+      this.lr = opts.lr ?? 0;                    // log10(m1/m2)
+      this.e = opts.e ?? 1;
+      this.rest = !!opts.rest;                   // false = center-of-mass frame (the default)
+      this.showEnergy = !!opts.energy;
+      this.showMom = opts.momentum ?? true;
+      this.showCM = opts.cm ?? true;
+      this.slomo = opts.slomo ?? false;
+      const mR = tints(HOUSE.mass, 3), vR = tints(HOUSE.velocity, 3);
+      this.massCol = [mR[0], mR[2]];             // the CoupledMass pair: visibly two bodies at projector size
+      this.keCol = [vR[0], vR[2]];
+      this.focusY = 0;
+      this.paused = true; this.everPlayed = false;
+      this.resize();
+      this.rebuild();
+    }
+    get m1() { return Math.sqrt(Math.pow(10, this.lr)); }
+    get m2() { return 1 / Math.sqrt(Math.pow(10, this.lr)); }
+    get ratio() { return Math.pow(10, this.lr); }
+    get running() { return !this.paused; }
+    rad(m) { return Collision1D.R0 * Math.cbrt(m); }
+
+    /** Precompute the whole run in the center-of-mass frame. */
+    rebuild() {
+      const C = Collision1D, m1 = this.m1, m2 = this.m2, M = m1 + m2, mu = m1 * m2 / M, U = C.U;
+      const beta = betaForE(this.e), k = C.K / (1 + beta / C.BETA0), c = beta * k / U;
+      const r1 = this.rad(m1), r2 = this.rad(m2), D = r1 + r2;   // center gap at first touch
+      const v1 = U * m2 / M, v2 = -U * m1 / M;
+      // contact at t = TC with the center of mass at x = 0: x1 = −D m2/M, x2 = +D m1/M
+      const x1c = -D * m2 / M, x2c = D * m1 / M;
+      let x1 = x1c - v1 * C.TC, x2 = x2c - v2 * C.TC, u1 = v1, u2 = v2;
+      const x10 = x1, x20 = x2;
+      const dt = C.DT, n = Math.ceil(C.T_END / dt), rec = Math.max(1, Math.round(C.REC_DT / dt));
+      const tr = [];
+      for (let i = 0; i <= n; i++) {
+        const comp = D - (x2 - x1);
+        let F = 0, Fs = 0, Fd = 0;
+        if (comp > 0) {
+          // F = s(k + c ṡ), ṡ = u1 − u2; the damper implicit over the step, so it cannot overshoot
+          const w = u1 - u2, a = comp * dt / mu, wn = (w - k * a) / (1 + c * a);
+          F = mu * (w - wn) / dt;
+          if (F > 0) { Fs = k * comp; Fd = F - Fs; } else F = 0;             // push-only: it cannot pull
+        }
+        // spring energy only while the contact pushes; a slack contact stores nothing it will give back
+        if (i % rec === 0) tr.push({ t: i * dt, x1, x2, u1, u2, Fs, Fd, comp: Math.max(0, comp),
+                                     pe: F > 0 ? 0.5 * k * comp * comp : 0 });
+        // F acts on 1 to the LEFT and on 2 to the right
+        u1 -= F / m1 * dt; u2 += F / m2 * dt;
+        x1 += u1 * dt; x2 += u2 * dt;
+      }
+      this.trace = tr; this.D = D; this.r1 = r1; this.r2 = r2;
+      this.V = -v2;                                // ball 2's initial speed, the frame shift
+      // ball 2's frame, recentred so the PAIR starts centered on screen: x' = x + V(t − TC) − rShift
+      this.rShift = (x10 + x20) / 2 - this.V * C.TC;
+      this.v1in = v1; this.v2in = v2;
+      const last = tr[tr.length - 1]; this.v1out = last.u1; this.v2out = last.u2;
+      this._scales();
+      this.reset();
+    }
+    fx(x, t) { return this.rest ? x + this.V * (t - Collision1D.TC) - this.rShift : x; }
+    fv(u) { return this.rest ? u + this.V : u; }
+    _scales() {
+      // ONE momentum scale for both strips, ONE force scale and ONE energy scale — each the FRAME's own,
+      // so every strip fills its height and swapping the masses gives the mirror-image picture
+      const tr = this.trace, m1 = this.m1, m2 = this.m2;
+      let pm = 0, fm = 0;
+      for (const p of tr) {
+        pm = Math.max(pm, Math.abs(m1 * this.fv(p.u1)), Math.abs(m2 * this.fv(p.u2)));
+        fm = Math.max(fm, p.Fs + p.Fd);
+      }
+      const em = 0.5 * m1 * this.fv(this.v1in) ** 2 + 0.5 * m2 * this.fv(this.v2in) ** 2;
+      this.pMax = pm * 1.15; this.fMax = fm * 1.15 || 1; this.eMax = Math.max(em, 1e-6) * 1.08;
+    }
+    reset() {
+      this.simT = 0; this.paused = true; this.done = false;
+      this.last = performance.now();
+      if (this.refreshPlayBtn) this.refreshPlayBtn();
+    }
+    play() {
+      if (this.done) this.reset();
+      this.paused = false; this.everPlayed = true; this.last = performance.now();
+      if (this.refreshPlayBtn) this.refreshPlayBtn();
+    }
+    at(t) {                                         // interpolated state from the precomputed trace
+      const tr = this.trace, i = Math.min(tr.length - 2, Math.max(0, Math.floor(t / Collision1D.REC_DT)));
+      const a = tr[i], b = tr[i + 1], f = Math.max(0, Math.min(1, (t - a.t) / (b.t - a.t)));
+      const L = (p, q) => p + (q - p) * f;
+      return { t, x1: L(a.x1, b.x1), x2: L(a.x2, b.x2), u1: L(a.u1, b.u1), u2: L(a.u2, b.u2),
+               Fs: L(a.Fs, b.Fs), Fd: L(a.Fd, b.Fd), comp: L(a.comp, b.comp), pe: L(a.pe, b.pe) };
+    }
+    step(now) {
+      const wall = Math.min((now - this.last) / 1000, 0.05); this.last = now;
+      let dirty = false;
+      // the block glides to its new centered position when a graph is switched on or off
+      if (this.y0 !== this.y0T) {
+        const d = this.y0T - this.y0;
+        this.y0 = Math.abs(d) < 0.5 ? this.y0T : this.y0 + d * Math.min(1, wall * 9);
+        dirty = true;
+      }
+      if (!this.paused) {
+        this.simT += wall * (this.slomo ? Collision1D.SLOMO : Collision1D.PLAYBACK);
+        if (this.simT >= Collision1D.T_END) { this.simT = Collision1D.T_END; this.paused = true; this.done = true;
+          if (this.refreshPlayBtn) this.refreshPlayBtn(); }
+        dirty = true;
+      }
+      if (dirty) this.render();
+    }
+
+    // ---- layout: a FIXED-size ball band, then the graphs that are on, the block centered above the bar
+    resize() {
+      const dpr = window.devicePixelRatio || 1, w = this.c.clientWidth || this.c.width, h = this.c.clientHeight || this.c.height;
+      this.c.width = Math.round(w * dpr); this.c.height = Math.round(h * dpr);
+      this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      this.W = w; this.H = h;
+      const bar = this.c.parentElement && this.c.parentElement.querySelector(".simctrls");
+      const barH = bar ? bar.getBoundingClientRect().height : h * 0.11;
+      this.avail = h - barH - h * 0.015;
+      this.gap = h * 0.035; this.ph = h * 0.27; this.eh = h * 0.15;
+      // the scale is set by the ALL-ON layout, so switching graphs never resizes the balls
+      const room = this.avail - this.ph - this.eh - 2 * this.gap - h * 0.05;
+      this.scale = Math.min(w / HOUSE.frameW, room / Collision1D.BAND_WORLD);
+      this.bandH = Collision1D.BAND_WORLD * this.scale;
+      this.layout(true);
+    }
+    layout(snap) {
+      const total = this.bandH + (this.showMom ? this.gap + this.ph : 0) + (this.showEnergy ? this.gap + this.eh : 0);
+      this.y0T = Math.max(0, (this.avail - total) / 2);
+      if (snap || this.y0 === undefined) this.y0 = this.y0T;
+    }
+    get lineY() { return this.y0 + this.bandH / 2; }
+    get py() { return this.y0 + this.bandH + this.gap; }
+    get ey() { return this.py + (this.showMom ? this.ph + this.gap : 0); }
+    sx(x) { return this.W / 2 + x * this.scale; }              // world x = 0 at screen center
+    sy(y) { return this.lineY - (y - this.focusY) * this.scale; }
+
+    // ---- drawing ------------------------------------------------------------------------------
+    /** One ball, squished: a disc cut flat at the contact plane (screen x `xp`), its radius grown just
+     *  enough that the area lost to the flat face reappears as a slight bulge all round. `side` −1 keeps
+     *  the part LEFT of the plane (ball 1), +1 the part right of it (ball 2). */
+    _squishDisc(x, r, xp, side, color) {
+      const ctx = this.ctx, cx = this.sx(x), cy = this.sy(0), R0 = Math.max(r * this.scale, this.discMinPx);
+      const d = side < 0 ? xp - cx : cx - xp;                     // center-to-plane distance
+      if (!(d < R0)) { this._disc(x, 0, r, color, 1); return; }
+      // area of a disc of radius R cut at distance d from its center (the kept, larger part)
+      const kept = R => { const h = Math.max(-1, Math.min(1, d / R)); return R * R * (Math.PI - Math.acos(h)) + d * Math.sqrt(Math.max(0, R * R - d * d)); };
+      let R = R0; for (let i = 0; i < 12; i++) R += (Math.PI * R0 * R0 - kept(R)) / (2 * Math.PI * R) ;   // Newton-ish on area
+      ctx.save(); ctx.beginPath();
+      if (side < 0) ctx.rect(cx - R - 2, cy - R - 2, R + 2 + d, 2 * R + 4); else ctx.rect(cx - d, cy - R - 2, R + 2 + d, 2 * R + 4);
+      ctx.clip(); ctx.fillStyle = color; ctx.beginPath(); ctx.arc(cx, cy, R, 0, TAU); ctx.fill(); ctx.restore();
+    }
+    /** The classic center-of-mass symbol: a quartered disc, two quarters filled, in a ring. */
+    _cmSymbol(cx, cy) {
+      const ctx = this.ctx, R = Math.max(Collision1D.CM_R * this.scale, 9), col = HOUSE.normal;
+      ctx.save();
+      ctx.fillStyle = "#f0f0f5"; ctx.beginPath(); ctx.arc(cx, cy, R, 0, TAU); ctx.fill();
+      ctx.fillStyle = col;
+      ctx.beginPath(); ctx.moveTo(cx, cy); ctx.arc(cx, cy, R, -Math.PI / 2, 0); ctx.closePath(); ctx.fill();      // top right
+      ctx.beginPath(); ctx.moveTo(cx, cy); ctx.arc(cx, cy, R, Math.PI / 2, Math.PI); ctx.closePath(); ctx.fill(); // bottom left
+      ctx.strokeStyle = col; ctx.lineWidth = R * 0.2; ctx.beginPath(); ctx.arc(cx, cy, R * 0.9, 0, TAU); ctx.stroke();
+      ctx.restore();
+    }
+    /** Math label from parts: [text, "i" italic | "u" upright | "sub" subscript | "dot" italic letter with an overdot]. */
+    _mathLabel(parts, x, y, fs, align) {
+      const ctx = this.ctx, F = s => (s === "u" || s === "sub" ? "" : "italic ") + (s === "sub" ? fs * 0.68 : fs) + "px " + HOUSE.fontSans;
+      const widths = parts.map(([t, s]) => { ctx.font = F(s); return ctx.measureText(t).width; });
+      let cx = align === "right" ? x - widths.reduce((a, b) => a + b, 0) : x;
+      parts.forEach(([t, s], i) => {
+        ctx.font = F(s); ctx.fillText(t, cx, s === "sub" ? y + fs * 0.28 : y);
+        if (s === "dot") { ctx.beginPath(); ctx.arc(cx + widths[i] * 0.55, y - fs * 0.62, fs * 0.075, 0, TAU); ctx.fill(); }
+        cx += widths[i];
+      });
+    }
+    /** Positive-only axes glyph in the energy glyph's weight: ink, house arrow stroke and heads, caption-size labels. */
+    _stripAxes(ox, oy, arm, parts) {
+      const ctx = this.ctx, fs = HOUSE.sizeCaption * this.H, gap = HOUSE.axesLabelGap * this.H;
+      const hl = HOUSE.arrowHeadLen * this.scale, hw = HOUSE.arrowHeadHW * this.scale;
+      ctx.save(); ctx.strokeStyle = HOUSE.ink; ctx.fillStyle = HOUSE.ink;
+      ctx.lineWidth = Math.max(1.5, HOUSE.arrowStroke * this.scale); ctx.lineCap = "butt";
+      const stem = (dx, dy) => {
+        ctx.beginPath(); ctx.moveTo(ox, oy); ctx.lineTo(ox + dx * (arm - hl * 0.9), oy + dy * (arm - hl * 0.9)); ctx.stroke();
+        const tx = ox + dx * arm, ty = oy + dy * arm, bx = tx - dx * hl, by = ty - dy * hl;
+        ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(bx - dy * hw, by + dx * hw); ctx.lineTo(bx + dy * hw, by - dx * hw);
+        ctx.closePath(); ctx.fill();
+      };
+      stem(1, 0); stem(0, -1);
+      ctx.textAlign = "left"; ctx.textBaseline = "middle"; this._mathLabel(parts, ox - gap * 0.55, oy - arm, fs, "right");
+      ctx.textBaseline = "top"; ctx.textAlign = "left"; this._mathLabel([["t", "i"]], ox + arm - fs * 0.15, oy + gap * 0.4, fs, "left");
+      ctx.restore();
+    }
+    /** A curtain-revealed strip over the whole run, zero line at mid-height. */
+    _strip(x0, y0, w, h, amp, fn, color, fill) {
+      const ctx = this.ctx, tr = this.trace, T = Collision1D.T_END, zy = y0 + h / 2;
+      ctx.save();
+      ctx.strokeStyle = "rgba(255,255,255,0.12)"; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x0, zy); ctx.lineTo(x0 + w, zy); ctx.stroke();
+      ctx.beginPath(); ctx.rect(x0, y0 - h, w * Math.min(1, this.simT / T), h * 3); ctx.clip();   // the curtain
+      const X = t => x0 + t / T * w, Y = v => zy - (v / amp) * (h * 0.46);
+      ctx.beginPath(); ctx.moveTo(X(0), Y(fn(tr[0])));
+      for (const p of tr) ctx.lineTo(X(p.t), Y(fn(p)));
+      if (fill) { ctx.save(); ctx.lineTo(X(T), zy); ctx.lineTo(X(0), zy); ctx.closePath();
+        ctx.globalAlpha = 0.28; ctx.fillStyle = color; ctx.fill(); ctx.restore();
+        ctx.beginPath(); ctx.moveTo(X(0), Y(fn(tr[0]))); for (const p of tr) ctx.lineTo(X(p.t), Y(fn(p))); }
+      ctx.strokeStyle = color; ctx.lineWidth = 2.5; ctx.lineJoin = "round"; ctx.stroke();
+      ctx.restore();
+    }
+    _momentumRow() {
+      const W = this.W, H = this.H, gap = W * 0.04, pw = (W * 0.92 - gap) / 2, x0s = [W * 0.04, W * 0.04 + pw + gap];
+      const rowH = this.ph / 2, fs = HOUSE.sizeCaption * H, labW = fs * 3.3, arm = Math.min(HOUSE.axesArm * H, rowH * 0.42);
+      const m = [this.m1, this.m2], py = this.py;
+      for (let b = 0; b < 2; b++) {
+        const ox = x0s[b] + labW, x0 = ox + 2, w = pw - labW - 2;
+        const pFn = p => m[b] * this.fv(b ? p.u2 : p.u1);
+        const fFn = p => (b ? 1 : -1) * (p.Fs + p.Fd);          // on 1: leftward (negative); on 2: rightward
+        this._strip(x0, py, w, rowH * 0.9, this.pMax, pFn, HOUSE.velocity, false);
+        this._strip(x0, py + rowH, w, rowH * 0.9, this.fMax, fFn, HOUSE.spring, true);
+        const i = b ? "2" : "1", j = b ? "1" : "2";
+        this._stripAxes(ox, py + rowH * 0.45, arm, [["m", "i"], [i, "sub"], ["x", "dot"], [i, "sub"]]);
+        this._stripAxes(ox, py + rowH * 1.45, arm, [["F", "i"], [j + "→" + i, "sub"]]);
+      }
+    }
+    _energyStrip() {
+      const ctx = this.ctx, tr = this.trace, T = Collision1D.T_END, x0 = this.W * 0.11, x1 = this.W * 0.96;
+      const gy = this.ey, gh = this.eh, m1 = this.m1, m2 = this.m2;
+      const E0 = 0.5 * m1 * this.fv(this.v1in) ** 2 + 0.5 * m2 * this.fv(this.v2in) ** 2;
+      const bands = p => { const k1 = 0.5 * m1 * this.fv(p.u1) ** 2, k2 = 0.5 * m2 * this.fv(p.u2) ** 2;
+        const pe = p.pe, heat = Math.max(0, E0 - k1 - k2 - pe); return [k1, k1 + k2, k1 + k2 + pe, k1 + k2 + pe + heat]; };
+      const cols = [this.keCol[0], this.keCol[1], HOUSE.spring, HOUSE.friction];
+      const X = t => x0 + t / T * (x1 - x0), Y = v => gy + gh - v / this.eMax * gh;
+      const cum = tr.map(p => ({ t: p.t, v: bands(p) }));
+      ctx.save(); ctx.beginPath(); ctx.rect(x0, gy - gh, (x1 - x0) * Math.min(1, this.simT / T), gh * 2.2); ctx.clip();
+      for (let bi = cols.length - 1; bi >= 0; bi--) {             // painter's order, lowest band LAST
+        ctx.fillStyle = cols[bi]; ctx.beginPath(); ctx.moveTo(X(0), gy + gh);
+        for (const c of cum) ctx.lineTo(X(c.t), Y(c.v[bi]));
+        ctx.lineTo(X(T), gy + gh); ctx.closePath(); ctx.fill();
+      }
+      ctx.restore();
+      this._axesGlyph(x0 - this.W * 0.012, gy + gh, "time", "energy");
+    }
+    render() {
+      const ctx = this.ctx; ctx.clearRect(0, 0, this.W, this.H);
+      const st = this.at(this.simT), t = st.t;
+      const x1 = this.fx(st.x1, t), x2 = this.fx(st.x2, t);
+      // motion blur from the trace, in the drawn frame
+      const pb = this.slomo ? Collision1D.SLOMO : Collision1D.PLAYBACK;
+      const blur = (r, key) => this._motionBlur(r, k => { const tb = t - k * HOUSE.blurDt * pb;
+        if (tb < 0 || this.simT === 0) return null; const q = this.at(tb); return { x: this.fx(q[key], tb), y: 0 }; });
+      blur(this.r1, "x1"); blur(this.r2, "x2");
+      // the overlap is shared equally: both balls are cut flat on the plane midway between their undeformed faces
+      const xp = this.sx(((x1 + this.r1) + (x2 - this.r2)) / 2);
+      this._squishDisc(x1, this.r1, xp, -1, this.massCol[0]);
+      this._squishDisc(x2, this.r2, xp, +1, this.massCol[1]);
+      // before the run: the initial-velocity cue from each moving ball's center (dashed, velocity blue)
+      if (this.simT === 0) {
+        const vs = Collision1D.VEL_CUE, y = this.sy(0);
+        // tail at the center and length PROPORTIONAL to speed (Daniel, 2026-11-04: the slow heavy ball's cue
+        // should be nearly nothing), floored only so the arrowhead is always whole; drawn over the disc
+        const minL = HOUSE.arrowHeadLen * this.scale * 1.3;
+        [[x1, this.fv(st.u1)], [x2, this.fv(st.u2)]].forEach(([x, u]) => {
+          if (Math.abs(u) < 1e-6) return;
+          const L = Math.max(Math.abs(u) * vs * this.scale, minL);
+          this._velCueArrow(this.sx(x), y, this.sx(x) + Math.sign(u) * L, y, HOUSE.velocity);
+        });
+      }
+      if (this.showCM) this._cmSymbol(this.sx(this.fx(0, t)), this.sy(0));
+      // contact forces, drawn OVER the balls and the marker so they always show: the green spring pair and the amber damper pair, each equal and opposite
+      const s = Collision1D.FORCE_SCALE;
+      if (st.Fs > 1e-6) { this._arrow(x1, 0, -st.Fs * s, 0, HOUSE.spring, 1); this._arrow(x2, 0, st.Fs * s, 0, HOUSE.spring, 1); }
+      if (Math.abs(st.Fd) > 1e-3) { this._arrow(x1, 0, -st.Fd * s, 0, HOUSE.friction, 1); this._arrow(x2, 0, st.Fd * s, 0, HOUSE.friction, 1); }
+      if (this.showMom) this._momentumRow();
+      if (this.showEnergy) this._energyStrip();
+    }
+  }
+  Collision1D.R0 = 0.36;          // world — unit-mass radius, twice the house 0.18 (the baked clips' size, 2026-11-02)
+  Collision1D.U = 1.0;            // world/s — the FIXED closing speed (Daniel, 2026-11-03)
+  Collision1D.K = 12.0;           // elastic contact stiffness (2× the clips', Daniel 2026-11-04): a contact lasts π√(m₁₂/k) ≈ 0.64 s at equal masses, peak squish ~28% of a radius
+  Collision1D.BETA0 = 2.0;        // the stiffness softens as k = K/(1 + β/β₀): the sticky limit c → Kβ₀ = 24 squishes about as far as elastic
+  Collision1D.TC = 3.8;           // s — when the balls first touch
+  Collision1D.T_END = 9.0;        // s — the run
+  Collision1D.DT = 0.0005;        // s — the precompute step
+  Collision1D.REC_DT = 0.01;      // s — the stored trace's spacing
+  Collision1D.PLAYBACK = 2.0;     // sim seconds per wall second (2026-11-04, Daniel: twice the first speed)
+  Collision1D.SLOMO = 1.0;        // 🐢 — the first version's normal speed
+  Collision1D.FORCE_SCALE = 0.4;  // world per unit force — the peak elastic green arrow (F ≈ 2.45) is about a ball diameter past the rim
+  Collision1D.VEL_CUE = 1.6;      // world per unit speed for the dashed initial-velocity cue (tail at the center, proportional)
+  Collision1D.BAND_WORLD = 1.9;   // world — height of the ball band (the largest ball is 1.06 across)
+  Collision1D.CM_R = 0.2;         // world — center-of-mass symbol radius
+
+  function mountCollision(section) {
+    const d = section.dataset;
+    if (!section.querySelector(".simcanvas")) section.insertAdjacentHTML("beforeend", COLLISION_CONTROLS_HTML);
+    const canvas = section.querySelector(".simcanvas");
+    const r0 = d.ratio !== undefined ? +d.ratio : 1;
+    const sim = new Collision1D(canvas, {
+      lr: Math.log10(Math.max(0.1, Math.min(10, r0))),
+      e: d.e !== undefined ? +d.e : 1,
+      rest: d.rest !== undefined, energy: d.energy !== undefined,
+      momentum: d.nomomentum === undefined, cm: d.nocm === undefined, slomo: d.slomo === "true" });
+    const q = s => section.querySelector(s);
+    const fmtR = () => sim.ratio >= 9.995 ? sim.ratio.toFixed(1) : sim.ratio.toFixed(2);   // "10.0" fits the box
+    const readonly = window.self !== window.top;
+    const sR = q(".s-ratio"), nR = q(".n-ratio"), sE = q(".s-e"), nE = q(".n-e");
+    const cCom = q(".s-com"), cCM = q(".s-cm"), cMom = q(".s-mom"), cEn = q(".s-energy");
+    sR.value = sim.lr; nR.value = fmtR(); sE.value = sim.e; nE.value = sim.e;
+    cCom.checked = !sim.rest; cCM.checked = sim.showCM; cMom.checked = sim.showMom; cEn.checked = sim.showEnergy;
+    // data-noratio (Class R's first sim, 2026-11-04): equal masses only — the m₁/m₂ control is not on the slide yet
+    if (d.noratio !== undefined) { const lab = sR.closest("label"); if (lab) lab.style.display = "none"; }
+    const playBtn = q(".play");
+    const refreshPlay = () => { playBtn.textContent = sim.paused ? (sim.done ? "↻ Replay" : "▶ Play") : "⏸ Pause"; };
+    sim.refreshPlayBtn = refreshPlay;
+    // ANY parameter change rebuilds the run and parks it at the start; the next → (or ▶) plays it.
+    const changed = () => { sim.rebuild(); sim.everPlayed = false; refreshPlay(); sim.render(); };
+    sR.addEventListener("input", () => { sim.lr = +sR.value; nR.value = fmtR(); changed(); });
+    nR.addEventListener("change", () => { const v = parseFloat(nR.value); if (isNaN(v)) { nR.value = fmtR(); return; }
+      sim.lr = Math.log10(Math.max(0.1, Math.min(10, v))); sR.value = sim.lr; nR.value = fmtR(); changed(); });
+    sE.addEventListener("input", () => { sim.e = +sE.value; nE.value = sim.e; changed(); });
+    nE.addEventListener("change", () => { const v = parseFloat(nE.value); sim.e = isNaN(v) ? sim.e : Math.max(0, Math.min(1, v)); sE.value = sim.e; nE.value = sim.e; changed(); });
+    cCom.addEventListener("change", () => { sim.rest = !cCom.checked; sim._scales(); sim.reset(); sim.everPlayed = false; refreshPlay(); sim.render(); });
+    cCM.addEventListener("change", () => { sim.showCM = cCM.checked; sim.render(); });
+    cMom.addEventListener("change", () => { sim.showMom = cMom.checked; sim.layout(false); sim.render(); });
+    cEn.addEventListener("change", () => { sim.showEnergy = cEn.checked; sim.layout(false); sim.render(); });
+    playBtn.addEventListener("click", () => { if (sim.paused) sim.play(); else { sim.paused = true; refreshPlay(); } });
+    q(".reset").addEventListener("click", () => { sim.reset(); sim.everPlayed = false; sim.render(); });
+    const slo = q(".slomo");
+    slo.classList.toggle("on", sim.slomo);
+    slo.addEventListener("click", () => { sim.slomo = !sim.slomo; slo.classList.toggle("on", sim.slomo); });
+    refreshPlay();
+    if (readonly) {
+      canvas.style.pointerEvents = "none";
+      [playBtn, q(".reset"), slo, sR, nR, sE, nE, cCom, cCM, cMom, cEn].forEach(el => { if (el) el.disabled = true; });
+      const c = q(".simctrls"); if (c) c.style.opacity = ".4";
+    }
+    let raf = null;
+    sim.start = () => { if (raf) return; const loop = (now) => { sim.step(now); raf = requestAnimationFrame(loop); }; sim.last = performance.now(); raf = requestAnimationFrame(loop); };
+    sim.stop = () => { if (raf) { cancelAnimationFrame(raf); raf = null; } };
+    window.addEventListener("resize", () => { sim.resize(); sim.render(); });
+    sim.resize(); sim.render();
+    return sim;
+  }
+
   // Dispatcher: pick the preset from data-sim (default projectile).
   // The closed vocabulary of data-sim values, so mount() can tell "no attribute" (fall back to the
   // projectile, as it always has) from "an attribute nobody implemented" (say so). Keep in step with
@@ -5635,7 +6067,7 @@
     "projectile2d", "2d", "projectile2d-pair", "pair2d",
     "deflect", "game", "circle", "circular", "oscillator", "spring",
     "oscillator-game", "springgame", "attractor2d", "attractor", "grab", "launcher", "launchergame", "launcher-cliff", "launchercliff",
-    "platformbounce", "frictionramp", "coupledmass", "driven"
+    "platformbounce", "frictionramp", "coupledmass", "driven", "collision"
   ]);
 
   function mount(section) {
@@ -5670,6 +6102,7 @@
     if (kind === "platformbounce") return mountPlatformBounce(section);
     if (kind === "frictionramp") return mountFrictionRamp(section);
     if (kind === "coupledmass") return mountCoupledMass(section);
+    if (kind === "collision") return mountCollision(section);
     return mountProjectile(section);
   }
 
@@ -5832,5 +6265,5 @@
     return sim;
   }
 
-  window.Interactive = { Projectile, Projectile2D, HandLift, HandLiftEnergy, DeflectGame, Circular, Oscillator, SpringGame, Attractor2D, Grab, LauncherGame, PlatformBounce, FrictionRamp, CoupledMass, Driven, mount, HOUSE, betaOf, dragStep, dragAdvance, histAt };
+  window.Interactive = { Projectile, Projectile2D, HandLift, HandLiftEnergy, DeflectGame, Circular, Oscillator, SpringGame, Attractor2D, Grab, LauncherGame, PlatformBounce, FrictionRamp, CoupledMass, Driven, Collision1D, mount, HOUSE, betaOf, dragStep, dragAdvance, histAt };
 })();

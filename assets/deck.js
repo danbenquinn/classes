@@ -771,6 +771,7 @@
   //    first → plays it once, the next → advances.
   //  • data-cover → the walk-in warm-up: two full-width, half-height tiles that just loop.
   //  • data-axes="x,y" labels each strip's momentum axis (m ẋ / m ẏ) and its force axis (F_x / F_y);
+  //    data-axes="x1,x2" labels a two-BODY stack instead: m ẋ₁ with F_{2→1}, m ẋ₂ with F_{1→2} (Class R);
 //    t is time. (The momentum glyph read `mu`/`mv` until 2026-09-09 and `m ṙ_x` until 2026-09-18.)
   const stackwrap = document.getElementById('stackwrap');
   let stackRaf = null;
@@ -789,10 +790,13 @@
     // safe to assume in whatever the browser resolves `ui-monospace` to. Each glyph gets its own
     // <text> at a hand-set x so the layout does not depend on that font's advance width either; the
     // numbers are tuned against this function's fixed 100-unit viewBox and 38-unit type size.
-    if(ylabel.indexOf('mdot_') === 0){ const v = ylabel.split('_')[1];
+    // `mdot_x1` / `mdot_x2` (Class R, 2026-11-02): a BODY INDEX after the letter, set as a subscript — two balls
+    // on one axis, so each strip says whose momentum it is (m ẋ₁, m ẋ₂).
+    if(ylabel.indexOf('mdot_') === 0){ const vv = ylabel.split('_')[1], v = vv.charAt(0), sub = vv.slice(1);
       ytxt = '<text x="17" y="31" fill="#cfd3da" font-size="38" font-style="italic" font-family="' + MONO + '">m</text>'
            + '<text x="40" y="31" fill="#cfd3da" font-size="38" font-style="italic" font-family="' + MONO + '">' + v + '</text>'
-           + '<circle cx="52" cy="7" r="3.4" fill="#cfd3da"/>';
+           + '<circle cx="52" cy="7" r="3.4" fill="#cfd3da"/>'
+           + (sub ? '<text x="63" y="39" fill="#cfd3da" font-size="24" font-family="' + MONO + '">' + sub + '</text>' : '');
     } else if(ylabel.indexOf('_') >= 0){ const p = ylabel.split('_');
       ytxt = '<text x="17" y="31" fill="#cfd3da" font-size="38" font-style="italic" font-family="' + MONO + '">' + p[0] + '<tspan font-size="64%" dy="8">' + p[1] + '</tspan></text>';
     } else { ytxt = '<text x="17" y="31" fill="#cfd3da" font-size="38" font-style="italic" font-family="' + MONO + '">' + ylabel + '</text>'; }
@@ -881,9 +885,12 @@
       stripEls = list.slice(1).map((src, i) => { const v = mk(src);
         v.addEventListener('loadedmetadata', () => layoutStack(cur), { once: true }); sw.appendChild(v);
         const comp = axes[i];                                  // "x" or "y" → two glyphs (momentum + force); absent → none
-        if(comp === 'x' || comp === 'y'){
+        // "x1" / "x2" (Class R, 2026-11-02): one strip PER BODY in a two-body collision — momentum m ẋ₁ (or ẋ₂), and
+        // the force ON that body BY the other, F_{2→1} (or F_{1→2}), so the two force traces read as a third-law pair.
+        const BODY = { x1: 'F_2→1', x2: 'F_1→2' };
+        if(comp === 'x' || comp === 'y' || BODY[comp]){
           const momEl = document.createElement('div'); momEl.className = 'stack-axis'; momEl.innerHTML = axisSVG('mdot_' + comp); stackwrap.appendChild(momEl);
-          const fEl = document.createElement('div'); fEl.className = 'stack-axis'; fEl.innerHTML = axisSVG('F_' + comp); stackwrap.appendChild(fEl);
+          const fEl = document.createElement('div'); fEl.className = 'stack-axis'; fEl.innerHTML = axisSVG(BODY[comp] || ('F_' + comp)); stackwrap.appendChild(fEl);
           axisEls.push({ strip: i, yfrac: ZERO.mom, el: momEl }, { strip: i, yfrac: ZERO.force, el: fEl });
         }
         return v;
