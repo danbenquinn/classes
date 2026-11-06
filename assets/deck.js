@@ -341,6 +341,17 @@
       slidecap.style.left = '3.2%'; slidecap.style.top = '4.5%';
       slidecap.style.bottom = 'auto'; slidecap.style.maxWidth = '60%'; liftExitQuiz(); return;
     }
+    // data-capbelow (2026-11-05, Class S's espresso triptych): a wide still letterboxed top and bottom puts the
+    // caption UNDER the picture, in the black band, left-aligned with the credit badge, instead of on the
+    // artwork; the badge keeps its own corner, unlifted. Falls through to the default where there is no room.
+    if(cur && cur.dataset.capbelow !== undefined){
+      const LH = layer.clientHeight, pad = Math.max(8, Math.round(mrect.w*0.025)), top = mrect.y + mrect.h + Math.round(pad*0.6);
+      slidecap.style.maxWidth = Math.max(0, mrect.w - 2*pad) + 'px';     // set the width FIRST: the height test below
+      if(LH - top > slidecap.offsetHeight + 4){                          // must not read a wrap left by the last slide
+        slidecap.style.left = (mrect.x + pad) + 'px'; slidecap.style.top = top + 'px'; slidecap.style.bottom = 'auto';
+        liftExitQuiz(); return;
+      }
+    }
     slidecap.style.top = 'auto';
     if(cur && (cur.dataset.creditScreen !== undefined || cur.dataset.fullscreen !== undefined)){
       slidecap.style.left = '3%'; slidecap.style.bottom = 'calc(4% + ' + lift + 'px)';
@@ -492,8 +503,11 @@
     // For a run of clips that are the same scene with one more element drawn each time, this reads as the
     // new element fading in over continuous motion rather than the whole shot restarting. `player` still
     // holds the previous clip here (the src swap happens below), so its currentTime is the match point.
-    const frameMatch = d.framematch !== undefined && activeVideo && !player.paused;
-    const matchAt = frameMatch ? player.currentTime : 0;
+    // data-crossfade (2026-11-06, Class S's vacuum → vacuum-open): the same cross-fade, but into the incoming clip
+    // FROM ITS START — for two clips that are not one timeline (a looping hold, then the event it was holding for).
+    const crossFade = d.crossfade !== undefined;
+    const frameMatch = (d.framematch !== undefined || crossFade) && activeVideo && !player.paused;
+    const matchAt = (frameMatch && !crossFade) ? player.currentTime : 0;
 
     // A PAUSED <video> is not guaranteed to have PAINTED anything. Setting currentTime queues a seek,
     // and until the decoder actually presents that frame the element composites as BLACK — which is
@@ -2167,7 +2181,13 @@
   // Returns {ids, asked} so the caller can tell the three empty-pool states apart — nothing sealed yet,
   // the backend refused, and nobody ran the table — which for a year all printed the same sentence.
   async function loadWinners(){
+    // A deferred-reveal QUESTION half (`data-reveal-at`) stays `sealed-quiet` for good — only its reveal half ever
+    // gets `.sealed` — so it counts once its reveal has happened (2026-11-05, Class S's candle: the first deferred
+    // poll that sits BEFORE a wheel; Class O's came after its wheel, so nobody noticed it could never count).
+    const revealedQuiet = slideAll('section.poll.sealed-quiet[data-reveal-at]:not([data-survey])').filter(q => {
+      const r = document.getElementById(q.dataset.revealAt); return r && r.classList.contains('sealed'); });
     const polls = slideAll('section.poll.sealed:not([data-survey]):not([data-reveal-of])')   // surveys have no right answer; a reveal slide is its question's second copy
+                    .concat(revealedQuiet)
                     .filter(p => p.dataset.poll && Number.isInteger(+p.dataset.answer));
     const ids = polls.map(p => p.dataset.poll), correct = polls.map(p => +p.dataset.answer);
     if(!POLL_LIVE)

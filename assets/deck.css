@@ -233,6 +233,10 @@
   #stillimg.floating{ animation:floatspin 105s linear infinite; transform-origin:50% 50%; }
   /* override reveal theme's .reveal video/img{max-width:95%} so our sizing wins */
   #player,#playerB,#stillimg{ position:absolute; top:0; left:0; max-width:none !important; max-height:none !important; }
+  /* margin:0 (2026-11-05): reveal's theme gives every `.reveal img` a 20px block margin, so #stillimg was drawn 20px
+     BELOW the rectangle deck.js computed for it, and every badge and caption on a still sat 20px too high on the
+     picture (Class S's espresso credit, caught by Daniel). Video elements never had the margin. */
+  #stillimg{ margin:0 !important; }
   #stillimg,#playerB{ display:none; }
   /* z-index 9: #attrib is a CHILD OF .reveal (deck.js moves it there), so this competes with
      `.reveal .slides` at 6 rather than with its old siblings inside #media-layer. Below #exitquiz
