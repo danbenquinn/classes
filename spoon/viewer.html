@@ -1,0 +1,464 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Spoon viewer</title>
+<style>
+  :root {
+    --bg: #f7f7f5; --panel: #ffffff; --fg: #1a1a1a; --muted: #6b6b6b; --line: #e2e2de;
+    --accent: #1f6feb; --ok: #1a7f37; --rec: #cf222e; --warn: #9a6700; --grid: #ececea;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #111213; --panel: #1a1b1d; --fg: #ececec; --muted: #9a9a9a; --line: #2c2d30;
+      --accent: #4c8dff; --ok: #3fb950; --rec: #ff6b6b; --warn: #d29922; --grid: #26272a; }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { background: var(--bg); color: var(--fg); font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  header { display: flex; align-items: center; gap: 16px; padding: 12px 20px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  header h1 { font-size: 17px; font-weight: 600; margin: 0; margin-right: auto; }
+  .pill { font-size: 13px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+  .pill.ok { color: var(--ok); border-color: var(--ok); }
+  .pill.warn { color: var(--warn); border-color: var(--warn); }
+  .pill.rec { color: var(--rec); border-color: var(--rec); }
+  main { display: grid; grid-template-columns: minmax(300px, 420px) 1fr; gap: 20px; padding: 20px; max-width: 1500px; margin: 0 auto; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px; }
+  .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 10px; font-weight: 600; }
+  .stack { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+  #live { width: 100%; display: block; border-radius: 8px; background: #000; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
+  button, select, input[type=text] { font: inherit; font-size: 14px; border-radius: 9px; }
+  button { padding: 8px 14px; border: 1px solid var(--line); background: var(--panel); color: var(--fg); cursor: pointer; }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  button.stop { background: var(--rec); color: #fff; border-color: var(--rec); }
+  button:disabled { opacity: .45; cursor: default; }
+  select, input[type=text] { padding: 7px 10px; border: 1px solid var(--line); background: var(--panel); color: var(--fg); }
+  input[type=text] { flex: 1; min-width: 140px; }
+  .muted { color: var(--muted); font-size: 13px; }
+  .qrbox { display: flex; gap: 14px; align-items: center; }
+  .qrbox img { width: 132px; height: 132px; image-rendering: pixelated; background: #fff; padding: 6px; border-radius: 8px; }
+  .code { font: 700 26px ui-monospace, Menlo, monospace; letter-spacing: .15em; }
+  .plots { display: grid; grid-template-columns: 1fr 150px; gap: 16px; align-items: start; }
+  canvas.plot { width: 100%; height: 300px; display: block; }
+  #map { width: 150px; display: block; background: var(--grid); border-radius: 8px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 13px; margin-top: 6px; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+  .legend span.off { opacity: .35; }
+  .legend i { width: 14px; height: 3px; border-radius: 2px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { color: var(--muted); font-weight: 600; }
+  td.num { font-variant-numeric: tabular-nums; text-align: right; }
+  .tablewrap { overflow-x: auto; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Spoon viewer · prototype</h1>
+  <span class="pill" id="pMode" hidden>Local test mode</span>
+  <span class="pill" id="pCam">No camera</span>
+  <span class="pill" id="pSq">Squares: –</span>
+  <span class="pill" id="pRef">No room-temp reference</span>
+  <span class="pill" id="pRun">Idle</span>
+</header>
+
+<main>
+  <div class="stack">
+    <div class="card">
+      <h2>Phone</h2>
+      <div class="qrbox"><div id="qr"></div><div><div class="code" id="room"></div>
+        <div class="muted">Scan with the phone, or open<br><a id="camlink" target="_blank">the camera page</a>.</div></div></div>
+      <div class="row">
+        <label class="muted">Rate <select id="fps"><option>1</option><option selected>2</option><option>4</option></select> /s</label>
+        <label class="muted">Size <select id="size"><option>640</option><option selected>960</option><option>1280</option></select> px</label>
+        <button id="lock" title="Android Chrome only">Lock exposure</button>
+      </div>
+      <div class="muted" id="frameinfo" style="margin-top:6px">No pictures yet.</div>
+    </div>
+    <div class="card">
+      <h2>Camera view</h2>
+      <canvas id="live" width="480" height="640"></canvas>
+      <div class="row">
+        <button id="ref">Save room-temp reference</button>
+        <label class="muted"><input type="checkbox" id="showPts" checked> points</label>
+        <label class="muted"><input type="checkbox" id="showOut" checked> outline</label>
+      </div>
+      <div class="muted" style="margin-top:6px">Reference: lay the spoon on the outline at room temperature and save. Save a new one for each spoon.</div>
+    </div>
+    <div class="card">
+      <h2>Other sources</h2>
+      <div class="row">
+        <label><button onclick="document.getElementById('vidfile').click()">Analyze a video…</button>
+          <input type="file" id="vidfile" accept="video/*" hidden></label>
+        <label><button onclick="document.getElementById('runfile').click()">Load saved runs…</button>
+          <input type="file" id="runfile" accept=".json,application/json" multiple hidden></label>
+      </div>
+      <div class="muted" style="margin-top:6px">A video from the phone's own camera app (same setup) is read at the rate above. Start it before the spoon goes down and run it until the spoon is fully back.</div>
+    </div>
+  </div>
+
+  <div class="stack">
+    <div class="card">
+      <h2>Run</h2>
+      <div class="row" style="margin-top:0">
+        <input type="text" id="label" placeholder="Label, e.g. yellow · dry · on paper">
+        <button class="primary" id="start">Start run</button>
+        <button class="stop" id="stop" disabled>Stop</button>
+      </div>
+      <div class="muted" id="runinfo" style="margin-top:6px">Press Start with the sheet empty, then lay the cold spoon down. The clock starts when the spoon settles.</div>
+      <div class="plots" style="margin-top:12px">
+        <div><canvas class="plot" id="plot"></canvas><div class="legend" id="legend"></div></div>
+        <div><canvas id="map"></canvas><div class="muted" style="margin-top:4px">Blue: just out of the ice. Red: back to room temperature.</div></div>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Runs</h2>
+      <div class="tablewrap"><table id="runs"><thead></thead><tbody></tbody></table></div>
+      <div class="row">
+        <label class="muted">Compare at <select id="cmpPt"></select></label>
+        <label class="muted">warm color from <select id="warmMode"><option value="ref">saved reference</option><option value="end">end of run</option></select></label>
+        <button id="dlAll">Download all runs</button>
+      </div>
+      <canvas class="plot" id="cmp" style="margin-top:10px"></canvas>
+      <div class="legend" id="cmpLegend"></div>
+    </div>
+  </div>
+</main>
+
+<script src="spoon-geom.js"></script>
+<script src="spoon-lib.js"></script>
+<script src="common.js"></script>
+<script src="vendor/qrcode.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+const L = SpoonLib, G = L.G;
+const COLORS = ["#e6194b", "#f58231", "#3cb44b", "#4363d8", "#911eb4", "#46a5a5", "#9a6324", "#808080"];
+const ptOn = G.points.map(() => true);
+
+// ── room / phone ──────────────────────────────────────────────
+const params = new URLSearchParams(location.search);
+let ROOM = (params.get("room") || "").toUpperCase();
+if (!ROOM) {
+  const A = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+  ROOM = Array.from(crypto.getRandomValues(new Uint8Array(4)), (b) => A[b % A.length]).join("");
+  params.set("room", ROOM); history.replaceState(null, "", "?" + params);
+}
+if (LOCAL_MODE) $("pMode").hidden = false;
+const camURL = new URL("cam.html", location.href); camURL.search = "?room=" + ROOM + (LOCAL_MODE ? "&local=1" : "");
+$("room").textContent = ROOM; $("camlink").href = camURL.href;
+try { const q = qrcode(0, "M"); q.addData(camURL.href); q.make(); $("qr").innerHTML = q.createImgTag(4, 0, "QR code for the camera page"); } catch {}
+
+const me = { id: "v-" + randomId(), role: "viewer" };
+let conn = null, camId = null;
+function pill(id, cls, txt) { $(id).className = "pill " + cls; $(id).textContent = txt; }
+(async () => {
+  try { conn = await openRoom(ROOM, me, { onMessage, onPeers }); conn.send({ type: "whois" }); }
+  catch (e) { pill("pCam", "warn", "Room failed: " + e.message); }
+})();
+function cfg() { return { fps: +$("fps").value, size: +$("size").value, q: 0.8 }; }
+function onPeers(list) {
+  if (camId && !list.some((p) => p.id === camId)) { camId = null; pill("pCam", "warn", "Camera left"); }
+}
+function onMessage(m) {
+  if (m.type === "hello" && m.kind === "camera") {
+    if (camId && camId !== m.phone) { conn.send({ type: "release", phone: m.phone }); return; }
+    camId = m.phone; conn.send({ type: "claim", phone: camId }); conn.send({ type: "config", phone: camId, cfg: cfg() });
+    pill("pCam", "ok", "Camera connected");
+  } else if (m.type === "frame" && m.phone === camId) {
+    $("frameinfo").textContent = m.w + "×" + m.h + " · " + Math.round(m.jpg.length * 0.75 / 1024) + " KB per picture";
+    ingest(m.jpg, m.t);
+  } else if (m.type === "lockresult") {
+    $("lock").textContent = m.ok ? (m.on ? "Unlock exposure" : "Lock exposure") : "Lock not supported";
+    lockOn = m.ok ? m.on : false;
+  }
+}
+for (const id of ["fps", "size"]) $(id).onchange = () => camId && conn.send({ type: "config", phone: camId, cfg: cfg() });
+let lockOn = false;
+$("lock").onclick = () => camId && conn.send({ type: "lock", phone: camId, on: !lockOn });
+
+// ── frames ────────────────────────────────────────────────────
+const work = document.createElement("canvas"), wctx = work.getContext("2d", { willReadFrequently: true });
+let lastH = null, busy = false, pending = null, lastFrame = null;
+async function decode(jpg) {
+  const im = new Image(); im.src = jpg; await im.decode();
+  work.width = im.naturalWidth; work.height = im.naturalHeight; wctx.drawImage(im, 0, 0);
+  return { im, data: wctx.getImageData(0, 0, work.width, work.height) };
+}
+// analyze one picture: squares -> homography -> point colors (+ straightened copy)
+async function analyze(jpg, prevH) {
+  const { im, data } = await decode(jpg);
+  const sq = L.findSquares(data);
+  const H = sq ? sq.H : prevH;
+  if (!H) return { im, data, sq: null, H: null };
+  return { im, data, sq, H, pts: L.readPoints(data, H), rect: L.rectify(data, H) };
+}
+function ingest(jpg, t) {   // live frames: drop any that arrive while one is being processed
+  if (busy) { pending = [jpg, t]; return; }
+  busy = true;
+  (async () => {
+    try { await processLive(jpg, t); } finally {
+      busy = false;
+      if (pending) { const p = pending; pending = null; ingest(...p); }
+    }
+  })();
+}
+async function processLive(jpg, t) {
+  const a = await analyze(jpg, lastH);
+  lastFrame = { ...a, jpg, t };
+  if (a.sq) { lastH = a.H; pill("pSq", "ok", "Squares found"); }
+  else pill("pSq", "warn", lastH ? "Squares lost (using last fix)" : "Squares not found");
+  drawLive(a);
+  if (run && a.H) addFrame(run, { t, jpg, pts: a.pts, rect: a.rect });
+  else if (!run && a.H && ref) drawMapFor(a.rect);
+}
+function drawLive(a) {
+  const c = $("live"), g = c.getContext("2d");
+  const k = c.width / a.im.naturalWidth; c.height = Math.round(a.im.naturalHeight * k);
+  g.drawImage(a.im, 0, 0, c.width, c.height);
+  if (!a.H) return;
+  const P = (X, Y) => L.apply(a.H, X, Y).map((v) => v * k);
+  if ($("showOut").checked) {
+    g.strokeStyle = "#ff00ff"; g.lineWidth = 1.5; g.beginPath();
+    G.outline.forEach(([X, Y], i) => { const [x, y] = P(X, Y); i ? g.lineTo(x, y) : g.moveTo(x, y); });
+    g.closePath(); g.stroke();
+  }
+  g.lineWidth = 2;
+  G.squares.forEach(([X, Y], i) => { const [x, y] = P(X, Y); g.strokeStyle = a.sq ? "#1a7f37" : "#9a6700";
+    g.beginPath(); g.arc(x, y, 7, 0, 7); g.stroke(); });
+  if ($("showPts").checked) G.points.forEach((p, i) => {
+    const [x, y] = P(...p.xy); g.fillStyle = COLORS[i]; g.strokeStyle = "#fff"; g.lineWidth = 1.5;
+    g.beginPath(); g.arc(x, y, 4, 0, 7); g.fill(); g.stroke();
+  });
+}
+
+// ── reference ─────────────────────────────────────────────────
+let ref = null;   // {pts, rect, jpg, label}
+$("ref").onclick = () => {
+  if (!lastFrame || !lastFrame.H) return alert("No picture with the squares in view yet.");
+  ref = { pts: lastFrame.pts, rect: lastFrame.rect, jpg: lastFrame.jpg, label: $("label").value || "" };
+  pill("pRef", "ok", "Reference saved " + new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }));
+};
+
+// ── runs ──────────────────────────────────────────────────────
+let run = null; const runs = [];
+function newRun(label, source) {
+  return { id: randomId(5), label, source, frames: [], settle: -1, ref, created: new Date().toISOString(), checked: true };
+}
+$("start").onclick = () => {
+  if (!lastH) return alert("Get all four squares in view first.");
+  run = newRun($("label").value.trim() || "run " + (runs.length + 1), "phone");
+  $("start").disabled = true; $("stop").disabled = false; pill("pRun", "rec", "Recording");
+  $("runinfo").textContent = "Recording. Lay the cold spoon down.";
+};
+$("stop").onclick = () => finishRun();
+function finishRun() {
+  if (!run) return;
+  const r = run; run = null;
+  $("start").disabled = false; $("stop").disabled = true; pill("pRun", "", "Idle");
+  if (r.settle < 0) { $("runinfo").textContent = "No spoon detected in that run; discarded."; return; }
+  delete r.live; runs.push(r); computeRun(r); renderRuns(); plotRun(r, $("plot"));
+  $("runinfo").textContent = "Saved “" + r.label + "”. " + r.frames.length + " pictures.";
+}
+function meanPts(list) {   // average point colors over several frames
+  return G.points.map((_, i) => [0, 1, 2].map((k) => list.reduce((a, f) => a + f.pts[i][k], 0) / list.length));
+}
+function meanRect(list) {
+  const { w, h } = list[0].rect, d = new Float32Array(w * h * 3);
+  for (const f of list) for (let i = 0; i < d.length; i++) d[i] += f.rect.data[i] / list.length;
+  return { w, h, data: d };
+}
+const ptDist = (a, b) => G.points.reduce((s, _, i) => s + L.dist(a[i], b[i]), 0) / G.points.length;
+// The spoon has SETTLED at frame i when frames i, i+1 and i+2 differ from the empty sheet and barely from each other.
+function findSettle(fr) {
+  const blank = fr[0].pts;
+  for (let i = 1; i + 2 < fr.length; i++) {
+    const on = [i, i + 1, i + 2].every((j) => ptDist(fr[j].pts, blank) > 0.12);
+    const still = ptDist(fr[i].pts, fr[i + 1].pts) < 0.05 && ptDist(fr[i + 1].pts, fr[i + 2].pts) < 0.05;
+    if (on && still) return i;
+  }
+  return -1;
+}
+function addFrame(r, f) {
+  r.frames.push(f);
+  if (r.settle < 0) {
+    r.settle = findSettle(r.frames);
+    if (r.settle >= 0) $("runinfo").textContent = "Spoon down. Timing from here; press Stop when it's back to room color.";
+  }
+  if (r.settle >= 0 && r.frames.length >= r.settle + 3) {
+    computeRun(r, true); plotRun(r, $("plot")); drawMapFor(f.rect, r);
+  }
+}
+function computeRun(r, live = false) {
+  const fr = r.frames, s = r.settle;
+  r.t0 = fr[s].t;
+  const coldList = fr.slice(s, s + 3);
+  r.cold = meanPts(coldList); r.coldRect = meanRect(coldList);
+  const mode = $("warmMode").value;
+  const useEnd = mode === "end" && !live || !r.ref;
+  const endList = fr.slice(-3);
+  r.warm = useEnd ? meanPts(endList) : r.ref.pts;
+  r.warmRect = useEnd ? meanRect(endList) : r.ref.rect;
+  r.warmFrom = useEnd ? "end" : "ref";
+  r.series = fr.slice(s).map((f) => ({ t: (f.t - r.t0) / 1000, f: f.pts.map((c, i) => L.progress(c, r.cold[i], r.warm[i])) }));
+  r.t50 = G.points.map((_, i) => crossing(r.series, i, 0.5));
+}
+function crossing(series, i, lvl) {
+  for (let k = 1; k < series.length; k++) {
+    const a = series[k - 1], b = series[k];
+    if (a.f[i] < lvl && b.f[i] >= lvl) return a.t + (lvl - a.f[i]) / (b.f[i] - a.f[i]) * (b.t - a.t);
+  }
+  return NaN;
+}
+function drawMapFor(rect, r) {
+  const cold = r ? r.coldRect : null, warm = r ? r.warmRect : ref && ref.rect;
+  if (!cold || !warm) return;
+  L.drawMap($("map"), rect, cold, warm);
+}
+
+// ── plots ─────────────────────────────────────────────────────
+function css(v) { return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
+function axes(cv, tmax) {
+  const dpr = devicePixelRatio || 1, W = cv.clientWidth, H = cv.clientHeight;
+  cv.width = W * dpr; cv.height = H * dpr;
+  const g = cv.getContext("2d"); g.scale(dpr, dpr);
+  const m = { l: 44, r: 10, t: 10, b: 30 }, pw = W - m.l - m.r, ph = H - m.t - m.b;
+  const X = (t) => m.l + t / tmax * pw, Y = (f) => m.t + (1 - (f + 0.1) / 1.2) * ph;
+  g.font = "12px -apple-system, sans-serif"; g.fillStyle = css("--muted"); g.strokeStyle = css("--grid"); g.lineWidth = 1;
+  for (const f of [0, 0.5, 1]) { g.beginPath(); g.moveTo(m.l, Y(f)); g.lineTo(W - m.r, Y(f)); g.stroke(); g.fillText(Math.round(f * 100) + "%", 6, Y(f) + 4); }
+  const step = [5, 10, 15, 30, 60, 120, 300].find((s) => tmax / s <= 8) || 600;
+  for (let t = 0; t <= tmax; t += step) { g.beginPath(); g.moveTo(X(t), m.t); g.lineTo(X(t), H - m.b); g.stroke(); g.fillText(t + " s", X(t) - 8, H - 10); }
+  return { g, X, Y };
+}
+function plotRun(r, cv) {
+  if (!r.series || !r.series.length) return;
+  const tmax = Math.max(30, r.series[r.series.length - 1].t * 1.05);
+  const { g, X, Y } = axes(cv, tmax);
+  G.points.forEach((p, i) => {
+    if (!ptOn[i]) return;
+    g.strokeStyle = COLORS[i]; g.lineWidth = 2; g.beginPath();
+    r.series.forEach((s, k) => { const x = X(s.t), y = Y(s.f[i]); k ? g.lineTo(x, y) : g.moveTo(x, y); });
+    g.stroke();
+  });
+  shownRun = r;
+}
+let shownRun = null;
+function legend() {
+  $("legend").innerHTML = "";
+  G.points.forEach((p, i) => {
+    const s = document.createElement("span"); s.className = ptOn[i] ? "" : "off";
+    s.innerHTML = `<i style="background:${COLORS[i]}"></i>${p.name}`;
+    s.onclick = () => { ptOn[i] = !ptOn[i]; legend(); shownRun && plotRun(shownRun, $("plot")); };
+    $("legend").appendChild(s);
+  });
+}
+legend();
+G.points.forEach((p, i) => { const o = document.createElement("option"); o.value = i; o.textContent = p.name; $("cmpPt").appendChild(o); });
+$("cmpPt").value = 2;
+$("cmpPt").onchange = renderCompare;
+$("warmMode").onchange = () => { runs.forEach((r) => computeRun(r)); renderRuns(); };
+
+function renderRuns() {
+  const head = "<tr><th></th><th>Run</th><th>Source</th><th>Pictures</th><th>Warm color</th>" +
+    G.points.map((p) => `<th>${p.name}<br><span class="muted">½-way, s</span></th>`).join("") + "<th></th></tr>";
+  $("runs").tHead.innerHTML = head;
+  const tb = $("runs").tBodies[0]; tb.innerHTML = "";
+  runs.forEach((r, k) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td><input type="checkbox" ${r.checked ? "checked" : ""}></td>
+      <td><a href="#" class="show">${esc(r.label)}</a></td><td>${r.source}</td><td class="num">${r.frames.length}</td>
+      <td>${r.warmFrom === "end" ? "end of run" : "reference"}</td>` +
+      r.t50.map((v) => `<td class="num">${isNaN(v) ? "–" : v.toFixed(1)}</td>`).join("") +
+      `<td><button class="dl">Download</button> <button class="del">✕</button></td>`;
+    tr.querySelector("input").onchange = (e) => { r.checked = e.target.checked; renderCompare(); };
+    tr.querySelector(".show").onclick = (e) => { e.preventDefault(); plotRun(r, $("plot")); drawMapFor(r.frames[r.frames.length - 1].rect, r); $("label").value = r.label; };
+    tr.querySelector(".dl").onclick = () => download([r], r.label);
+    tr.querySelector(".del").onclick = () => { if (confirm("Delete “" + r.label + "”?")) { runs.splice(k, 1); renderRuns(); } };
+    tb.appendChild(tr);
+  });
+  renderCompare();
+}
+function renderCompare() {
+  const i = +$("cmpPt").value, sel = runs.filter((r) => r.checked && r.series);
+  const tmax = Math.max(30, ...sel.map((r) => r.series[r.series.length - 1].t * 1.05));
+  const { g, X, Y } = axes($("cmp"), tmax);
+  $("cmpLegend").innerHTML = "";
+  sel.forEach((r, k) => {
+    const col = COLORS[k % COLORS.length];
+    g.strokeStyle = col; g.lineWidth = 2; g.beginPath();
+    r.series.forEach((s, j) => { const x = X(s.t), y = Y(s.f[i]); j ? g.lineTo(x, y) : g.moveTo(x, y); });
+    g.stroke();
+    $("cmpLegend").insertAdjacentHTML("beforeend", `<span><i style="background:${col}"></i>${esc(r.label)}</span>`);
+  });
+}
+const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+// ── save / load ───────────────────────────────────────────────
+function download(list, name) {
+  const out = { kind: "spoon-runs", version: 1, saved: new Date().toISOString(), geom: G,
+    runs: list.map((r) => ({ label: r.label, source: r.source, created: r.created,
+      ref: r.ref ? { jpg: r.ref.jpg, label: r.ref.label } : null,
+      frames: r.frames.map((f) => ({ t: f.t, jpg: f.jpg })) })) };
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(out)], { type: "application/json" }));
+  a.download = (name || "spoon-runs").replace(/[^\w.-]+/g, "_") + ".json"; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+$("dlAll").onclick = () => runs.length && download(runs, "spoon-runs-" + new Date().toISOString().slice(0, 16));
+$("runfile").onchange = async (e) => {
+  for (const file of e.target.files) {
+    const d = JSON.parse(await file.text());
+    for (const s of d.runs || []) {
+      $("runinfo").textContent = "Loading “" + s.label + "”…";
+      let refObj = null, H = null;
+      if (s.ref) { const a = await analyze(s.ref.jpg, null); if (a.H) refObj = { pts: a.pts, rect: a.rect, jpg: s.ref.jpg, label: s.ref.label }; }
+      const r = newRun(s.label, s.source + " (loaded)"); r.ref = refObj; r.created = s.created;
+      for (const f of s.frames) { const a = await analyze(f.jpg, H); if (!a.H) continue; H = a.H; r.frames.push({ t: f.t, jpg: f.jpg, pts: a.pts, rect: a.rect }); }
+      r.settle = findSettle(r.frames);
+      if (r.settle < 0) { $("runinfo").textContent = "“" + s.label + "”: no spoon found."; continue; }
+      runs.push(r); computeRun(r);
+    }
+  }
+  renderRuns(); e.target.value = "";
+  $("runinfo").textContent = "Loaded.";
+};
+
+// ── video file ────────────────────────────────────────────────
+$("vidfile").onchange = async (e) => {
+  const file = e.target.files[0]; if (!file) return;
+  e.target.value = "";
+  const v = document.createElement("video"); v.muted = true; v.playsInline = true; v.src = URL.createObjectURL(file);
+  await new Promise((ok, bad) => { v.onloadedmetadata = ok; v.onerror = () => bad(new Error("can't read that video")); }).catch((err) => alert(err.message));
+  if (!v.duration) return;
+  const fps = +$("fps").value, size = +$("size").value, c = document.createElement("canvas");
+  const r = newRun($("label").value.trim() || file.name, "video"); r.ref = ref;
+  let H = null;
+  for (let t = 0; t < v.duration; t += 1 / fps) {
+    v.currentTime = t; await new Promise((ok) => (v.onseeked = ok));
+    const k = Math.min(1, size / Math.max(v.videoWidth, v.videoHeight));
+    c.width = Math.round(v.videoWidth * k); c.height = Math.round(v.videoHeight * k);
+    c.getContext("2d").drawImage(v, 0, 0, c.width, c.height);
+    const jpg = c.toDataURL("image/jpeg", 0.8);
+    const a = await analyze(jpg, H);
+    drawLive(a);
+    $("runinfo").textContent = "Reading the video… " + Math.round(t / v.duration * 100) + "%";
+    if (!a.H) continue;
+    H = a.H; r.frames.push({ t: t * 1000, jpg, pts: a.pts, rect: a.rect });
+  }
+  URL.revokeObjectURL(v.src);
+  r.settle = findSettle(r.frames);
+  if (r.settle < 0) { $("runinfo").textContent = "Couldn't find the spoon going down in that video."; return; }
+  if (!r.ref) $("warmMode").value = "end";
+  runs.push(r); computeRun(r); renderRuns(); plotRun(r, $("plot")); drawMapFor(r.frames[r.frames.length - 1].rect, r);
+  $("runinfo").textContent = "Read “" + r.label + "”: " + r.frames.length + " pictures.";
+};
+
+addEventListener("beforeunload", (e) => { if (runs.length) { e.preventDefault(); e.returnValue = ""; } });
+// test hook: feed a picture as if a phone sent it
+window.spoonTest = { ingest: (jpg, t) => processLive(jpg, t), get runs() { return runs; }, get run() { return run; },
+  start: () => $("start").click(), stop: () => finishRun(), saveRef: () => $("ref").click() };
+</script>
+</body>
+</html>

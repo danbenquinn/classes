@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Spoon camera</title>
+<style>
+  :root { --bg: #f7f7f5; --fg: #1a1a1a; --muted: #6b6b6b; --line: #e2e2de;
+    --accent: #1f6feb; --ok: #1a7f37; --warn: #9a6700; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #111213; --fg: #ececec; --muted: #9a9a9a; --line: #2a2b2d;
+      --accent: #4c8dff; --ok: #3fb950; --warn: #d29922; }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body { background: var(--bg); color: var(--fg);
+    font: 17px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    display: flex; flex-direction: column; align-items: center;
+    padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
+    -webkit-user-select: none; user-select: none; }
+  main { width: 100%; max-width: 420px; text-align: center; }
+  h1 { font-size: 22px; font-weight: 600; margin: 8px 0 4px; }
+  p { margin: 0; color: var(--muted); font-size: 15px; }
+  video { width: 100%; border-radius: 12px; background: #000; margin-top: 14px; display: block; }
+  .status { display: inline-flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 14px; color: var(--muted); }
+  .status i { width: 10px; height: 10px; border-radius: 50%; background: var(--line); }
+  .status.ok i { background: var(--ok); }
+  .status.warn i { background: var(--warn); }
+  button { margin-top: 20px; width: 100%; padding: 18px; border: 0; border-radius: 14px; background: var(--accent);
+    color: #fff; font: 600 18px/1 inherit; font-family: inherit; }
+  .small { margin-top: 10px; font-size: 13px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1 id="title">Spoon camera</h1>
+  <p id="sub">Tap below to turn on the camera and connect to the laptop.</p>
+  <video id="v" playsinline muted autoplay hidden></video>
+  <div id="status" class="status" hidden><i></i><span id="stxt"></span></div>
+  <button id="go">Tap to start</button>
+  <p class="small" id="info"></p>
+</main>
+<script src="common.js"></script>
+<script>
+// Streams JPEG snapshots of the rear camera to viewer.html over the same room transport as the
+// accelerometer pages (common.js). The viewer claims the phone and sets the rate and size.
+const params = new URLSearchParams(location.search);
+const ROOM = (params.get("room") || "").toUpperCase();
+const me = { id: "c-" + randomId(), role: "camera" };
+const $ = (id) => document.getElementById(id);
+let conn = null, claimed = false, viewerHere = false, timer = null, seq = 0, stream = null, wakeLock = null;
+let cfg = { fps: 2, size: 960, q: 0.8 };
+const canvas = document.createElement("canvas");
+
+function status(cls, txt) { $("status").hidden = false; $("status").className = "status " + cls; $("stxt").textContent = txt; }
+if (!ROOM) { $("sub").textContent = "Scan the QR code on the laptop screen to open this page."; $("go").hidden = true; }
+
+$("go").onclick = async () => {
+  $("go").hidden = true;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: false,
+      video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1440 } } });
+  } catch (e) {
+    $("sub").textContent = "Camera access is needed. Allow it, then reload this page. (" + e.name + ")";
+    $("go").hidden = false; return;
+  }
+  $("v").srcObject = stream; $("v").hidden = false;
+  $("title").textContent = "Point at the sheet";
+  $("sub").textContent = "The laptop shows what it sees. Keep this page open.";
+  try { if ("wakeLock" in navigator) wakeLock = await navigator.wakeLock.request("screen"); } catch {}
+  const s = stream.getVideoTracks()[0].getSettings();
+  $("info").textContent = (s.width || "?") + "×" + (s.height || "?") + " camera";
+  status("warn", "Connecting…");
+  try { conn = await openRoom(ROOM, me, { onMessage, onPeers }); }
+  catch (e) { status("warn", "Couldn't connect: " + e.message); return; }
+  conn.send({ type: "hello", phone: me.id, kind: "camera" });
+  status("warn", "Waiting for the laptop…");
+};
+document.addEventListener("visibilitychange", async () => {
+  if (document.visibilityState === "visible" && stream) {
+    try { if ("wakeLock" in navigator) wakeLock = await navigator.wakeLock.request("screen"); } catch {}
+  }
+});
+
+function onPeers(list) {
+  const here = list.some((p) => p.role === "viewer");
+  if (here && !viewerHere && conn && !claimed) conn.send({ type: "hello", phone: me.id, kind: "camera" });
+  if (!here && viewerHere) { stopSending(); claimed = false; status("warn", "Laptop offline. Waiting…"); }
+  viewerHere = here;
+}
+function onMessage(m) {
+  if (!conn) return;
+  if (m.type === "whois" && !claimed) conn.send({ type: "hello", phone: me.id, kind: "camera" });
+  else if (m.phone !== me.id) return;
+  else if (m.type === "claim") { claimed = true; status("ok", "Connected. Sending pictures."); startSending(); }
+  else if (m.type === "config") { Object.assign(cfg, m.cfg || {}); if (claimed) startSending(); }
+  else if (m.type === "lock") lockExposure(m.on);
+  else if (m.type === "release") { stopSending(); claimed = false; status("warn", "Disconnected. Rescan the QR code."); }
+}
+function startSending() {
+  stopSending();
+  timer = setInterval(snap, 1000 / Math.max(0.2, Math.min(5, cfg.fps)));
+}
+function stopSending() { clearInterval(timer); timer = null; }
+function snap() {
+  const v = $("v");
+  if (!v.videoWidth) return;
+  const k = Math.min(1, cfg.size / Math.max(v.videoWidth, v.videoHeight));
+  canvas.width = Math.round(v.videoWidth * k); canvas.height = Math.round(v.videoHeight * k);
+  canvas.getContext("2d").drawImage(v, 0, 0, canvas.width, canvas.height);
+  const jpg = canvas.toDataURL("image/jpeg", cfg.q);
+  conn.send({ type: "frame", phone: me.id, seq: seq++, t: Date.now(), w: canvas.width, h: canvas.height, jpg });
+}
+// Chrome on Android can hold exposure and white balance; iPhone browsers can't (the viewer
+// corrects against the white paper either way).
+async function lockExposure(on) {
+  const tr = stream && stream.getVideoTracks()[0];
+  let ok = false;
+  try {
+    const caps = tr.getCapabilities ? tr.getCapabilities() : {};
+    const c = {};
+    if ((caps.exposureMode || []).includes(on ? "manual" : "continuous")) c.exposureMode = on ? "manual" : "continuous";
+    if ((caps.whiteBalanceMode || []).includes(on ? "manual" : "continuous")) c.whiteBalanceMode = on ? "manual" : "continuous";
+    if (Object.keys(c).length) { await tr.applyConstraints({ advanced: [c] }); ok = true; }
+  } catch {}
+  conn.send({ type: "lockresult", phone: me.id, on, ok });
+}
+</script>
+</body>
+</html>
