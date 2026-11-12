@@ -1,6 +1,6 @@
 // ─────────────────────────────────────────────────────────────
 // Spoon analysis, shared by viewer.html (and testable on its own).
-// Coordinates: "page" = millimetres on the printed sheet (origin lower-left, y up), from spoon-geom.js;
+// Coordinates: "page" = millimeters on the printed sheet (origin lower-left, y up), from spoon-geom.js;
 // "image" = pixels in a camera frame (origin top-left, y down).
 // ─────────────────────────────────────────────────────────────
 const SpoonLib = (() => {

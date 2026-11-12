@@ -28,7 +28,7 @@ const codeHash = s => cyrb53(String(s||"").trim().toLowerCase());   // normalize
 // with a letter someone puts on a graphic, so this is house-wide rather than a Workshop 1 switch.
 const ROMAN=["i","ii","iii","iv","v","vi","vii","viii","ix","x","xi","xii"];
 const choiceLabel = i => ROMAN[i] || String(i+1);
-const TOOLDEF={point:"Select Point", avg:"Average Value", integrate:"Integrate", dblint:"Double Integrate", fitsine:"Fit Sine", fitdamped:"Fit Damped", crop:"Crop", slope:"Slope"};
+const TOOLDEF={point:"Select Point", avg:"Average Value", integrate:"Integrate", dblint:"Double Integrate", fitsine:"Fit Sine", fitdamped:"Fit Damped", fitexp:"Fit Exponential", crop:"Crop", slope:"Slope"};
 const TOOLS=(typeof CONFIG!=='undefined'&&CONFIG&&Array.isArray(CONFIG.tools)&&CONFIG.tools.length)
   ? CONFIG.tools.filter(t=>TOOLDEF[t]) : ["point","avg","dblint","fitsine"];
 const _toolsHTML=TOOLS.map((t,i)=>'<button data-tool="'+t+'"'+(i===0?' class="on"':'')+'>'+TOOLDEF[t]+'</button>').join("");
@@ -133,7 +133,7 @@ const S = {
    always meant when there was only one. This is the whole reason the refactor is small: series(),
    doIntegrate(), inputIssue(), stepComplete() and the Fit Sine block were not touched. A single-panel
    workshop resolves every one of them to panel 0, forever. */
-const PANEL_FIELDS=["ds","sigH","fileName","point","sel","drag","integ","fit","dfit","crop"];
+const PANEL_FIELDS=["ds","sigH","fileName","point","sel","drag","integ","fit","dfit","efit","crop"];
 function active(){ return S.panels[S.activeIdx] || S.panels[0] || null; }
 PANEL_FIELDS.forEach(k=>Object.defineProperty(S,k,{
   get(){ const P=active(); return P?P[k]:null; },
@@ -162,13 +162,14 @@ function makePanel(def,i){
     cv:root.querySelector("canvas"),
     readout:root.querySelector(".plotreadout"),
     G:{},
-    ds:null, sigH:null, fileName:null, point:null, sel:null, drag:null, integ:null, fit:null, dfit:null, crop:null };
+    ds:null, sigH:null, fileName:null, point:null, sel:null, drag:null, integ:null, fit:null, dfit:null, efit:null, crop:null };
   P.ctx=P.cv.getContext("2d");
   P.file.addEventListener("change",e=>{ S.activeIdx=i; if(e.target.files[0]) handleFile(e.target.files[0],P); });
   P.selEl.addEventListener("change",e=>{ S.activeIdx=i; P.sigH=e.target.value;
     if((S.tool==="dblint"||S.tool==="integrate")&&P.sel) doIntegrate(series(P),P);
     if(S.tool==="fitsine"&&P.sel) doFitSine(series(P),P);
     if(S.tool==="fitdamped"&&P.sel) doFitDamped(series(P),P);
+    if(S.tool==="fitexp"&&P.sel) doFitExp(series(P),P);
     updateCtx(); resize(); setReadout();
     if(typeof refreshNext==="function") refreshNext(); });   // a `gate:"abs"` step passes on this choice
   wirePointer(P);
@@ -271,7 +272,7 @@ function ingestParsed(parsed,P){
   if(S.reqAxis){ const want=nums.find(h=>axisRe(S.reqAxis).test(h)); if(want) pick=want; }
   P.sigH = pick; sel.value=P.sigH;
   applyAxisLock();                          // a fresh upload rebuilds the options; re-apply the step's lock
-  P.point=null; P.sel=null; P.integ=null; P.crop=null; P._bias=null; P._biasFor=null;
+  P.point=null; P.sel=null; P.integ=null; P.efit=null; P.crop=null; P._bias=null; P._biasFor=null;
   updateCtx(); resize(); setReadout();
   // A `gate:"data"` step completes the moment a file lands, with no button involved — so this is one
   // of the places Next's look has to be recomputed, or it stays dark over a step that is now passable.
@@ -314,6 +315,9 @@ function axisInfo(h){
   // an angle column (the knee pendulum test, supplied from De Santis & Perez 2024): θ in its own unit
   if(/angle/i.test(h||"")){ const u=((h||"").match(/\(([^)]+)\)\s*$/)||[,"deg"])[1].trim();
     return {L:"θ", dot:"θ̇", ddot:"θ̈", sym:"θ", unit:u==="deg"?"°":u, rate:u+"/s", dp:1}; }
+  // a color-change column (Lukewarm's spoon, 2026-11-12): 0 = the cold color, 1 = the warm one. A word, not a
+  // symbol (drawn upright, `roman`): the course has no letter for it and the workshop does not need one.
+  if(/colou?r/i.test(h||"")) return {L:"color", dot:"color", ddot:"color", sym:"color", unit:"0 = cold, 1 = warm", rate:"per s", dp:2, roman:true};
   const m=(h||"").match(/acceleration\s*([xyz])/i);
   if(m){ const l=m[1].toLowerCase(); return {L:l, dot:DOT[l], ddot:DDOT[l], sym:DDOT[l], unit:"m/s²", rate:"m/s³", dp:2}; }
   const g=(h||"").match(/\b([A-Za-z])\s*\(([^)]+)\)\s*$/);
@@ -321,6 +325,12 @@ function axisInfo(h){
     return {L:l, dot:DOT[l.toLowerCase()]||l, ddot:DDOT[l.toLowerCase()]||l, sym:l, unit:u, rate:u+"/s", dp:1}; }
   return {L:"x", dot:"ẋ", ddot:"ẍ", sym:"ẍ", unit:"m/s²", rate:"m/s³", dp:2};
 }
+
+/* THE TIME AXIS'S UNIT (Lukewarm, 2026-11-12). Every workshop before it recorded seconds, and " s" was typed
+   into the axis title and four readouts. A battery logged by the minute, a week of hourly soil temperatures and
+   a year of daily ones are not seconds, so the unit is read from the time column's own header, phyphox-style:
+   "Time (min)" gives min. No parentheses, or "(s)", is seconds, which is every earlier deck unchanged. */
+function tUnit(P){ P=P||active(); const h=(P&&P.ds&&P.ds.timeH)||""; const m=h.match(/\(([^)]+)\)\s*$/); return m?m[1].trim():"s"; }
 
 /* ====================== series + math ========================
    Every function here takes an optional panel and falls back to the ACTIVE one, so the call sites that
@@ -456,8 +466,10 @@ function r2sine(t,a,amp,f,phase){
 // mid-deck, because a head-fixed x axis that has flexed 90° is not a direction any more (see the manifest).
 // `gx`/`gy`/`gz` (2026-10-13): the GYROSCOPE axes, kept distinct from the accelerometer's so a requireAxis
 // can never be satisfied by the wrong sensor in a raw-sensors export that carries both.
-function axisRe(ax){ return ax==="abs" ? /absolute/i : /^g[xyz]$/.test(ax) ? new RegExp("gyroscope\\s*"+ax[1]+"\\b","i") : new RegExp("acceleration\\s*"+ax+"\\b","i"); }
-function axisName(ax){ return ax==="abs" ? "absolute acceleration" : /^g[xyz]$/.test(ax) ? "the gyroscope's "+ax[1]+"-axis" : "the "+ax+"-axis"; }
+// A longer word (Lukewarm, 2026-11-12: `requireAxis: bowl`, `tip`) names a column by how its header STARTS, for
+// data whose columns are places on a spoon rather than axes of a sensor.
+function axisRe(ax){ return ax==="abs" ? /absolute/i : /^g[xyz]$/.test(ax) ? new RegExp("gyroscope\\s*"+ax[1]+"\\b","i") : ax.length>1 ? new RegExp("^\\s*"+ax+"\\b","i") : new RegExp("acceleration\\s*"+ax+"\\b","i"); }
+function axisName(ax){ return ax==="abs" ? "absolute acceleration" : /^g[xyz]$/.test(ax) ? "the gyroscope's "+ax[1]+"-axis" : ax.length>1 ? "the "+ax : "the "+ax+"-axis"; }
 function axisOK(){ return !S.reqAxis || axisRe(S.reqAxis).test(S.sigH||""); }
 // `gate:"abs"` (2026-09-13): the step passes only when every visible plot's Signal is on phyphox's
 // "Absolute acceleration". Unlike `requireAxis:"abs"` it neither pre-selects nor locks — the switch IS
@@ -639,6 +651,61 @@ function syncDampedControls(){
   if(z && S.dfCtl.zFit && document.activeElement!==z) z.value=P.dfit.z.toFixed(3);
 }
 
+/* ---- Fit Exponential (Lukewarm, 2026-11-12) ----
+   Class U's Newton cooling, fitted to a dragged window: y ≈ y∞ + A·e^{−t/τ}, t counted from the window's left
+   edge. τ is searched (a geometric sweep, then a golden-section polish); A, and y∞ when it is free, are linear
+   and solved exactly at each τ. The model has no other terms.
+   `asymptote:` on the slot's CONFIG.panels entry PINS y∞ (the spoon's color always heads for 1, its warm
+   color), and then only A and τ are fitted. That is what lets a run that has covered a fifth of the way give a
+   stable τ: with y∞ free, a short window cannot tell a slow approach to 1 from a fast approach to 0.4. Leave
+   it off and y∞ is fitted too, and printed, because for a heater in a cold chamber the plateau is itself a
+   measurement. Cheap enough (one pass per τ) to follow the pointer, so the curve is live during the drag. */
+function expPin(P){ const d=PANELDEF.find(d=>(d.key||"")===P.key)||{}; return Number.isFinite(d.asymptote) ? d.asymptote : null; }
+function expEval(t,y,tau,pin){
+  let see=0,se=0,sy=0,sye=0,n=t.length; const E=new Array(n);
+  for(let i=0;i<n;i++){ const e=Math.exp(-t[i]/tau); E[i]=e; see+=e*e; se+=e; sy+=y[i]; sye+=y[i]*e; }
+  let c,A;
+  if(pin!=null){ c=pin; if(!(see>0)) return null; A=(sye-pin*se)/see; }
+  else { const D=n*see-se*se; if(!(Math.abs(D)>1e-12*n*see)) return null; c=(sy*see-se*sye)/D; A=(n*sye-se*sy)/D; }
+  let sse=0; for(let i=0;i<n;i++){ const f=c+A*E[i]; sse+=(y[i]-f)*(y[i]-f); }
+  return {sse,c,A};
+}
+function expFit(T,Y,pin){
+  const n=T.length; if(n<4) return null;
+  const t0=T[0], t=T.map(x=>x-t0), span=t[n-1]; if(!(span>0)) return null;
+  let best=null; const lo=span/200, hi=span*40, K=160;
+  const at=tau=>{ const r=expEval(t,Y,tau,pin); return r ? Object.assign(r,{tau}) : null; };
+  for(let k=0;k<=K;k++){ const r=at(lo*Math.pow(hi/lo,k/K)); if(r && (!best||r.sse<best.sse)) best=r; }
+  if(!best) return null;
+  let a=best.tau/Math.pow(hi/lo,1/K), b=best.tau*Math.pow(hi/lo,1/K); const g=(Math.sqrt(5)-1)/2;
+  for(let it=0;it<40;it++){ const x1=b-g*(b-a), x2=a+g*(b-a), r1=at(x1), r2=at(x2);
+    if(!r1||!r2) break; if(r1.sse<r2.sse){ b=x2; if(r1.sse<best.sse) best=r1; } else { a=x1; if(r2.sse<best.sse) best=r2; } }
+  const m=Y.reduce((p,c)=>p+c,0)/n; let sst=0; for(const v of Y) sst+=(v-m)*(v-m);
+  return {tau:best.tau, c:best.c, A:best.A, t0, pinned:pin!=null, r2: sst>0 ? 1-best.sse/sst : 0, edge: best.tau>=hi*0.98};
+}
+function doFitExp(s,P){
+  P=P||active(); if(!s){ P.efit=null; return; }
+  const r=selRange(s,P); if(!r || r[1]-r[0]<3){ P.efit=null; return; }
+  P.efit=expFit(s.t.slice(r[0],r[1]+1), s.a.slice(r[0],r[1]+1), expPin(P));
+}
+/* What the readout PRINTS, and therefore what `expfit` checks and `autofill` hands over: τ to three significant
+   figures, y∞ and A to the signal's own decimals. Same rule as dampedShown: a student is never marked down for
+   the readout's rounding. */
+function expNum(v){ if(!Number.isFinite(v)) return "—"; const a=Math.abs(v); return a>=100 ? v.toFixed(0) : a>=10 ? v.toFixed(1) : v.toFixed(2); }
+function expShown(F,dp){ return {tau:parseFloat(expNum(F.tau)), c: F.pinned ? F.c : parseFloat(F.c.toFixed(dp)), A:parseFloat(F.A.toFixed(dp)), t0:F.t0}; }
+function expAutofill(){
+  if(typeof NARR==="undefined") return; const st=NARR[S.step];
+  if(!st || !st.autofill || st.checkKind!=="expfit") return;
+  const P = st.fitSlot ? panelByKey(st.fitSlot) : visiblePanels().find(p=>p.efit); if(!P || !P.efit) return;
+  const E=expShown(P.efit, axisInfo(P.sigH).dp), fs=fieldsOf(st);
+  const vals = fs.length>1 ? [E.c,E.tau] : [E.tau];      // field order: (plateau,) then τ
+  fs.forEach((f,i)=>{ const v=vals[i]; if(!f || !Number.isFinite(v)) return;
+    const txt=v.toFixed(f.dp!=null ? f.dp : 1); S.raw[f.key]=txt; S.answers[f.key]=parseFloat(txt);
+    const box=document.querySelector('#stepbody input[data-key="'+f.key+'"]'); if(box) box.value=txt; });
+  S.answers["ok"+S.step]=false; const fb=$("deckfb"); if(fb) fb.innerHTML="";
+  if(typeof refreshNext==="function") refreshNext();
+}
+
 /* ====================== contextual controls ==================== */
 function updateCtx(){
   const box=$("ctx"); box.innerHTML="";
@@ -756,21 +823,29 @@ function updatePlotReadout(P){
       +' <span class="ro-hint" style="font-family:var(--font-sans)">(<i>t</i> counted from your window\'s left edge, '+F.t0.toFixed(timeDecimals(s))+' s)</span></span>'
       +'<span class="r2" tabindex="0" style="display:block;width:max-content"><i>R</i>² = '+P.dfit.r2.toFixed(3)
       +'<span class="r2pop">Fraction of the variance in your selection the fit explains — 1 = perfect, 0 = no better than a flat line</span></span>');
+  } else if(S.tool==="fitexp"){
+    if(!P.efit){ show('<span class="ro-hint">drag across the stretch to fit</span>'); return; }
+    const E=expShown(P.efit,A.dp), tu=tUnit(P), nm = A.roman ? A.sym : '<i>'+A.sym+'</i>';
+    show('<span class="formula">'+nm+' ≈ '+(P.efit.pinned ? String(E.c) : E.c.toFixed(A.dp))+(E.A<0?" − ":" + ")+Math.abs(E.A).toFixed(A.dp)
+      +' <i>e</i><sup>−<i>t</i>/'+expNum(E.tau)+'</sup>'
+      +' <span class="ro-hint" style="font-family:var(--font-sans)">(<i>t</i> in '+tu+', counted from your window\'s left edge, '+E.t0.toFixed(timeDecimals(s))+' '+tu+')</span></span>'
+      +'<span class="r2" tabindex="0" style="display:block;width:max-content"><i>R</i>² = '+P.efit.r2.toFixed(3)
+      +'<span class="r2pop">Fraction of the variance in your selection the fit explains — 1 = perfect, 0 = no better than a flat line</span></span>');
   } else if(S.tool==="point"){
     if(P.point==null){ show('<span class="ro-hint">click or drag along the trace</span>'); return; }
     const i=nearest(s,P.point);
     const td = timeDecimals(s);          // never finer than the sample interval — see timeDecimals()
-    show('<span class="ro"><i>t</i> = '+s.t[i].toFixed(td)+' s&nbsp;·&nbsp;<i>'+A.sym+'</i> = '+s.a[i].toFixed(A.dp)+' '+A.unit+'</span>');
+    show('<span class="ro"><i>t</i> = '+s.t[i].toFixed(td)+' '+tUnit(P)+'&nbsp;·&nbsp;'+(A.roman?A.sym:'<i>'+A.sym+'</i>')+' = '+s.a[i].toFixed(A.dp)+(A.roman?'':' '+A.unit)+'</span>');
   } else if(S.tool==="avg"){
     const av=average(s,P); if(av==null){ show('<span class="ro-hint">drag a region to average</span>'); return; }
-    show('<span class="ro">average <i>'+A.sym+'</i> = '+av.toFixed(A.dp)+' '+A.unit+'<span class="ro-ctx"> over '+Math.abs(P.sel.b-P.sel.a).toFixed(timeDecimals(s))+' s</span></span>');
+    show('<span class="ro">average '+(A.roman?A.sym:'<i>'+A.sym+'</i>')+' = '+av.toFixed(A.dp)+(A.roman?'':' '+A.unit)+'<span class="ro-ctx"> over '+Math.abs(P.sel.b-P.sel.a).toFixed(timeDecimals(s))+' '+tUnit(P)+'</span></span>');
   } else if(S.tool==="slope"){
     // Slope (Sportsball, 2026-10-08): a least-squares line through every sample in the window, not a
     // secant between two clicks — on GPS-grade data the two endpoints carry the noise and the middle
     // carries the answer. One decimal: a 10-second window of altitude good to a meter or two is good
     // to about a tenth of a m/s, and no better.
     const L=slopeFit(s,P); if(!L){ show('<span class="ro-hint">drag across a stretch to fit a line to it</span>'); return; }
-    show('<span class="ro">slope of <i>'+A.sym+'</i> = '+L.m.toFixed(1)+' '+A.rate+'<span class="ro-ctx"> over '+(L.t1-L.t0).toFixed(timeDecimals(s))+' s</span></span>');
+    show('<span class="ro">slope of <i>'+A.sym+'</i> = '+L.m.toFixed(1)+' '+(tUnit(P)==="s" ? A.rate : A.unit+"/"+tUnit(P))+'<span class="ro-ctx"> over '+(L.t1-L.t0).toFixed(timeDecimals(s))+' '+tUnit(P)+'</span></span>');
   } else if(S.tool==="crop"){
     // Crop is the one tool that reads out in AMBER, not green, and that is the point of the house rule
     // rather than an exception to it: green means "a number you measured", and a crop measures nothing.
@@ -882,6 +957,10 @@ function renderPanel(P){
       const qc=cropRange(qs,Q); const qa=qs.a.slice(qc[0],qc[1]+1);
       aLo=Math.min(aLo,Math.min.apply(null,qa)); aHi=Math.max(aHi,Math.max.apply(null,qa)); });
   }
+  // `yRange:[lo,hi]` on the slot's CONFIG.panels entry (Lukewarm, 2026-11-12): the axis always shows at least
+  // this much, so four spoon runs share one 0-to-1 scale and a run that got a fifth of the way looks like it.
+  { const pd0=PANELDEF.find(d=>(d.key||"")===P.key)||{};
+    if(Array.isArray(pd0.yRange)){ aLo=Math.min(aLo,pd0.yRange[0]); aHi=Math.max(aHi,pd0.yRange[1]); } }
   const Ay=niceTicks(aLo, aHi, 5);
   const tx=t=>mL+(t-T.lo)/(T.hi-T.lo)*px;
   const ay=a=>mT+(Ay.hi-a)/(Ay.hi-Ay.lo)*ph;
@@ -900,15 +979,17 @@ function renderPanel(P){
     ctx.beginPath(); ctx.moveTo(mL,y); ctx.lineTo(W-mR,y); ctx.stroke();
     ctx.fillStyle=getCss("--muted"); ctx.fillText(fmt(v), mL-8, y); });
   // left axis title (tinted to the trace) — variable italic, unit roman
-  axisTitleV(15, mT+ph/2, A.sym, "("+A.unit+")", "--trace");
+  if(A.roman) axisTitleV(15, mT+ph/2, "", A.sym+" ("+A.unit+")", "--trace");   // a word, upright (the spoon's color)
+  else axisTitleV(15, mT+ph/2, A.sym, "("+A.unit+")", "--trace");
   // frame (left + bottom)
   ctx.strokeStyle=getCss("--line"); ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(mL,mT); ctx.lineTo(mL,mT+ph); ctx.lineTo(W-mR,mT+ph); ctx.stroke();
   // time ticks + title
   ctx.textAlign="center"; ctx.textBaseline="top"; ctx.fillStyle=getCss("--muted"); ctx.font=font(11);
   T.ticks.forEach(v=>{ ctx.fillText(fmt(v), tx(v), mT+ph+7); });
   if(isLast){ const yy=mT+ph+31; ctx.textAlign="left"; ctx.textBaseline="alphabetic"; ctx.fillStyle=getCss("--muted");   // x-axis title: t italic, (s) roman
-    ctx.font=ifont(12); const vw=ctx.measureText("t").width; ctx.font=font(12); const uw=ctx.measureText(" (s)").width;
-    const x0=mL+px/2-(vw+uw)/2; ctx.font=ifont(12); ctx.fillText("t",x0,yy); ctx.font=font(12); ctx.fillText(" (s)",x0+vw,yy); }
+    const ut=" ("+tUnit(P)+")";
+    ctx.font=ifont(12); const vw=ctx.measureText("t").width; ctx.font=font(12); const uw=ctx.measureText(ut).width;
+    const x0=mL+px/2-(vw+uw)/2; ctx.font=ifont(12); ctx.fillText("t",x0,yy); ctx.font=font(12); ctx.fillText(ut,x0+vw,yy); }
 
   // Double Integrate — show the two steps a→v→x: the SINGLE integral v(t) as a faint amber GUIDE (context,
   // auto-scaled to fit, sharing the y=0 line — no axis), with GREEN shading of the area under it. That green
@@ -978,6 +1059,20 @@ function renderPanel(P){
     for(let i=r[0];i<=r[1];i++){ const u=s.t[i]-F.t0, e=Math.exp(-F.z*F.w*u);
       xs.push(tx(s.t[i])); ys.push(ay(ref.f(s.t[i])+e*(F.a*Math.sin(F.wd*u)+F.b*Math.cos(F.wd*u)))); }
     polyline(xs,ys,"--result",num("--stroke-result"));
+  }
+
+  // Fit Exponential: the fitted curve over the window, solid; its continuation to the end of the axis, dashed, so
+  // a window on the first stretch of a slow run still shows where the fit says it is headed; and that plateau
+  // itself as a faint dashed level when it is inside the plot.
+  if(S.tool==="fitexp" && P.efit && P.sel){
+    const F=P.efit, r=selRange(s,P), f=t=>F.c+F.A*Math.exp(-(t-F.t0)/F.tau);
+    ctx.save(); ctx.beginPath(); ctx.rect(mL,mT,px,ph); ctx.clip();
+    if(F.c>=Ay.lo && F.c<=Ay.hi){ ctx.setLineDash([2,5]); polyline([mL,W-mR],[ay(F.c),ay(F.c)],"--result",1); ctx.setLineDash([]); }
+    const t1=s.t[r[1]], xs2=[],ys2=[]; for(let k=0;k<=80;k++){ const t=t1+(T.hi-t1)*k/80; xs2.push(tx(t)); ys2.push(ay(f(t))); }
+    ctx.setLineDash([6,5]); ctx.globalAlpha=.7; polyline(xs2,ys2,"--result",num("--stroke-result")); ctx.globalAlpha=1; ctx.setLineDash([]);
+    const xs=[],ys=[]; for(let k=0;k<=120;k++){ const t=s.t[r[0]]+(t1-s.t[r[0]])*k/120; xs.push(tx(t)); ys.push(ay(f(t))); }
+    polyline(xs,ys,"--result",num("--stroke-result"));
+    ctx.restore();
   }
 
   // integrate result: right axis + curve
@@ -1060,7 +1155,7 @@ function renderPanel(P){
     ctx.beginPath(); ctx.moveTo(x,mT); ctx.lineTo(x,mT+ph); ctx.stroke(); ctx.setLineDash([]);
     ctx.fillStyle=getCss("--mark"); ctx.beginPath(); ctx.arc(x,y,4,0,7); ctx.fill(); ctx.lineWidth=1; }
   // selection edges (avg / integrate / fit sine): dashed amber context lines bounding the selection
-  if((S.tool==="avg"||S.tool==="slope"||S.tool==="dblint"||S.tool==="integrate"||S.tool==="fitsine"||S.tool==="fitdamped") && P.sel){ const r=selRange(s,P);
+  if((S.tool==="avg"||S.tool==="slope"||S.tool==="dblint"||S.tool==="integrate"||S.tool==="fitsine"||S.tool==="fitdamped"||S.tool==="fitexp") && P.sel){ const r=selRange(s,P);
     ctx.strokeStyle=getCss("--edge"); ctx.lineWidth=num("--stroke-mark"); ctx.setLineDash([4,4]);
     [r[0],r[1]].forEach(i=>{ const x=tx(s.t[i]);
       ctx.beginPath(); ctx.moveTo(x,mT); ctx.lineTo(x,mT+ph); ctx.stroke(); }); ctx.setLineDash([]); ctx.lineWidth=1;
@@ -1068,8 +1163,8 @@ function renderPanel(P){
     // Integrate or Average Value can be read off without switching to Select Point and re-finding it.
     if(S.tool==="integrate"||S.tool==="avg"||S.tool==="slope"){
       const td=timeDecimals(s); ctx.fillStyle=getCss("--edge"); ctx.font=font(11); ctx.textBaseline="bottom";
-      ctx.textAlign="right"; ctx.fillText(s.t[r[0]].toFixed(td)+" s", tx(s.t[r[0]])-3, mT+ph-3);
-      ctx.textAlign="left";  ctx.fillText(s.t[r[1]].toFixed(td)+" s", tx(s.t[r[1]])+3, mT+ph-3);
+      ctx.textAlign="right"; ctx.fillText(s.t[r[0]].toFixed(td)+" "+tUnit(P), tx(s.t[r[0]])-3, mT+ph-3);
+      ctx.textAlign="left";  ctx.fillText(s.t[r[1]].toFixed(td)+" "+tUnit(P), tx(s.t[r[1]])+3, mT+ph-3);
     } }
   // crop bounds: dashed amber rules with a grip at the top, drawn whenever a crop EXISTS — not only
   // while the Crop tool is active, because the whole reason to crop is to then go and measure inside it,
@@ -1125,7 +1220,7 @@ function wirePointer(P){
       render(); return;
     }
     if(S.tool==="point"){ P.point=t; P.drag={pt:true}; render(); setReadout(); }
-    else { P.drag={t0:t}; P.sel={a:t,b:t}; if(S.tool==="dblint"||S.tool==="integrate") P.integ=null; if(S.tool==="fitsine") P.fit=null; if(S.tool==="fitdamped") P.dfit=null; render(); setReadout(); }
+    else { P.drag={t0:t}; P.sel={a:t,b:t}; if(S.tool==="dblint"||S.tool==="integrate") P.integ=null; if(S.tool==="fitsine") P.fit=null; if(S.tool==="fitdamped") P.dfit=null; if(S.tool==="fitexp") P.efit=null; render(); setReadout(); }
   });
   P.cv.addEventListener("pointermove",e=>{
     if(!P.drag) return;
@@ -1136,6 +1231,7 @@ function wirePointer(P){
     // Fit Damped follows the drag too (2026-10-15), at most once a frame: a fast fit, then the full one on release
     if(S.tool==="fitdamped" && !P._dfFrame){ P._dfFrame=requestAnimationFrame(()=>{ P._dfFrame=0;
       if(P.drag && P.sel){ doFitDamped(series(P),P,true); render(); setReadout(); } }); }
+    if(S.tool==="fitexp") doFitExp(s,P);
     render(); setReadout();
   });
   P.cv.addEventListener("pointerup",e=>{
@@ -1149,9 +1245,10 @@ function wirePointer(P){
     }
     if(P.drag.pt){ P.drag=null; return; }
     const t=pxToTime(P,e.clientX);
-    if(Math.abs(t-P.drag.t0)<1e-3){ P.sel=null; P.integ=null; P.fit=null; P.dfit=null; }
+    if(Math.abs(t-P.drag.t0)<1e-3){ P.sel=null; P.integ=null; P.fit=null; P.dfit=null; P.efit=null; }
     else { P.sel={a:P.drag.t0,b:t}; if(S.tool==="dblint"||S.tool==="integrate") doIntegrate(series(P),P); if(S.tool==="fitsine"){ doFitSine(series(P),P); syncFitControls(); }
-      if(S.tool==="fitdamped"){ doFitDamped(series(P),P); syncDampedControls(); } }
+      if(S.tool==="fitdamped"){ doFitDamped(series(P),P); syncDampedControls(); }
+      if(S.tool==="fitexp"){ doFitExp(series(P),P); expAutofill(); } }
     P.drag=null; render(); setReadout();
   });
 }
@@ -1162,7 +1259,7 @@ document.querySelectorAll("#tools button").forEach(b=>b.addEventListener("click"
   // Switching tools clears the MEASUREMENT state on every visible panel — but never the crop. A crop is
   // a viewing decision that outlives the tool that made it; clearing it here would throw the student
   // back to a flat line the instant they picked up Average Value to measure inside it.
-  visiblePanels().forEach(P=>{ P.point=null; P.sel=null; P.integ=null; P.fit=null; P.dfit=null;
+  visiblePanels().forEach(P=>{ P.point=null; P.sel=null; P.integ=null; P.fit=null; P.dfit=null; P.efit=null;
     if(S.tool==="crop" && !P.crop){ const s=series(P); if(s) P.crop={a:s.t[0],b:s.t[s.t.length-1]}; } });
   updateCtx(); resize(); setReadout(); updateFitLabel();
 }));
@@ -1495,6 +1592,34 @@ function inputIssue(st){
                  : near(z,E.D/E.W,Math.max(0.0006,0.005*E.D/E.W)) ? "Close: that divides by the ringing rate $\\omega\\sqrt{1-\\zeta^2}$. Divide by $\\omega$ itself."
                  : "The exponent is $\\zeta\\omega$, and you have $\\omega$. What is left is $\\zeta$.";
       return fbText(st,"check","{label} doesn't follow from the function on screen. {hint}",{label:(fs[1]||{}).label||"ζ", hint:hint}); } }
+  /* `expfit` (Lukewarm, 2026-11-12): the typed τ (and, on a two-box step, the plateau before it) against the Fit
+     Exponential readout on the step's plot. A wiring check, as `dampfit` is: the fit is the student's own, and the
+     boxes have to say what it says, to the decimals each box asks for. */
+  if(st.checkKind==="expfit"){ const fs=fieldsOf(st);
+    const P = st.fitSlot ? ((panelByKey(st.fitSlot)||{}).efit ? panelByKey(st.fitSlot) : null) : (visiblePanels().find(p=>p.efit) || null);
+    if(!P) return fbText(st,"fit","Drag a window across the curve with <b>Fit Exponential</b> first.");
+    const E=expShown(P.efit, axisInfo(P.sigH).dp), want = fs.length>1 ? [E.c,E.tau] : [E.tau];
+    for(let i=0;i<fs.length;i++){ const f=fs[i], v=S.answers[f.key], x=want[i]; if(!Number.isFinite(v)) continue;
+      const tol=0.51*Math.pow(10,-(f.dp!=null?f.dp:1))+1e-9;
+      if(Math.abs(v-x)>tol){
+        const isTau = i===fs.length-1;
+        const hint = isTau ? (Math.abs(v-Math.abs(E.A))<=tol ? "That is the number in front of $e$, not the one under $t$."
+                            : Math.abs(v-1/E.tau)<=Math.max(tol,0.02/E.tau) ? "That is $1/\\tau$. The readout already divides $t$ by $\\tau$."
+                            : "$\\tau$ is the number under $t$ in the exponent of the readout's function.")
+                           : "The plateau is the first number in the readout's function, the value the curve is heading for.";
+        return fbText(st,"check","{label} doesn't match the function on screen. {hint}",{label:f.label, hint:hint, expected:x}); } } }
+  /* `calc` (Lukewarm, 2026-11-12): a box whose value follows by arithmetic from boxes the group filled earlier.
+     The deck says how: CONFIG.calc[<input key>] = { f: a => expected, tol: 0.03, slips: [{ f: a => value, say: "…" }] },
+     `a` being the answers so far. Within `tol` (relative) of f(a) passes; a value that lands on a named slip
+     gets that slip's sentence as {hint}. Like `kspring` and `hz`, it checks the arithmetic, not the physics. */
+  if(st.checkKind==="calc"){ const CC=(typeof CONFIG!=="undefined" && CONFIG && CONFIG.calc) || {};
+    for(const f of fieldsOf(st)){ const c=CC[f.key], v=S.answers[f.key]; if(!c || !Number.isFinite(v)) continue;
+      let x; try { x=c.f(S.answers); } catch(e){ x=NaN; } if(!Number.isFinite(x)) continue;
+      const tol=(c.tol!=null?c.tol:0.03), near=(u,w)=>Math.abs(u-w)<=tol*Math.max(Math.abs(w),1e-12);
+      if(!near(v,x)){ let hint="";
+        for(const sl of (c.slips||[])){ let y; try { y=sl.f(S.answers); } catch(e){ y=NaN; } if(Number.isFinite(y) && near(v,y)){ hint=sl.say; break; } }
+        const dp=f.dp!=null?f.dp:2;
+        return fbText(st,"check","{label} doesn't follow from your numbers. {hint}",{label:f.label, hint:hint, expected:x.toFixed(dp)}); } } }
   /* `fshift` (2026-10-15): the percent frequency shift from damping, (√(1-ζ²)-1)×100, from the ζ an earlier step
      recorded (CONFIG.fshift.zKey). A positive answer is the range check's job (feedback.high); this catches the arithmetic. */
   if(st.checkKind==="fshift"){ const c=CONFIG.fshift||{}, v=S.answers[(fieldsOf(st)[0]||{}).key], z=S.answers[c.zKey];
@@ -1977,6 +2102,13 @@ function renderStep(){
     document.querySelectorAll("#tools button").forEach(x=>x.classList.toggle("on",x.dataset.tool==="fitdamped"));
     updateCtx(); resize(); setReadout(); updateFitLabel();
   }
+  // `tool: fitexp` pins Fit Exponential the same way (Lukewarm, 2026-11-12). With `CONFIG.pinTools`, `tool: point`
+  // and `tool: avg` pin too; without it they stay what they were in every earlier deck, a note for the reader.
+  if((st.tool==="fitexp" || (CONFIG.pinTools && (st.tool==="point" || st.tool==="avg"))) && S.tool!==st.tool && TOOLS.indexOf(st.tool)>=0){
+    S.tool=st.tool;
+    document.querySelectorAll("#tools button").forEach(x=>x.classList.toggle("on",x.dataset.tool===st.tool));
+    updateCtx(); resize(); setReadout(); updateFitLabel();
+  }
   S.challenge = !!st.challenge;
   // Seed the challenge's best from the target fit — but ONLY the witnessed value, never the typed one.
   // Seeding from `S.answers.r2target` was the actual leak: the arrow started wherever the student said
@@ -2133,7 +2265,7 @@ function renderStep(){
       const inp=row.querySelector("input");
       inp.dataset.key=f.key;                        // lets a top-region sim write the box it drives (makeSim)
       if(st.autofill){ inp.readOnly=true; inp.tabIndex=-1; inp.classList.add("autofill"); inp.placeholder="from fit";
-                       inp.title="Filled in from your Fit Damped window"; }
+                       inp.title = st.checkKind==="expfit" ? "Filled in from your Fit Exponential window" : "Filled in from your Fit Damped window"; }
       if(S.answers[f.key]!=null) inp.value=S.answers[f.key];
       // `input`, not `change`: `change` only fires on blur, so a student who retyped a number and
       // reached straight for Enter was being judged on the previous one. Editing any value RETRACTS
@@ -2153,7 +2285,7 @@ function renderStep(){
     // row landed in the first cell and shoved every labeled field one column right — the button came
     // out to the LEFT of the first label. Outside, it sits under whichever of the three input layouts
     // the step happens to use, and none of them has to know about it.
-    if(st.autofill) setTimeout(dampedAutofill,0);   // a window already on the plot fills the boxes on arrival
+    if(st.autofill) setTimeout(st.checkKind==="expfit" ? expAutofill : dampedAutofill,0);   // a window already on the plot fills the boxes on arrival
     let goRow=null;
     if(wantsSubmit(st)){
       goRow=document.createElement("div"); goRow.className="submitrow";

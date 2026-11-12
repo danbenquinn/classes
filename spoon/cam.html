@@ -38,13 +38,15 @@
   <p id="sub">Tap below to turn on the camera and connect to the laptop.</p>
   <video id="v" playsinline muted autoplay hidden></video>
   <div id="status" class="status" hidden><i></i><span id="stxt"></span></div>
-  <button id="go">Tap to start</button>
+  <button id="go">Start camera</button>
   <p class="small" id="info"></p>
 </main>
 <script src="common.js"></script>
 <script>
-// Streams JPEG snapshots of the rear camera to viewer.html over the same room transport as the
-// accelerometer pages (common.js). The viewer claims the phone and sets the rate and size.
+// Streams JPEG snapshots of the rear camera over the same room transport as the accelerometer pages
+// (common.js), to whichever laptop page claims it: a workshop deck (lab-suite/analyzer/spoon-capture.js) or
+// the bench viewer (viewer.html). The laptop sets the rate and size, and pauses the stream with fps 0
+// whenever it isn't looking (a deck step with no camera on it), so an idle room sends nothing.
 const params = new URLSearchParams(location.search);
 const ROOM = (params.get("room") || "").toUpperCase();
 const me = { id: "c-" + randomId(), role: "camera" };
@@ -100,6 +102,8 @@ function onMessage(m) {
 }
 function startSending() {
   stopSending();
+  if (!(cfg.fps > 0)) { status("ok", "Connected. Paused until the laptop needs pictures."); return; }
+  status("ok", "Connected. Sending pictures.");
   timer = setInterval(snap, 1000 / Math.max(0.2, Math.min(5, cfg.fps)));
 }
 function stopSending() { clearInterval(timer); timer = null; }

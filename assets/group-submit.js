@@ -30,6 +30,7 @@ const SUBCFG=Object.assign({
   key:"sb_publishable_IQNxMMynit0aWtOS3tjiRQ_h5sNo159",
   workshop:(typeof CONFIG!=="undefined" && CONFIG && CONFIG.title) || document.title,
   maxRows:4000,
+  dataWord:"acceleration",     // what the consent question calls the group's data; Lukewarm (2026-11-12) sets "spoon"
 }, (typeof CONFIG!=="undefined" && CONFIG && CONFIG.submit) || {});
 
 const G={ boxes:[], status:[], hashes:new Set((GCFG&&GCFG.roster)||[]), log:[], submitted:null, sending:false };
@@ -206,7 +207,7 @@ function wrapupText(){
   const share = a.wrap_share==="yes" ? "yes, " + (a.wrap_credit==="team" ? "credited to " + (team||"(no team name given)") : "anonymous")
               : a.wrap_share==="no" ? "no" : "(not answered)";
   return "\n\nComments for future years: " + (c ? c.replace(/\s*\n\s*/g," / ") : "(none)")
-       + "\nOK to use our raw acceleration data as a sample in future years: " + share;
+       + "\nOK to use our raw "+SUBCFG.dataWord+" data as a sample in future years: " + share;
 }
 function refreshWrapSummary(st){
   const ta=document.querySelector("#stepbody .summary-wrap textarea"); if(!ta) return;
@@ -219,7 +220,7 @@ function mountWrapup(st){
   box.innerHTML =
      '<div class="wu-card"><label class="wu-q" for="wu-comments">Is there anything that would have made this workshop go more smoothly? We read every comment when we plan next year.</label>'
     +'<textarea id="wu-comments" rows="4" placeholder="Optional"></textarea></div>'
-    +'<div class="wu-card"><div class="wu-q">Is it OK if we use your raw acceleration data as a sample in future years?</div>'
+    +'<div class="wu-card"><div class="wu-q">Is it OK if we use your raw '+SUBCFG.dataWord+' data as a sample in future years?</div>'
     +'<div class="wu-opts"><label><input type="radio" name="wu-share" value="yes"> Yes</label><label><input type="radio" name="wu-share" value="no"> No</label></div>'
     +'<div class="wu-credit"><div class="wu-q2">I want the data to be</div>'
     +'<div class="wu-opts"><label><input type="radio" name="wu-credit" value="anon"> anonymous</label>'
