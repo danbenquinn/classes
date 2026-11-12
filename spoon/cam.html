@@ -50,7 +50,7 @@ const ROOM = (params.get("room") || "").toUpperCase();
 const me = { id: "c-" + randomId(), role: "camera" };
 const $ = (id) => document.getElementById(id);
 let conn = null, claimed = false, viewerHere = false, timer = null, seq = 0, stream = null, wakeLock = null;
-let cfg = { fps: 2, size: 960, q: 0.8 };
+let cfg = { fps: 1, size: 640, q: 0.8 };
 const canvas = document.createElement("canvas");
 
 function status(cls, txt) { $("status").hidden = false; $("status").className = "status " + cls; $("stxt").textContent = txt; }
