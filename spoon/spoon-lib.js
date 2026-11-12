@@ -98,31 +98,26 @@ const SpoonLib = (() => {
   function scoreQuad(quad, step, img) {
     const pts = order4(quad.map((b) => [b.cx, b.cy]));
     if (new Set(pts).size < 4) return null;
-    // the four rotations of the labels; the gray patch decides which way the sheet points
-    let best = null;
-    for (let r = 0; r < 4; r++) {
-      const dst = [0, 1, 2, 3].map((j) => pts[(j + r) % 4]);
-      const H = homography(G.squares, dst);
-      if (!H) continue;
-      // each blob's area vs the area the homography predicts for a 10 mm square there
-      let err = 0;
-      for (let j = 0; j < 4; j++) {
-        const [x, y] = G.squares[j], hs = G.squareSide / 2;
-        const p = [[x - hs, y - hs], [x + hs, y - hs], [x + hs, y + hs], [x - hs, y + hs]].map(([a, b]) => apply(H, a, b));
-        let area = 0;
-        for (let m = 0; m < 4; m++) { const [x1, y1] = p[m], [x2, y2] = p[(m + 1) % 4]; area += x1 * y2 - x2 * y1; }
-        area = Math.abs(area) / 2 / (step * step);
-        const blob = quad.find((b) => b.cx === dst[j][0] && b.cy === dst[j][1]);
-        err += Math.abs(Math.log(blob.n / area));
-      }
-      const g = sampleDisk(img, H, G.gray[0], G.gray[1], 2.5);
-      const pw = paperWhite(img, H);
-      if (!g || !pw) continue;
-      const ratio = (g[0] + g[1] + g[2]) / (pw[0] + pw[1] + pw[2]);
-      const score = err + 4 * Math.abs(ratio - 0.57);
-      if (!best || score < best.score) best = { score, pts: dst, H, grayRatio: ratio };
+    // Fixed orientation (Daniel, 2026-11-11): the bowl always points at squares 3 and 4, and the phone looks
+    // from the bowl end, so 3 and 4 are the bottom pair in the picture. No rotation search. The gray patch
+    // only helps reject a wrong set of four blobs.
+    const dst = pts;
+    const H = homography(G.squares, dst);
+    if (!H) return null;
+    let err = 0;
+    for (let j = 0; j < 4; j++) {   // each blob's area vs the area a 10 mm square should have there
+      const [x, y] = G.squares[j], hs = G.squareSide / 2;
+      const p = [[x - hs, y - hs], [x + hs, y - hs], [x + hs, y + hs], [x - hs, y + hs]].map(([a, b]) => apply(H, a, b));
+      let area = 0;
+      for (let m = 0; m < 4; m++) { const [x1, y1] = p[m], [x2, y2] = p[(m + 1) % 4]; area += x1 * y2 - x2 * y1; }
+      area = Math.abs(area) / 2 / (step * step);
+      const blob = quad.find((b) => b.cx === dst[j][0] && b.cy === dst[j][1]);
+      err += Math.abs(Math.log(blob.n / area));
     }
-    return best;
+    const g = sampleDisk(img, H, G.gray[0], G.gray[1], 2.5), pw = paperWhite(img, H);
+    if (!g || !pw) return null;
+    const ratio = (g[0] + g[1] + g[2]) / (pw[0] + pw[1] + pw[2]);
+    return { score: err + 2 * Math.abs(ratio - 0.57), pts: dst, H, grayRatio: ratio };
   }
 
   // ── sampling ────────────────────────────────────────────────

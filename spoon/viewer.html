@@ -52,6 +52,12 @@
   th { color: var(--muted); font-weight: 600; }
   td.num { font-variant-numeric: tabular-nums; text-align: right; }
   .tablewrap { overflow-x: auto; }
+  .refbox { display: flex; gap: 12px; align-items: center; margin-top: 10px; padding: 8px; border-radius: 10px;
+    background: color-mix(in srgb, var(--ok) 12%, transparent); }
+  .refbox img { width: 72px; border-radius: 6px; display: block; }
+  .refbox.flash { animation: flash 1.2s ease-out; }
+  @keyframes flash { from { box-shadow: 0 0 0 4px var(--ok); } to { box-shadow: 0 0 0 0 transparent; } }
+  @media (prefers-reduced-motion: reduce) { .refbox.flash { animation: none; } }
   [hidden] { display: none !important; }
 </style>
 </head>
@@ -83,10 +89,12 @@
       <canvas id="live" width="480" height="640"></canvas>
       <div class="row">
         <button id="ref">Save room-temp reference</button>
+        <span id="refok" class="muted" hidden></span>
         <label class="muted"><input type="checkbox" id="showPts" checked> points</label>
         <label class="muted"><input type="checkbox" id="showOut" checked> outline</label>
       </div>
       <div class="muted" style="margin-top:6px">Reference: lay the spoon on the outline at room temperature and save. Save a new one for each spoon.</div>
+      <div id="refbox" class="refbox" hidden><img id="refimg" alt="Saved reference picture"><div><b>Reference saved</b><br><span id="reftxt" class="muted"></span></div></div>
     </div>
     <div class="card">
       <h2>Other sources</h2>
@@ -96,7 +104,8 @@
         <label><button onclick="document.getElementById('runfile').click()">Load saved runs…</button>
           <input type="file" id="runfile" accept=".json,application/json" multiple hidden></label>
       </div>
-      <div class="muted" style="margin-top:6px">A video from the phone's own camera app (same setup) is read at the rate above. Start it before the spoon goes down and run it until the spoon is fully back.</div>
+      <div class="row"><label class="muted">Video clock starts at <input type="text" id="vidstart" placeholder="auto" style="width:70px;flex:none"> s</label></div>
+      <div class="muted" style="margin-top:6px">A video from the phone's own camera app (same setup) is read at the rate above and kept until the spoon is fully back. Give the moment your hand is clear of the picture, or leave it on auto to find when the spoon settles.</div>
     </div>
   </div>
 
@@ -108,7 +117,7 @@
         <button class="primary" id="start">Start run</button>
         <button class="stop" id="stop" disabled>Stop</button>
       </div>
-      <div class="muted" id="runinfo" style="margin-top:6px">Press Start with the sheet empty, then lay the cold spoon down. The clock starts when the spoon settles.</div>
+      <div class="muted" id="runinfo" style="margin-top:6px">Lay the cold spoon on the outline, get your hand out of the picture, then press Start. The clock starts at Start.</div>
       <div class="plots" style="margin-top:12px">
         <div><canvas class="plot" id="plot"></canvas><div class="legend" id="legend"></div></div>
         <div><canvas id="map"></canvas><div class="muted" style="margin-top:4px">Blue: just out of the ice. Red: back to room temperature.</div></div>
@@ -237,9 +246,18 @@ function drawLive(a) {
 // ── reference ─────────────────────────────────────────────────
 let ref = null;   // {pts, rect, jpg, label}
 $("ref").onclick = () => {
-  if (!lastFrame || !lastFrame.H) return alert("No picture with the squares in view yet.");
+  if (!lastFrame || !lastFrame.H) {
+    $("refok").hidden = false; $("refok").style.color = "var(--warn)";
+    $("refok").textContent = "Not saved: the four squares aren't in view.";
+    return;
+  }
   ref = { pts: lastFrame.pts, rect: lastFrame.rect, jpg: lastFrame.jpg, label: $("label").value || "" };
-  pill("pRef", "ok", "Reference saved " + new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }));
+  const when = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" });
+  pill("pRef", "ok", "Reference saved " + when);
+  $("refok").hidden = true;
+  $("refimg").src = ref.jpg; $("reftxt").textContent = "at " + when + ". Runs from now on use it.";
+  const box = $("refbox"); box.hidden = false; box.classList.remove("flash"); void box.offsetWidth; box.classList.add("flash");
+  $("ref").textContent = "Saved ✓"; setTimeout(() => ($("ref").textContent = "Save room-temp reference"), 1500);
 };
 
 // ── runs ──────────────────────────────────────────────────────
@@ -250,16 +268,16 @@ function newRun(label, source) {
 $("start").onclick = () => {
   if (!lastH) return alert("Get all four squares in view first.");
   run = newRun($("label").value.trim() || "run " + (runs.length + 1), "phone");
+  run.settle = 0;   // the clock starts at the first picture after Start (Daniel, 2026-11-11)
   $("start").disabled = true; $("stop").disabled = false; pill("pRun", "rec", "Recording");
-  $("runinfo").textContent = "Recording. Lay the cold spoon down.";
+  $("runinfo").textContent = "Recording. Press Stop when the spoon is back to its room-temperature color.";
 };
 $("stop").onclick = () => finishRun();
 function finishRun() {
   if (!run) return;
   const r = run; run = null;
   $("start").disabled = false; $("stop").disabled = true; pill("pRun", "", "Idle");
-  if (r.settle < 0) { $("runinfo").textContent = "No spoon detected in that run; discarded."; return; }
-  delete r.live; runs.push(r); computeRun(r); renderRuns(); plotRun(r, $("plot"));
+  if (r.frames.length < 4) { $("runinfo").textContent = "Too short to keep (fewer than 4 pictures)."; return; } runs.push(r); computeRun(r); renderRuns(); plotRun(r, $("plot"));
   $("runinfo").textContent = "Saved “" + r.label + "”. " + r.frames.length + " pictures.";
 }
 function meanPts(list) {   // average point colors over several frames
@@ -283,11 +301,7 @@ function findSettle(fr) {
 }
 function addFrame(r, f) {
   r.frames.push(f);
-  if (r.settle < 0) {
-    r.settle = findSettle(r.frames);
-    if (r.settle >= 0) $("runinfo").textContent = "Spoon down. Timing from here; press Stop when it's back to room color.";
-  }
-  if (r.settle >= 0 && r.frames.length >= r.settle + 3) {
+  if (r.frames.length >= 3) {
     computeRun(r, true); plotRun(r, $("plot")); drawMapFor(f.rect, r);
   }
 }
@@ -400,7 +414,7 @@ function download(list, name) {
   const out = { kind: "spoon-runs", version: 1, saved: new Date().toISOString(), geom: G,
     runs: list.map((r) => ({ label: r.label, source: r.source, created: r.created,
       ref: r.ref ? { jpg: r.ref.jpg, label: r.ref.label } : null,
-      frames: r.frames.map((f) => ({ t: f.t, jpg: f.jpg })) })) };
+      settle: r.settle, frames: r.frames.map((f) => ({ t: f.t, jpg: f.jpg })) })) };
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob([JSON.stringify(out)], { type: "application/json" }));
   a.download = (name || "spoon-runs").replace(/[^\w.-]+/g, "_") + ".json"; a.click();
@@ -416,7 +430,7 @@ $("runfile").onchange = async (e) => {
       if (s.ref) { const a = await analyze(s.ref.jpg, null); if (a.H) refObj = { pts: a.pts, rect: a.rect, jpg: s.ref.jpg, label: s.ref.label }; }
       const r = newRun(s.label, s.source + " (loaded)"); r.ref = refObj; r.created = s.created;
       for (const f of s.frames) { const a = await analyze(f.jpg, H); if (!a.H) continue; H = a.H; r.frames.push({ t: f.t, jpg: f.jpg, pts: a.pts, rect: a.rect }); }
-      r.settle = findSettle(r.frames);
+      r.settle = Number.isInteger(s.settle) ? Math.min(s.settle, r.frames.length - 3) : findSettle(r.frames);
       if (r.settle < 0) { $("runinfo").textContent = "“" + s.label + "”: no spoon found."; continue; }
       runs.push(r); computeRun(r);
     }
@@ -448,8 +462,10 @@ $("vidfile").onchange = async (e) => {
     H = a.H; r.frames.push({ t: t * 1000, jpg, pts: a.pts, rect: a.rect });
   }
   URL.revokeObjectURL(v.src);
-  r.settle = findSettle(r.frames);
-  if (r.settle < 0) { $("runinfo").textContent = "Couldn't find the spoon going down in that video."; return; }
+  const vs = parseFloat($("vidstart").value);
+  r.settle = isNaN(vs) ? findSettle(r.frames) : r.frames.findIndex((f) => f.t >= vs * 1000);
+  if (r.settle > r.frames.length - 3) r.settle = -1;
+  if (r.settle < 0) { $("runinfo").textContent = isNaN(vs) ? "Couldn't find the spoon going down in that video. Try giving a start time." : "That start time is past the end of the video."; return; }
   if (!r.ref) $("warmMode").value = "end";
   runs.push(r); computeRun(r); renderRuns(); plotRun(r, $("plot")); drawMapFor(r.frames[r.frames.length - 1].rect, r);
   $("runinfo").textContent = "Read “" + r.label + "”: " + r.frames.length + " pictures.";
