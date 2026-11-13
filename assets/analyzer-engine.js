@@ -317,7 +317,7 @@ function axisInfo(h){
     return {L:"θ", dot:"θ̇", ddot:"θ̈", sym:"θ", unit:u==="deg"?"°":u, rate:u+"/s", dp:1}; }
   // a color-change column (Lukewarm's spoon, 2026-11-12): 0 = the cold color, 1 = the warm one. A word, not a
   // symbol (drawn upright, `roman`): the course has no letter for it and the workshop does not need one.
-  if(/colou?r/i.test(h||"")) return {L:"color", dot:"color", ddot:"color", sym:"color", unit:"0 = cold, 1 = warm", rate:"per s", dp:2, roman:true};
+  if(/colou?r/i.test(h||"")) return {L:"color", dot:"color", ddot:"color", sym:"color", unit:"0 = cold, 1 = warm", rate:"per min", slopeScale:60, dp:2, roman:true};
   const m=(h||"").match(/acceleration\s*([xyz])/i);
   if(m){ const l=m[1].toLowerCase(); return {L:l, dot:DOT[l], ddot:DDOT[l], sym:DDOT[l], unit:"m/s²", rate:"m/s³", dp:2}; }
   const g=(h||"").match(/\b([A-Za-z])\s*\(([^)]+)\)\s*$/);
@@ -342,6 +342,20 @@ function series(P){
   for(let i=0;i<t.length;i++){ if(Number.isFinite(t[i])&&Number.isFinite(a[i])){T.push(t[i]);A.push(a[i]);} }
   return T.length?{t:T,a:A}:null;
 }
+/* `overlay:true` on a slot's CONFIG.panels entry (Lukewarm, 2026-11-12): the plot draws EVERY numeric column of
+   the slot at once, each in its own fixed color with a legend, instead of only the one the Signal names. The
+   Signal's column is the heavy line and the one every tool acts on; the others are context. Built for the
+   spoon, whose three columns are three places on one spoon, warming side by side. */
+const OVERLAY_COLORS=["--mma-ltblue","--mma-mauve","--mma-gold","--mma-purple","--mma-red"];
+function overlayCols(P){
+  const d=PANELDEF.find(d=>(d.key||"")===P.key)||{}; if(!d.overlay || !P.ds) return null;
+  const hs=P.ds.headers.filter(h=>h!==P.ds.timeH && P.ds.cols[h].some(Number.isFinite));
+  if(hs.length<2) return null;
+  const t=P.ds.cols[P.ds.timeH];
+  return hs.map((h,i)=>{ const a=P.ds.cols[h], T=[],A=[];
+    for(let k=0;k<t.length;k++) if(Number.isFinite(t[k])&&Number.isFinite(a[k])){ T.push(t[k]); A.push(a[k]); }
+    return {h, name:h.trim().split(/\s+/)[0], color:(d.overlayColors&&d.overlayColors[i])||OVERLAY_COLORS[i%OVERLAY_COLORS.length], t:T, a:A, on:h===P.sigH}; });
+}
 // A named column out of a named slot, as {t,a} — for validators that check against SUPPLIED data.
 function slotCol(key, re){
   const P=panelByKey(key); if(!P||!P.ds) return null;
@@ -364,6 +378,23 @@ function slopeFit(s,P){ const r=selRange(s,P); if(!r||r[1]-r[0]<2) return null;
   const den=n*stt-st*st; if(!(Math.abs(den)>0)) return null;
   const m=(n*sty-st*sy)/den, b0=(sy-m*st)/n;
   return {m:m, b:b0-m*t0, t0:t0, t1:s.t[r[1]]}; }
+/* What the Slope readout PRINTS (Lukewarm, 2026-11-12), and so what `slopefit` checks and `autofill` hands over.
+   Accelerations and the like keep their one decimal. A color column's slope is per MINUTE (`slopeScale`), and
+   small, so it gets two significant figures below 1: "0.51 per min", "0.060 per min". */
+function slopeShown(P){ const s=series(P), L=s&&slopeFit(s,P); if(!L) return null;
+  const A=axisInfo(P.sigH), v=L.m*(A.slopeScale||1), a=Math.abs(v);
+  const txt = A.slopeScale ? (a>=1 ? v.toFixed(2) : v.toPrecision(2)) : v.toFixed(1);
+  return {txt, v:parseFloat(txt), unit: A.slopeScale ? A.rate : (tUnit(P)==="s" ? A.rate : A.unit+"/"+tUnit(P)), L}; }
+function slopeAutofill(){
+  if(typeof NARR==="undefined") return; const st=NARR[S.step];
+  if(!st || !st.autofill || st.checkKind!=="slopefit") return;
+  const P = st.fitSlot ? panelByKey(st.fitSlot) : visiblePanels().find(p=>p.sel); if(!P || !P.sel) return;
+  const R=slopeShown(P), f=fieldsOf(st)[0]; if(!R || !f) return;
+  S.raw[f.key]=R.txt; S.answers[f.key]=R.v;
+  const box=document.querySelector('#stepbody input[data-key="'+f.key+'"]'); if(box) box.value=R.txt;
+  S.answers["ok"+S.step]=false; const fb=$("deckfb"); if(fb) fb.innerHTML="";
+  if(typeof refreshNext==="function") refreshNext();
+}
 /* ---- crop: a VIEW window, not a filter ----
    `P.crop = {a,b}` in seconds. It changes what the plot SHOWS (dimmed outside, vertical axis rescaled to
    what is inside) and nothing that any tool COMPUTES — an Average dragged across the grayed region still
@@ -481,11 +512,19 @@ function onAbs(P){ return !!(P.ds && /absolute/i.test(P.sigH||"")); }
 // chore, not a measurement.
 function preferAxis(){
   if(!S.reqAxis) return;
+  let changed=false;
   (visiblePanels().length?visiblePanels():S.panels).forEach(P=>{
     if(!P.ds) return;
     const want=P.ds.headers.find(h=>h!==P.ds.timeH && axisRe(S.reqAxis).test(h));
-    if(want && want!==P.sigH){ P.sigH=want; if(P.selEl) P.selEl.value=want; }
+    // The window and every fit belong to the column they were dragged on. Carried across a switch (Lukewarm,
+    // 2026-11-12: bowl on one step, tip on the next), the old column's green curve sat on the new column's trace
+    // and `autofill` handed its numbers to the new step's box. A step that changes the Signal starts clean.
+    if(want && want!==P.sigH){ P.sigH=want; if(P.selEl) P.selEl.value=want;
+      P.sel=null; P.point=null; P.integ=null; P.fit=null; P.dfit=null; P.efit=null; changed=true; }
   });
+  // …and is REDRAWN. Nothing else repaints the canvas on step entry, so the plot kept showing the previous
+  // step's column (and its window) under a dropdown that already named the new one, until the first click.
+  if(changed){ try { render(); setReadout(); } catch(e){} }
 }
 // ...and LOCK the dropdown while that step is up. Default-selecting was only half the job: on the
 // challenge, scoring is gated on the x-axis, so the only thing an open dropdown can still do is
@@ -844,8 +883,9 @@ function updatePlotReadout(P){
     // secant between two clicks — on GPS-grade data the two endpoints carry the noise and the middle
     // carries the answer. One decimal: a 10-second window of altitude good to a meter or two is good
     // to about a tenth of a m/s, and no better.
-    const L=slopeFit(s,P); if(!L){ show('<span class="ro-hint">drag across a stretch to fit a line to it</span>'); return; }
-    show('<span class="ro">slope of <i>'+A.sym+'</i> = '+L.m.toFixed(1)+' '+(tUnit(P)==="s" ? A.rate : A.unit+"/"+tUnit(P))+'<span class="ro-ctx"> over '+(L.t1-L.t0).toFixed(timeDecimals(s))+' '+tUnit(P)+'</span></span>');
+    const R=slopeShown(P); if(!R){ show('<span class="ro-hint">drag across a stretch to fit a line to it</span>'); return; }
+    const L=R.L;
+    show('<span class="ro">slope of '+(A.roman?A.sym:'<i>'+A.sym+'</i>')+' = '+R.txt+' '+R.unit+'<span class="ro-ctx"> over '+(L.t1-L.t0).toFixed(timeDecimals(s))+' '+tUnit(P)+'</span></span>');
   } else if(S.tool==="crop"){
     // Crop is the one tool that reads out in AMBER, not green, and that is the point of the house rule
     // rather than an exception to it: green means "a number you measured", and a crop measures nothing.
@@ -961,6 +1001,8 @@ function renderPanel(P){
   // this much, so four spoon runs share one 0-to-1 scale and a run that got a fifth of the way looks like it.
   { const pd0=PANELDEF.find(d=>(d.key||"")===P.key)||{};
     if(Array.isArray(pd0.yRange)){ aLo=Math.min(aLo,pd0.yRange[0]); aHi=Math.max(aHi,pd0.yRange[1]); } }
+  const OV=overlayCols(P);
+  if(OV) OV.forEach(c=>{ for(const v of c.a){ if(v<aLo) aLo=v; if(v>aHi) aHi=v; } });
   const Ay=niceTicks(aLo, aHi, 5);
   const tx=t=>mL+(t-T.lo)/(T.hi-T.lo)*px;
   const ay=a=>mT+(Ay.hi-a)/(Ay.hi-Ay.lo)*ph;
@@ -973,6 +1015,13 @@ function renderPanel(P){
     ctx.save(); ctx.strokeStyle=getCss("--grid"); ctx.globalAlpha=0.55; ctx.lineWidth=1;
     for(let v=st0; v<=Ay.hi+1e-9; v+=pdef.yMinor){ const y=ay(v); ctx.beginPath(); ctx.moveTo(mL,y); ctx.lineTo(W-mR,y); ctx.stroke(); }
     ctx.restore(); }
+  // `yBand:{lo,hi,label}` on the slot (Lukewarm, 2026-11-12): a faint amber band across the plot between two
+  // values, with a small label at its right end. Context, not a measurement: it marks WHERE to measure (the
+  // stretch of the spoon's color change that the deck reads as a temperature).
+  if(pdef.yBand && pdef.yBand.hi>Ay.lo && pdef.yBand.lo<Ay.hi){ const y1=ay(Math.min(pdef.yBand.hi,Ay.hi)), y0=ay(Math.max(pdef.yBand.lo,Ay.lo));
+    ctx.fillStyle=getCss("--band-amber"); ctx.fillRect(mL,y1,px,y0-y1); ctx.fillRect(mL,y1,px,y0-y1);
+    if(pdef.yBand.label){ ctx.fillStyle=getCss("--edge"); ctx.font=font(11); ctx.textAlign="right"; ctx.textBaseline="bottom"; ctx.globalAlpha=.85;
+      ctx.fillText(pdef.yBand.label, W-mR-6, y0-3); ctx.globalAlpha=1; } }
   // horizontal gridlines + left labels
   ctx.textBaseline="middle"; ctx.textAlign="right"; ctx.font=font(11);
   Ay.ticks.forEach(v=>{ const y=ay(v); ctx.strokeStyle=getCss(v===0?"--zero":"--grid"); ctx.lineWidth=1;
@@ -1042,10 +1091,21 @@ function renderPanel(P){
     const xs=[],ys=[];
     for(let i=cr[0];i<=cr[1];i++){ xs.push(tx(s.t[i])); ys.push(ay(s.a[i])); }
     polyline(xs,ys,"--trace",num("--stroke-trace"));
+  } else if(OV){
+    // overlay: the other columns first, thinner; the Signal's column last and heavier, each in its own color
+    OV.filter(c=>!c.on).forEach(c=>{ ctx.globalAlpha=.8; polyline(c.t.map(tx), c.a.map(ay), c.color, 1.25); ctx.globalAlpha=1; });
+    const on=OV.find(c=>c.on); polyline(s.t.map(tx), s.a.map(ay), on?on.color:"--trace", 2.25);
   } else {
     polyline(s.t.map(tx), s.a.map(ay), "--trace", num("--stroke-trace"));
   }
   ctx.restore();
+  if(OV){ // legend, top right: a swatch and the column's first word; the Signal's column in ink, the rest muted
+    ctx.save(); ctx.font=font(12); ctx.textBaseline="middle"; ctx.textAlign="left";
+    let x=W-mR-8; const y=mT+10;
+    OV.slice().reverse().forEach(c=>{ ctx.font=(c.on?"600 ":"")+font(12); const w=ctx.measureText(c.name).width; x-=w;
+      ctx.fillStyle=getCss(c.on?"--ink":"--muted"); ctx.fillText(c.name,x,y);
+      x-=6; ctx.strokeStyle=getCss(c.color); ctx.lineWidth=c.on?3:2; ctx.beginPath(); ctx.moveTo(x-16,y); ctx.lineTo(x,y); ctx.stroke(); x-=16+14; });
+    ctx.restore(); }
 
   // Fit Sine: the fitted sine drawn over the selected window
   if(S.tool==="fitsine" && P.fit && P.sel){
@@ -1248,7 +1308,8 @@ function wirePointer(P){
     if(Math.abs(t-P.drag.t0)<1e-3){ P.sel=null; P.integ=null; P.fit=null; P.dfit=null; P.efit=null; }
     else { P.sel={a:P.drag.t0,b:t}; if(S.tool==="dblint"||S.tool==="integrate") doIntegrate(series(P),P); if(S.tool==="fitsine"){ doFitSine(series(P),P); syncFitControls(); }
       if(S.tool==="fitdamped"){ doFitDamped(series(P),P); syncDampedControls(); }
-      if(S.tool==="fitexp"){ doFitExp(series(P),P); expAutofill(); } }
+      if(S.tool==="fitexp"){ doFitExp(series(P),P); expAutofill(); }
+      if(S.tool==="slope") slopeAutofill(); }
     P.drag=null; render(); setReadout();
   });
 }
@@ -1608,6 +1669,13 @@ function inputIssue(st){
                             : "$\\tau$ is the number under $t$ in the exponent of the readout's function.")
                            : "The plateau is the first number in the readout's function, the value the curve is heading for.";
         return fbText(st,"check","{label} doesn't match the function on screen. {hint}",{label:f.label, hint:hint, expected:x}); } } }
+  /* `slopefit` (Lukewarm, 2026-11-12): the typed slope against the Slope readout on the step's plot, as printed. */
+  if(st.checkKind==="slopefit"){ const f=fieldsOf(st)[0], v=f&&S.answers[f.key];
+    const P = st.fitSlot ? panelByKey(st.fitSlot) : (visiblePanels().find(p=>p.sel) || null), R=P&&P.sel&&S.tool==="slope" ? slopeShown(P) : null;
+    if(Number.isFinite(v)){
+      if(!R){ if(!st.autofill && S.answers["seen_"+f.key]!==v) return fbText(st,"fit","Drag a window across the stretch with <b>Slope</b> first."); }
+      else if(Math.abs(v-R.v)>0.02*Math.abs(R.v)+1e-9) return fbText(st,"check","{label} doesn't match the slope on screen.",{label:f.label, expected:R.txt});
+      else S.answers["seen_"+f.key]=v; } }
   /* `calc` (Lukewarm, 2026-11-12): a box whose value follows by arithmetic from boxes the group filled earlier.
      The deck says how: CONFIG.calc[<input key>] = { f: a => expected, tol: 0.03, slips: [{ f: a => value, say: "…" }] },
      `a` being the answers so far. Within `tol` (relative) of f(a) passes; a value that lands on a named slip
@@ -2104,7 +2172,7 @@ function renderStep(){
   }
   // `tool: fitexp` pins Fit Exponential the same way (Lukewarm, 2026-11-12). With `CONFIG.pinTools`, `tool: point`
   // and `tool: avg` pin too; without it they stay what they were in every earlier deck, a note for the reader.
-  if((st.tool==="fitexp" || (CONFIG.pinTools && (st.tool==="point" || st.tool==="avg"))) && S.tool!==st.tool && TOOLS.indexOf(st.tool)>=0){
+  if((st.tool==="fitexp" || (CONFIG.pinTools && (st.tool==="point" || st.tool==="avg" || st.tool==="slope"))) && S.tool!==st.tool && TOOLS.indexOf(st.tool)>=0){
     S.tool=st.tool;
     document.querySelectorAll("#tools button").forEach(x=>x.classList.toggle("on",x.dataset.tool===st.tool));
     updateCtx(); resize(); setReadout(); updateFitLabel();
@@ -2265,7 +2333,7 @@ function renderStep(){
       const inp=row.querySelector("input");
       inp.dataset.key=f.key;                        // lets a top-region sim write the box it drives (makeSim)
       if(st.autofill){ inp.readOnly=true; inp.tabIndex=-1; inp.classList.add("autofill"); inp.placeholder="from fit";
-                       inp.title = st.checkKind==="expfit" ? "Filled in from your Fit Exponential window" : "Filled in from your Fit Damped window"; }
+                       inp.title = st.checkKind==="expfit" ? "Filled in from your Fit Exponential window" : st.checkKind==="slopefit" ? "Filled in from your Slope window" : "Filled in from your Fit Damped window"; }
       if(S.answers[f.key]!=null) inp.value=S.answers[f.key];
       // `input`, not `change`: `change` only fires on blur, so a student who retyped a number and
       // reached straight for Enter was being judged on the previous one. Editing any value RETRACTS
@@ -2285,7 +2353,7 @@ function renderStep(){
     // row landed in the first cell and shoved every labeled field one column right — the button came
     // out to the LEFT of the first label. Outside, it sits under whichever of the three input layouts
     // the step happens to use, and none of them has to know about it.
-    if(st.autofill) setTimeout(st.checkKind==="expfit" ? expAutofill : dampedAutofill,0);   // a window already on the plot fills the boxes on arrival
+    if(st.autofill) setTimeout(st.checkKind==="expfit" ? expAutofill : st.checkKind==="slopefit" ? slopeAutofill : dampedAutofill,0);   // a window already on the plot fills the boxes on arrival
     let goRow=null;
     if(wantsSubmit(st)){
       goRow=document.createElement("div"); goRow.className="submitrow";

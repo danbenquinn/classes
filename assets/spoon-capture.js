@@ -13,7 +13,7 @@
    diagnostic tool it was built to be. The analysis is the same code: spoon-lib.js + spoon-geom.js, loaded
    by the deck before this file.
 
-   TWO KINDS OF STEP.
+   THREE KINDS OF STEP.
      cam:{ warm:true }                 the setup step. A QR code; once the phone is streaming, the live picture
                                        with the template's outline drawn over it; then "Save warm color" with
                                        the WARM, DRY spoon on the outline. The step is done when a warm color
@@ -23,11 +23,24 @@
                                        ends). Then Try again / Accept, as in live-capture.js. The only button
                                        while recording is "Start over", for a hand left in the picture.
 
+     cam:{ slots:["ctl"], seconds:150, go:true }
+                                       a run whose wait is filled with questions. Next unlocks as soon as the
+                                       recording is under way, and the run keeps recording across the steps
+                                       that follow it, which are
+     cam:{ slots:["ctl"], seconds:150, watch:true }           a question to answer while it records, and
+     cam:{ slots:["ctl"], seconds:150, watch:true, hold:true } the last of them, which also waits for the run
+                                       to finish and be Accepted. Every one of these carries the same card, so a
+                                       run can be accepted, or thrown away and recorded again, from any of them.
+                                       Walking off these steps mid-run (Back past the first, or teacher mode
+                                       past the last) abandons the run.
+
    THE NUMBERS. Cold = the mean of the first three pictures after Record (the student lays the cold spoon
    down, gets their hand out, then presses Record). Warm = the saved warm color, the mean of three pictures.
    Color change is measured point by point along the straight line from cold to warm in paper-normalized
    RGB (spoon-lib.js `progress`), so it works for any spoon color and cancels the spoon's own shading.
-   Two columns are kept: "Bowl" (the bowl's lowest point, where a water drop settles) and "Tip".
+   Three columns are kept: "Bowl" (the bowl's lowest point, where a water drop settles), "Handle" (halfway up
+   the handle, below where fingers hold it) and "Tip". The deck's slots are `overlay:true`, so all three draw
+   at once while the run records.
 
    HOW IT HOOKS IN. As live-capture.js does: it wraps renderStep, renderPanel, stepComplete and blockReason
    and changes nothing inside the engine. Teacher mode is untouched (`ungated()` opens every gate, and the
@@ -49,7 +62,7 @@ const CCFG = Object.assign({
   supabaseJs: "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js",
   fps: 1, size: 640, q: 0.8,
   seconds: 300,
-  points: { Bowl:"bowl C", Tip:"tip" },         // column name -> spoon-geom point name
+  points: { Bowl:"bowl C", Handle:"handle", Tip:"tip" },   // column name -> spoon-geom point name
   unitLabel: "color (0 cold to 1 warm)",   // no comma: parseCSV splits a header on every comma
 }, (typeof CONFIG!=="undefined" && CONFIG && CONFIG.cam) || {});
 const PT = Object.keys(CCFG.points).map(col=>({ col, i: G.points.findIndex(p=>p.name===CCFG.points[col]) })).filter(p=>p.i>=0);
@@ -220,7 +233,8 @@ function runSeconds(st){ return (st && st.cam && +st.cam.seconds) || CCFG.second
 
 function begin(){
   const st=NARR[S.step], P=panelByKey(SC.target); if(!P || !SC.cam || !SC.warm || !SC.lastH) return;
-  SC.run={ frames:[], t0:null, seconds:runSeconds(st), wall0:performance.now() };
+  SC.run={ frames:[], t0:null, seconds:runSeconds(st), wall0:performance.now(),
+           until: st.cam.until!=null ? +st.cam.until : null, untilCols: [].concat(st.cam.untilCols || [PT[0].col]) };
   SC.recState="rec"; SC.error=null;
   P._lc="rec";
   P.ds=null; P.sel=null; P.point=null; P.efit=null; P.dfit=null; P.fit=null; P.crop=null; P.fileName=null; P.liveRun=null;
@@ -244,8 +258,17 @@ function series2(R){                              // {t:[], cols:{name:[]}} from
 function addFrame(t, pts){
   const R=SC.run, P=panelByKey(SC.target); if(!P) return;
   R.frames.push({ t, pts });
-  if(R.frames.length>=4){ ingestParsed(series2(R), P); P.fileName="camera run (recording…)"; }
-  if((t-R.frames[0].t)/1000 >= R.seconds) finish();
+  let S2=null;
+  if(R.frames.length>=4){ S2=series2(R); ingestParsed(S2, P); P.fileName="camera run (recording…)"; }
+  const el=(t-R.frames[0].t)/1000;
+  if(el >= R.seconds){ finish(); return; }
+  // `until:` (2026-11-12): the run also ends early once every column named in `untilCols` (default: the first,
+  // the bowl) has stayed at or above that color for five pictures. The slope the step wants is below it, so
+  // there is nothing more to wait for. Never before 20 s.
+  if(S2 && R.until!=null && el>=20){
+    const hs=HEAD.slice(1).filter(h=>R.untilCols.some(c=>h.toLowerCase().indexOf(c.toLowerCase())===0));
+    if(hs.length && hs.every(h=>{ const a=S2.cols[h]; return a.length>=8 && a.slice(-5).every(v=>v>=R.until); })) finish();
+  }
 }
 function finish(){
   if(SC.recState!=="rec") return;
@@ -312,9 +335,9 @@ function stateKey(){
 // <div class='sc-stage'><canvas id='sc-live'></canvas></div>), because lining the sheet up is the whole step. On
 // a run step the plot has the top region, and the picture is a thumbnail in the card: enough to see a hand.
 const staged = () => !!document.querySelector("#topmedia #sc-live");
-function withLive(inner){
+function withLive(inner, noThumb){
   const status='<div class="sc-status" id="sc-status"></div>';
-  return staged() ? inner+status : '<div class="sc-row"><div class="sc-livewrap"><canvas id="sc-live"></canvas></div><div class="sc-col">'+inner+status+'</div></div>';
+  return (staged() || noThumb) ? inner+status : '<div class="sc-row"><div class="sc-livewrap"><canvas id="sc-live"></canvas></div><div class="sc-col">'+inner+status+'</div></div>';
 }
 function paintStatus(){
   const el=document.getElementById("sc-status"), a=SC.frame; if(!el) return;
@@ -328,6 +351,7 @@ function paint(force){
   if(!card || !st || !st.cam) return;
   const key=stateKey(); if(!force && key===lastKey && card.childElementCount){ paintStatus(); return; }
   lastKey=key;
+  card.classList.toggle("sc-slim", !!st.cam.watch);
   const ks=camSlots(st);
   if(ks.length && (SC.target==null || ks.indexOf(SC.target)<0)) SC.target=nextTarget(st);
   const T=SC.target ? panelByKey(SC.target) : null;
@@ -354,14 +378,16 @@ function paint(force){
      +'<p class="sc-sub">Every run is measured against this. If the phone or the sheet moves, come back and save it again.</p>'
      +'<div class="sc-links"><a href="#" data-sc="rewarm">Save it again</a></div>');
   } else if(!SC.target){
-    h+='<div class="sc-big sc-ok">✓ Kept</div><p class="sc-sub">Press <b>Next ›</b>.</p>'
+    h+='<div class="sc-big sc-ok">✓ Kept</div><p class="sc-sub">'+(st.cam.watch ? 'The run is in.' : 'Press <b>Next ›</b>.')+'</p>'
      +'<div class="sc-links">'+ks.map(k=>'<a href="#" data-sc="redo" data-k="'+k+'">Record '+esc(ks.length>1?slotName(panelByKey(k)).toLowerCase():"it")+' again</a>').join(" · ")+'</div>';
   } else if(SC.recState==="rec"){
     h+=withLive('<div class="sc-big sc-rec">Recording</div>'
      +'<div class="sc-track"><div id="sc-bar"></div></div>'
-     +'<div class="sc-stats"><span id="sc-time">'+mmss(runSeconds(st))+' left</span></div>'
-     +'<p class="sc-sub">It stops by itself. Keep hands and shadows off the sheet.</p>'
-     +'<div class="sc-links"><a href="#" data-sc="again">Start over</a></div>');
+     +'<div class="sc-stats"><span id="sc-time">'+mmss(runSeconds(st))+' left</span>'+(st.cam.until!=null?' <span class="sc-atmost">at most</span>':'')+'</div>'
+     +'<p class="sc-sub">'+(st.cam.go ? 'It stops by itself. Press <b>Next ›</b>: there are questions to answer while it records.'
+                          : st.cam.watch ? 'It stops by itself. Keep hands and shadows off the sheet.'
+                          : 'It stops by itself. Keep hands and shadows off the sheet.')+'</p>'
+     +'<div class="sc-links"><a href="#" data-sc="again">Start over</a></div>', !!st.cam.watch);
   } else if(T && T._lc==="review"){
     const m=T._lcMeta||{};
     h+='<div class="sc-big">Keep this run?</div>'
@@ -370,7 +396,7 @@ function paint(force){
      +'<button class="deck-go sc-accept" data-sc="accept">Accept</button></div>';
   } else {
     h+=withLive('<div class="sc-big sc-ok">✓ Camera ready</div>'
-     +'<p class="sc-sub">Cold spoon on the outline, hand out, then <b>Record</b>. It runs for <b>'+mmss(runSeconds(st))+'</b> and stops by itself.</p>'
+     +'<p class="sc-sub">Cold spoon on the outline, hand out, then <b>Record</b>. '+(st.cam.until!=null ? 'It stops by itself once the color has climbed far enough: <b>'+mmss(runSeconds(st))+'</b> at most.' : 'It runs for <b>'+mmss(runSeconds(st))+'</b> and stops by itself.')+'</p>'
      +'<button class="deck-go sc-begin" data-sc="begin"><span class="sc-dot"></span>Record</button>'
      +(SC.error ? '<div class="sc-err">'+esc(SC.error)+'</div>' : ''));
   }
@@ -404,6 +430,7 @@ function mount(st){
 }
 
 /* ------------------------------ the hooks ------------------------------ */
+const CAM_SLOTS=[...new Set(NARR.flatMap(st=>camSlots(st)))];
 const _renderStep=renderStep;
 renderStep=function(){
   _renderStep.apply(this, arguments);
@@ -411,10 +438,9 @@ renderStep=function(){
   // leaving a step mid-run abandons that run: nothing half-recorded survives into a later step
   if(SC.recState!=="idle" && !(st && st.cam && camSlots(st).indexOf(SC.target)>=0)) abortRun();
   if(st && st.cam){ try { mount(st); } catch(e){ console.error("spoon-capture:", e); } }
-  else {
-    if(SC.cam && SC.streaming) stream(false);
-    S.panels.forEach(P=>{ if(P.file && !P.supplied && P.liveRun) P.file.style.display="none"; });
-  }
+  else if(SC.cam && SC.streaming) stream(false);
+  // A camera slot never wants a file: its data comes from the phone (or, in teacher mode, the baked sample).
+  CAM_SLOTS.forEach(k=>{ const P=panelByKey(k); if(P && P.file) P.file.style.display="none"; });
 };
 // An empty camera slot says how it gets data, not "load the export with the picker above".
 const _renderPanel=renderPanel;
@@ -435,7 +461,11 @@ stepComplete=function(i){
   const st=NARR[i];
   if(st && st.cam){
     if(st.cam.warm && !SC.warm) return false;
-    if(camSlots(st).some(k=>pending(panelByKey(k)))) return false;
+    const Ps=camSlots(st).map(panelByKey), pend=Ps.some(pending);
+    // `go` and a plain `watch` step let the group move on while the run records; the `hold` step, and a run
+    // step with neither flag, wait for it to be finished and Accepted.
+    if(pend && !(st.cam.go || (st.cam.watch && !st.cam.hold))) return false;
+    if(st.cam.hold && !Ps.every(P=>P && P.ds && !pending(P))) return false;
   }
   return _stepComplete.apply(this, arguments);
 };
@@ -444,9 +474,11 @@ blockReason=function(i){
   const st=NARR[i];
   if(st && st.cam){
     if(st.cam.warm && !SC.warm) return fbText(st, "data", "Scan the code, line up the sheet, and press <b>Save warm color</b> with the warm, dry spoon on the outline.");
-    const P=camSlots(st).map(panelByKey).find(pending);
-    if(P) return fbText(st, "live", P._lc==="rec" ? "Still recording. It stops by itself, then press <b>Accept</b>."
+    const Ps=camSlots(st).map(panelByKey), P=Ps.find(pending), free=st.cam.go || (st.cam.watch && !st.cam.hold);
+    if(P && !free) return fbText(st, "live", P._lc==="rec" ? "Still recording. It stops by itself, then press <b>Accept</b>."
                                                     : "Press <b>Accept</b> to keep this run, or <b>Try again</b>.");
+    if(st.cam.hold && !Ps.every(Q=>Q && Q.ds) && _stepComplete.apply(this, arguments))
+      return fbText(st, "data", "There is no run to keep yet. Cool the spoon again and press <b>Record</b>.");
   }
   return _blockReason.apply(this, arguments);
 };
@@ -454,6 +486,7 @@ blockReason=function(i){
 /* ------------------------------ styles (house tokens, as live-capture.js) ------------------------------ */
 const css=document.createElement("style");
 css.textContent=`
+#stepbody .sc-card.sc-slim{flex:0 1 250px;min-width:200px;}
 #stepbody .sc-card{flex:0 1 380px;min-width:280px;background:var(--raised);border:1px solid var(--line);border-radius:8px;padding:12px 14px;font-size:var(--fs-ui);line-height:1.4;}
 .sc-card .sc-qrrow{display:flex;gap:14px;align-items:flex-start;}
 .sc-card .sc-qr{width:132px;height:132px;background:#fff;border-radius:6px;padding:6px;image-rendering:pixelated;flex:0 0 auto;}
@@ -477,6 +510,7 @@ css.textContent=`
 .sc-card .sc-track{height:6px;border-radius:3px;background:var(--line);margin:10px 0 4px;overflow:hidden;}
 .sc-card #sc-bar{height:100%;width:0;background:var(--mma-red);}
 .sc-card .sc-stats{font-family:var(--font-mono);color:var(--ink);font-variant-numeric:tabular-nums;}
+.sc-card .sc-atmost{font-family:var(--font-sans);color:var(--muted);font-size:var(--fs-label);}
 .sc-card .sc-btns{display:flex;gap:8px;flex-wrap:wrap;}
 .sc-card .sc-begin{background:var(--mma-red);border-color:var(--mma-red);color:#fff;font-weight:700;display:inline-flex;align-items:center;gap:8px;}
 .sc-card .sc-begin:hover{filter:brightness(1.12);}
