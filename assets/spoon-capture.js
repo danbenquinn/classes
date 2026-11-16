@@ -1,11 +1,11 @@
 /* spoon-capture.js — the phone's camera as the instrument, inside an analyzer deck (2026-11-12).
 
    WHAT IT IS. An add-on to analyzer-engine.js, loaded after it by a deck that has `cam:` steps (first:
-   Workshop 5, Lukewarm). live-capture.js is its model and its sibling: that one streams an accelerometer,
+   Workshop 5, Cool Hand Luke). live-capture.js is its model and its sibling: that one streams an accelerometer,
    this one streams pictures. A phone on a stand looks at a color-changing spoon lying on the printed
-   template (Workshop5-Lukewarm/spoon-template.pdf). The phone page
+   template (Workshop5-CoolHandLuke/spoon-template.pdf). The phone page
    (danbenquinn.github.io/classes/spoon/cam.html) sends one JPEG a second over Supabase Realtime; this file
-   finds the template's four black squares in each picture, reads the spoon's color at two points, and
+   finds the template's four black squares in each picture, reads the spoon's color at its sample points, and
    turns it into "color change": 0 = the cold color, 1 = the warm color. That series lands in the step's
    slot exactly as a loaded file would, so Fit Exponential, the Signal lock and the checks are unchanged.
 
@@ -14,6 +14,9 @@
    by the deck before this file.
 
    THREE KINDS OF STEP.
+     cam:{ cold:true }                 the second calibration: the freshly cooled, dried spoon on the outline, then
+                                       "Save cold color". Every run's color is then measured between the two
+                                       saved colors: 0 = cold, 1 = warm.
      cam:{ warm:true }                 the setup step. A QR code; once the phone is streaming, the live picture
                                        with the template's outline drawn over it; then "Save warm color" with
                                        the WARM, DRY spoon on the outline. The step is done when a warm color
@@ -34,12 +37,12 @@
                                        Walking off these steps mid-run (Back past the first, or teacher mode
                                        past the last) abandons the run.
 
-   THE NUMBERS. Cold = the mean of the first three pictures after Record (the student lays the cold spoon
-   down, gets their hand out, then presses Record). Warm = the saved warm color, the mean of three pictures.
+   THE NUMBERS. Cold = the saved cold color and warm = the saved warm color, each the mean of three pictures
+   (until 2026-11-13 cold was the first three pictures of each run; see saveCold).
    Color change is measured point by point along the straight line from cold to warm in paper-normalized
    RGB (spoon-lib.js `progress`), so it works for any spoon color and cancels the spoon's own shading.
-   Three columns are kept: "Bowl" (the bowl's lowest point, where a water drop settles), "Handle" (halfway up
-   the handle, below where fingers hold it) and "Tip". The deck's slots are `overlay:true`, so all three draw
+   Four columns are kept: "Bowl" (the bowl's lowest point, where a water drop settles), "Handle" (halfway up
+   the handle, below where fingers hold it), "Tip", and "All", the mean over all eight template points. The deck's slots are `overlay:true`, so all three draw
    at once while the run records.
 
    HOW IT HOOKS IN. As live-capture.js does: it wraps renderStep, renderPanel, stepComplete and blockReason
@@ -61,11 +64,17 @@ const CCFG = Object.assign({
   supabaseKey: "sb_publishable_IQNxMMynit0aWtOS3tjiRQ_h5sNo159",     // publishable: meant to ship in a page
   supabaseJs: "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js",
   fps: 1, size: 640, q: 0.8,
+  calib: { warm:{ secs:10, fps:1 }, cold:{ secs:3, fps:2 } },   // each saved color is the mean of this window of pictures
   seconds: 300,
-  points: { Bowl:"bowl C", Handle:"handle", Tip:"tip" },   // column name -> spoon-geom point name
+  points: { Bowl:"bowl C", Handle:"handle", Tip:"tip", All:"*" },   // column name -> spoon-geom point name; "*" = the mean of the ALL_PTS
+  allSkip: ["handle hi"],   // left out of All (2026-11-15): the cup is shallow, so the top inch of the handle stays warm, and 112 mm is too close to it
   unitLabel: "color (0 cold to 1 warm)",   // no comma: parseCSV splits a header on every comma
 }, (typeof CONFIG!=="undefined" && CONFIG && CONFIG.cam) || {});
-const PT = Object.keys(CCFG.points).map(col=>({ col, i: G.points.findIndex(p=>p.name===CCFG.points[col]) })).filter(p=>p.i>=0);
+// A column is one sample point, or "*": the mean of the color change at ALL of the template's points (Daniel,
+// 2026-11-13: the whole spoon's rate is what Slope measures; the three named places are for the questions).
+const PT = Object.keys(CCFG.points).map(col=>({ col, all: CCFG.points[col]==="*", i: CCFG.points[col]==="*" ? -1 : G.points.findIndex(p=>p.name===CCFG.points[col]) })).filter(p=>p.all || p.i>=0);
+// the template points that "All" averages: every point but the ones `allSkip` names
+const ALL_PTS = G.points.map((p,i)=>i).filter(i=>(CCFG.allSkip||[]).indexOf(G.points[i].name)<0);
 const HEAD = ["Time (s)"].concat(PT.map(p=>p.col+" "+CCFG.unitLabel));
 
 // ?livetest=1 on the deck URL: talk to a camera tab in the same browser (BroadcastChannel). For testing the
@@ -86,8 +95,10 @@ const SC = {
   conn:null, status:"idle", error:null,
   cam:null, lostTimer:null, streaming:false,
   frame:null,            // the newest analyzed picture: {im, sq, H, pts, t}
+  calib:null,           // a warm/cold save in progress: {kind, list, t0, secs}
   lastH:null, recent:[], // the last good fix; the last three pictures' point colors
   warm:null,             // {pts, at, jpg}: the saved warm color
+  cold:null,             // {pts, at}: the saved cold color (2026-11-13: its own calibration, not a run's first pictures)
   stepKey:null, target:null,
   recState:"idle",       // idle | rec
   run:null,              // {frames:[{t,pts}], t0, seconds, wall0}
@@ -165,10 +176,10 @@ function onPeers(list){
     paint(); }, 4000);
 }
 // The stream is on only while a `cam:` step is on screen: a room of 25 groups reading questions sends nothing.
-function stream(on){
+function stream(on, fps){
   if(!SC.conn || !SC.cam) return;
   SC.streaming=!!on;
-  SC.conn.send({ type:"config", phone:SC.cam, cfg:{ fps: on ? CCFG.fps : 0, size:CCFG.size, q:CCFG.q } });
+  SC.conn.send({ type:"config", phone:SC.cam, cfg:{ fps: on ? (fps||CCFG.fps) : 0, size:CCFG.size, q:CCFG.q } });
 }
 function onCamStep(){ const st=NARR[S.step]; return !!(st && st.cam); }
 
@@ -191,6 +202,7 @@ async function process(jpg, t){
   SC.frame={ im, sq:!!sq, H, pts, t, jpg };
   if(pts){ SC.recent.push(pts); if(SC.recent.length>3) SC.recent.shift(); }
   if(SC.recState==="rec" && pts) addFrame(t, pts);
+  if(SC.calib) calibFrame(sq ? pts : null);
   drawLive();
   paintStatus();
 }
@@ -213,17 +225,62 @@ function drawLive(){
   g.closePath(); g.stroke();
   g.lineWidth=2; g.strokeStyle = a.sq ? (getCss("--ok")||"#3fb950") : (getCss("--edge")||"#d29922");
   G.squares.forEach(p=>{ const q=Pt(p[0],p[1]); g.beginPath(); g.arc(q[0],q[1],6,0,7); g.stroke(); });
-  PT.forEach(p=>{ const q=Pt.apply(null,G.points[p.i].xy); g.fillStyle=getCss("--result")||"#3fb950"; g.strokeStyle="#fff"; g.lineWidth=1.5;
+  const lit=PT.some(p=>p.all) ? ALL_PTS : PT.map(p=>p.i);
+  lit.forEach(i=>{ const q=Pt.apply(null,G.points[i].xy); g.fillStyle=getCss("--result")||"#3fb950"; g.strokeStyle="#fff"; g.lineWidth=1.5;
     g.beginPath(); g.arc(q[0],q[1],3.5,0,7); g.fill(); g.stroke(); });
 }
 
-/* ------------------------------ the warm color ------------------------------ */
-function saveWarm(){
-  if(!SC.frame || !SC.frame.sq || !SC.recent.length) return;
-  SC.warm={ pts:meanPts(SC.recent), at:Date.now(), jpg:SC.frame.jpg };
-  logEv("warm-saved");
-  paint(); refreshNext();
+/* ------------------------------ the legend's avatars ------------------------------ */
+// Each curve's legend entry gets a little spoon, bowl to the left, with the sample points that curve reads lit in its
+// color (all eight for "All"). The engine calls CONFIG.legendIcon (analyzer-engine.js, the overlay legend).
+if(typeof CONFIG!=="undefined" && CONFIG){
+  const ax=G.axis, LEN=34, k=LEN/ax.length;
+  const toIcon=(xy,xR,y)=>[xR-LEN+(xy[1]-ax.tipY)*k, y-(xy[0]-ax.cx)*k];   // along the axis -> x (tip at left), sideways -> y
+  CONFIG.legendIcon=function(ctx,name,xR,y,color,on){
+    const col=PT.find(p=>p.col===name); if(!col) return 0;
+    ctx.strokeStyle=getCss("--muted")||"#888"; ctx.lineWidth=1; ctx.globalAlpha=on?1:.85; ctx.beginPath();
+    G.outline.forEach((p,i)=>{ const q=toIcon(p,xR,y); i ? ctx.lineTo(q[0],q[1]) : ctx.moveTo(q[0],q[1]); }); ctx.closePath(); ctx.stroke();
+    const idx=col.all ? ALL_PTS : [col.i];
+    ctx.fillStyle=color; idx.forEach(i=>{ const q=toIcon(G.points[i].xy,xR,y); ctx.beginPath(); ctx.arc(q[0],q[1],col.all?1.5:2.2,0,7); ctx.fill(); });
+    ctx.globalAlpha=1; return LEN; };
 }
+
+/* ------------------------------ the warm color ------------------------------ */
+// Each saved color is the mean of a window of pictures (Daniel, 2026-11-13: the phone's exposure wanders from one
+// picture to the next, so one or three pictures made a shaky reference). WARM: 10 s at 1 a second; the dry spoon
+// sits still at room temperature, so longer is better. COLD: 3 s at 2 a second; the spoon starts warming the
+// moment it leaves the ice water, so the window has to be short (10 s let it creep into its color band).
+// Pressing Save starts the window (and the phone's rate for it); pictures whose squares can't be found are
+// skipped; the color is saved when the window closes. `CCFG.calib`.
+function startCalib(kind){
+  if(SC.calib || !SC.frame || !SC.frame.sq) return;
+  const W=(CCFG.calib&&CCFG.calib[kind])||{ secs:3, fps:1 };
+  SC.calib={ kind, list:[], t0:performance.now(), secs:+W.secs, fps:+W.fps||CCFG.fps };
+  if(SC.calib.fps!==CCFG.fps) stream(true, SC.calib.fps);
+  logEv(kind+"-calib-start"); paint(); refreshNext(); }
+function calibFrame(pts){
+  const C=SC.calib; if(!C) return;
+  if(pts) C.list.push(pts);
+  const el=(performance.now()-C.t0)/1000, left=Math.max(0,Math.ceil(C.secs-el));
+  const t=document.getElementById("sc-calt"); if(t) t.textContent=left+" s";
+  const b=document.getElementById("sc-calbar"); if(b) b.style.width=Math.min(100,100*el/C.secs).toFixed(0)+"%";
+  if(el<C.secs) return;
+  SC.calib=null;
+  if(C.fps!==CCFG.fps && SC.streaming) stream(true);
+  if(C.list.length<3){ SC.error="Too few pictures with all four squares in them. Check the phone and save again."; paint(); refreshNext(); return; }
+  SC.error=null;
+  if(C.kind==="warm") SC.warm={ pts:meanPts(C.list), at:Date.now(), n:C.list.length, jpg:SC.frame&&SC.frame.jpg };
+  else SC.cold={ pts:meanPts(C.list), at:Date.now(), n:C.list.length };
+  logEv(C.kind+"-saved", { n:C.list.length });
+  paint(); refreshNext(); }
+function saveWarm(){ startCalib("warm"); }
+
+// The cold color gets its own calibration (2026-11-13, Daniel). It used to be the first three pictures of each
+// run, which made a spoon that had already started to turn the new zero and stretched everything after it.
+// Thin plastic warms most of the way to its color band in the seconds it takes to dry it, so this is the one
+// moment where speed matters, and the group does it once, deliberately. A run that starts late now starts
+// above 0, which is the truth.
+function saveCold(){ startCalib("cold"); }
 
 /* ------------------------------ a run ------------------------------ */
 function camSlots(st){ return (st && st.cam && [].concat(st.cam.slots || [])) || []; }
@@ -232,14 +289,14 @@ function nextTarget(st){ const ks=camSlots(st); return ks.find(k=>{ const P=pane
 function runSeconds(st){ return (st && st.cam && +st.cam.seconds) || CCFG.seconds; }
 
 function begin(){
-  const st=NARR[S.step], P=panelByKey(SC.target); if(!P || !SC.cam || !SC.warm || !SC.lastH) return;
+  const st=NARR[S.step], P=panelByKey(SC.target); if(!P || !SC.cam || !SC.warm || !SC.cold || !SC.lastH) return;
   SC.run={ frames:[], t0:null, seconds:runSeconds(st), wall0:performance.now(),
            until: st.cam.until!=null ? +st.cam.until : null, untilCols: [].concat(st.cam.untilCols || [PT[0].col]) };
   SC.recState="rec"; SC.error=null;
   P._lc="rec";
   P.ds=null; P.sel=null; P.point=null; P.efit=null; P.dfit=null; P.fit=null; P.crop=null; P.fileName=null; P.liveRun=null;
   logEv("begin", { slot:P.key, seconds:SC.run.seconds });
-  render(); paint(); tick();
+  render(); paint(); tick(); refreshNext();
 }
 function tick(){
   if(SC.recState!=="rec") return;
@@ -250,9 +307,16 @@ function tick(){
   setTimeout(tick, 250);
 }
 function series2(R){                              // {t:[], cols:{name:[]}} from the run's frames
-  const fr=R.frames, cold=meanPts(fr.slice(0,3).map(f=>f.pts)), warm=SC.warm.pts, t0=fr[0].t;
+  const fr=R.frames, cold=SC.cold.pts, warm=SC.warm.pts, t0=fr[0].t;
   const out={}; out[HEAD[0]]=fr.map(f=>+((f.t-t0)/1000).toFixed(2));
-  PT.forEach((p,j)=>{ out[HEAD[j+1]]=fr.map(f=>{ const v=L.progress(f.pts[p.i], cold[p.i], warm[p.i]); return Number.isFinite(v) ? +v.toFixed(4) : NaN; }); });
+  // pinned to 0..1 (Daniel, 2026-11-13): below the cold color the camera only says "12 °C or colder", above the warm
+  // color "17 °C or warmer", so a reading outside the scale is reported AT its end. All averages the pinned points.
+  const prog=(f,i)=>{ const v=L.progress(f.pts[i], cold[i], warm[i]); return Number.isFinite(v) ? Math.min(1,Math.max(0,v)) : v; };
+  PT.forEach((p,j)=>{ out[HEAD[j+1]]=fr.map(f=>{
+    let v;
+    if(p.all){ let n=0, sum=0; ALL_PTS.forEach(i=>{ const u=prog(f,i); if(Number.isFinite(u)){ sum+=u; n++; } }); v = n ? sum/n : NaN; }
+    else v=prog(f,p.i);
+    return Number.isFinite(v) ? +v.toFixed(4) : NaN; }); });
   return { headers:HEAD.slice(), cols:out };
 }
 function addFrame(t, pts){
@@ -278,7 +342,10 @@ function finish(){
   ingestParsed(series2(R), P);
   const n=R.frames.length, dur=(R.frames[n-1].t-R.frames[0].t)/1000;
   P.fileName="camera run";
-  P._lcMeta={ n, dur:+dur.toFixed(1), rate: dur>0 ? +((n-1)/dur).toFixed(2) : 0, seconds:R.seconds, warmAt:SC.warm.at };
+  // where the run started on the saved cold-to-warm scale (the first column, the bowl): well below 0 means the
+  // saved cold color was not cold; well up the scale means the spoon had mostly turned before Record
+  const c0=(P.ds.cols[HEAD[1]]||[]).slice(0,3).filter(Number.isFinite), start=c0.length ? c0.reduce((a,b)=>a+b,0)/c0.length : null;
+  P._lcMeta={ n, dur:+dur.toFixed(1), rate: dur>0 ? +((n-1)/dur).toFixed(2) : 0, seconds:R.seconds, warmAt:SC.warm.at, coldAt:SC.cold.at, start: start==null?null:+start.toFixed(3) };
   P._lc="review";
   logEv("review", { slot:P.key, n, dur:P._lcMeta.dur });
   render(); setReadout(); paint(); refreshNext();
@@ -329,7 +396,7 @@ let lastKey="";
 function stateKey(){
   const st=NARR[S.step]; if(!st || !st.cam) return "";
   const T=SC.target ? panelByKey(SC.target) : null;
-  return [st.id, SC.status, SC.error||"", SC.cam?1:0, SC.frame?1:0, SC.warm?SC.warm.at:0, SC.recState, SC.target||"", T?T._lc:"", camSlots(st).map(k=>{ const P=panelByKey(k); return P&&P.ds&&!pending(P)?1:0; }).join("")].join("|");
+  return [st.id, SC.status, SC.error||"", SC.cam?1:0, SC.frame?1:0, SC.warm?SC.warm.at:0, SC.cold?SC.cold.at:0, SC.recState, SC.calib?SC.calib.kind:"", SC.target||"", T?T._lc:"", camSlots(st).map(k=>{ const P=panelByKey(k); return P&&P.ds&&!pending(P)?1:0; }).join("")].join("|");
 }
 // The live picture. On the setup step it is BIG, in the top region (the step is `top: html` and its `html:` holds
 // <div class='sc-stage'><canvas id='sc-live'></canvas></div>), because lining the sheet up is the whole step. On
@@ -343,7 +410,7 @@ function paintStatus(){
   const el=document.getElementById("sc-status"), a=SC.frame; if(!el) return;
   el.className="sc-status "+(a && a.sq ? "ok" : "warn");
   el.textContent = !a ? "Waiting for the first picture…" : a.sq ? "All four squares found" : (a.H ? "Squares lost: using the last good view" : "Can't find the four black squares yet");
-  const b=document.querySelector('#sc-card [data-sc="warm"], #sc-card [data-sc="begin"]');
+  const b=document.querySelector('#sc-card [data-sc="warm"], #sc-card [data-sc="cold"], #sc-card [data-sc="begin"]');
   if(b) b.disabled = !(a && a.sq) && !(b.dataset.sc==="begin" && SC.lastH);
 }
 function paint(force){
@@ -368,11 +435,25 @@ function paint(force){
      +(LOCAL?'<p class="sc-sub"><a href="'+camHref+'" target="_blank">open a test camera tab</a></p>':'')
      +'</div></div>';
     if(SC.error) h+='<div class="sc-err">'+esc(SC.error)+'</div>';
+  } else if(SC.calib){
+    h+=withLive('<div class="sc-big sc-rec">Saving the '+SC.calib.kind+' color…</div>'
+     +'<div class="sc-track"><div id="sc-calbar"></div></div>'
+     +'<div class="sc-stats"><span id="sc-calt">'+SC.calib.secs+' s</span></div>'
+     +'<p class="sc-sub">Averaging '+SC.calib.secs+' seconds of pictures. Hands out, and don\'t lean over the sheet.</p>');
   } else if(!SC.warm && !(ks.length && !SC.target)){
     // no warm color yet: the setup step, or a run step reached without one
     h+=withLive('<div class="sc-big">'+(st.cam.warm ? "Line it up" : "First, the warm color")+'</div>'
      +'<p class="sc-sub">Lay the <b>warm, dry</b> spoon on the outline. When the blue outline sits on the printed one, save its color.</p>'
      +'<button class="deck-go sc-accept" data-sc="warm">Save warm color</button>');
+  } else if(!SC.cold && !st.cam.warm && !(ks.length && !SC.target)){
+    // no cold color yet: the cold-calibration step, or a run step reached without one
+    h+=withLive('<div class="sc-big">'+(st.cam.cold ? "Now the cold color" : "First, the cold color")+'</div>'
+     +'<p class="sc-sub">Dunk the spoon, pat it dry <b>fast</b>, lay it on the outline, hand out, and save. The deck averages the next three seconds, so be quick: the spoon starts to turn as soon as it is out of the water.</p>'
+     +'<button class="deck-go sc-accept" data-sc="cold">Save cold color</button>');
+  } else if(st.cam.cold){
+    h+=withLive('<div class="sc-big sc-ok">✓ Cold color saved</div>'
+     +'<p class="sc-sub">Your spoon is now a thermometer with two marks on it. If the spoon had already started to turn, cool it and save it again.</p>'
+     +'<div class="sc-links"><a href="#" data-sc="recold">Save it again</a></div>');
   } else if(st.cam.warm){
     h+=withLive('<div class="sc-big sc-ok">✓ Warm color saved</div>'
      +'<p class="sc-sub">Every run is measured against this. If the phone or the sheet moves, come back and save it again.</p>'
@@ -384,12 +465,15 @@ function paint(force){
     h+=withLive('<div class="sc-big sc-rec">Recording</div>'
      +'<div class="sc-track"><div id="sc-bar"></div></div>'
      +'<div class="sc-stats"><span id="sc-time">'+mmss(runSeconds(st))+' left</span>'+(st.cam.until!=null?' <span class="sc-atmost">at most</span>':'')+'</div>'
-     +'<p class="sc-sub">'+(st.cam.go ? 'It stops by itself. Press <b>Next ›</b>: there are questions to answer while it records.'
+     +'<p class="sc-sub">'+(st.cam.go ? 'It stops by itself. The questions come up on their own in a moment; answer them while it records.'
                           : st.cam.watch ? 'It stops by itself. Keep hands and shadows off the sheet.'
                           : 'It stops by itself. Keep hands and shadows off the sheet.')+'</p>'
      +'<div class="sc-links"><a href="#" data-sc="again">Start over</a></div>', !!st.cam.watch);
   } else if(T && T._lc==="review"){
     const m=T._lcMeta||{};
+    const warn = m.start==null ? "" : m.start<-0.12 ? "This run started colder than your saved cold color. Go back and save the cold color again, then repeat the run."
+               : m.start>0.45 ? "The spoon had mostly turned before you pressed Record. Try again, faster." : "";
+    if(warn) h+='<div class="sc-err">'+warn+'</div>';
     h+='<div class="sc-big">Keep this run?</div>'
      +'<p class="sc-sub">'+(m.n||0)+' pictures over '+mmss(m.dur||0)+'. A smooth rise from near 0? Keep it.</p>'
      +'<div class="sc-btns"><button class="deck-go sc-ghost" data-sc="again">Try again</button>'
@@ -401,6 +485,22 @@ function paint(force){
      +(SC.error ? '<div class="sc-err">'+esc(SC.error)+'</div>' : ''));
   }
   card.innerHTML=h;
+  // A run step's two faces (Daniel, 2026-11-13/15). BEFORE the first Record: the instructions, and no notes box.
+  // FROM Record on (recording, reviewing, kept): the instructions give way to `recLead` (what to watch, don't lean
+  // over the spoon) and the step's freeform box (`~ …` in the manifest) appears for observations. The box is in the
+  // prose with the instructions, so the instructions are hidden, not replaced, or the box would go with them.
+  const prose=document.querySelector("#stepbody .deck-prose");
+  if(prose && ks.length){
+    const P0=panelByKey(ks[0]), started = SC.recState==="rec" || !!(P0 && P0.ds);
+    const box=prose.querySelector(".textarea-wrap");
+    let rl=prose.querySelector(".sc-reclead");
+    if(st.recLead && !rl){ rl=document.createElement("div"); rl.className="sc-reclead"; rl.innerHTML=st.recLead; prose.insertBefore(rl, prose.firstChild); if(typeof typesetMath==="function") typesetMath(rl); }
+    [...prose.children].forEach(el=>{
+      if(el===rl) el.style.display = started ? "" : "none";
+      else if(el===box) el.style.display = started ? "" : "none";
+      else el.style.display = (started && rl) ? "none" : "";
+    });
+  }
   camSlots(st).forEach(k=>{ const P=panelByKey(k); if(P && P.file && !P.supplied) P.file.style.display="none"; });
   drawLive(); paintStatus();
   if(SC.recState==="rec") tick();
@@ -410,7 +510,9 @@ function onCardClick(e){
   e.preventDefault();
   const act=a.dataset.sc;
   if(act==="warm") saveWarm();
+  else if(act==="cold") saveCold();
   else if(act==="rewarm"){ SC.warm=null; logEv("warm-cleared"); paint(); refreshNext(); }
+  else if(act==="recold"){ SC.cold=null; logEv("cold-cleared"); paint(); refreshNext(); }
   else if(act==="begin") begin();
   else if(act==="again") tryAgain();
   else if(act==="accept") accept();
@@ -460,7 +562,10 @@ const _stepComplete=stepComplete;
 stepComplete=function(i){
   const st=NARR[i];
   if(st && st.cam){
+    // Next is frozen while pictures are being taken, a run or a warm/cold save (Daniel, 2026-11-14)
+    if(SC.recState==="rec" || SC.calib) return false;
     if(st.cam.warm && !SC.warm) return false;
+    if(st.cam.cold && !SC.cold) return false;
     const Ps=camSlots(st).map(panelByKey), pend=Ps.some(pending);
     // `go` and a plain `watch` step let the group move on while the run records; the `hold` step, and a run
     // step with neither flag, wait for it to be finished and Accepted.
@@ -472,8 +577,10 @@ stepComplete=function(i){
 const _blockReason=blockReason;
 blockReason=function(i){
   const st=NARR[i];
+  if(st && st.cam && (SC.recState==="rec" || SC.calib)) return SC.calib ? "Hold on: the deck is still saving the "+SC.calib.kind+" color." : "Hold on: the run is still recording.";
   if(st && st.cam){
     if(st.cam.warm && !SC.warm) return fbText(st, "data", "Scan the code, line up the sheet, and press <b>Save warm color</b> with the warm, dry spoon on the outline.");
+    if(st.cam.cold && !SC.cold) return fbText(st, "data", "Cool the spoon, pat it dry fast, lay it on the outline and press <b>Save cold color</b>.");
     const Ps=camSlots(st).map(panelByKey), P=Ps.find(pending), free=st.cam.go || (st.cam.watch && !st.cam.hold);
     if(P && !free) return fbText(st, "live", P._lc==="rec" ? "Still recording. It stops by itself, then press <b>Accept</b>."
                                                     : "Press <b>Accept</b> to keep this run, or <b>Try again</b>.");
@@ -502,7 +609,8 @@ css.textContent=`
 .sc-card .sc-col{flex:1 1 auto;min-width:0;}
 .sc-card .sc-livewrap{flex:0 0 120px;width:120px;height:160px;background:#000;border-radius:6px;overflow:hidden;display:flex;justify-content:center;align-items:center;}
 #sc-live{display:block;}
-#topmedia .topcustom:has(.sc-stage){width:100%;height:100%;max-width:none;}
+#topmedia .topcustom:has(.sc-stage),#topmedia .topcustom:has(.sc-fill){width:100%;height:100%;max-width:none;}
+#topmedia .sc-fill{width:100%;height:100%;display:flex;align-items:center;justify-content:center;}
 #topmedia .sc-stage{width:100%;height:100%;display:flex;justify-content:center;align-items:center;background:#000;}
 .sc-card .sc-status{font-size:var(--fs-label);margin:5px 0 0;color:var(--muted);}
 .sc-card .sc-status::before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;background:var(--edge);}

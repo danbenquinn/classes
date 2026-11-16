@@ -30,7 +30,7 @@ const SUBCFG=Object.assign({
   key:"sb_publishable_IQNxMMynit0aWtOS3tjiRQ_h5sNo159",
   workshop:(typeof CONFIG!=="undefined" && CONFIG && CONFIG.title) || document.title,
   maxRows:4000,
-  dataWord:"acceleration",     // what the consent question calls the group's data; Lukewarm (2026-11-12) sets "spoon"
+  dataWord:"acceleration",     // what the consent question calls the group's data; Cool Hand Luke (2026-11-12) sets "spoon"
 }, (typeof CONFIG!=="undefined" && CONFIG && CONFIG.submit) || {});
 
 const G={ boxes:[], status:[], hashes:new Set((GCFG&&GCFG.roster)||[]), log:[], submitted:null, sending:false };

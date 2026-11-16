@@ -315,7 +315,7 @@ function axisInfo(h){
   // an angle column (the knee pendulum test, supplied from De Santis & Perez 2024): θ in its own unit
   if(/angle/i.test(h||"")){ const u=((h||"").match(/\(([^)]+)\)\s*$/)||[,"deg"])[1].trim();
     return {L:"θ", dot:"θ̇", ddot:"θ̈", sym:"θ", unit:u==="deg"?"°":u, rate:u+"/s", dp:1}; }
-  // a color-change column (Lukewarm's spoon, 2026-11-12): 0 = the cold color, 1 = the warm one. A word, not a
+  // a color-change column (Cool Hand Luke's spoon, 2026-11-12): 0 = the cold color, 1 = the warm one. A word, not a
   // symbol (drawn upright, `roman`): the course has no letter for it and the workshop does not need one.
   if(/colou?r/i.test(h||"")) return {L:"color", dot:"color", ddot:"color", sym:"color", unit:"0 = cold, 1 = warm", rate:"per min", slopeScale:60, dp:2, roman:true};
   const m=(h||"").match(/acceleration\s*([xyz])/i);
@@ -326,7 +326,7 @@ function axisInfo(h){
   return {L:"x", dot:"ẋ", ddot:"ẍ", sym:"ẍ", unit:"m/s²", rate:"m/s³", dp:2};
 }
 
-/* THE TIME AXIS'S UNIT (Lukewarm, 2026-11-12). Every workshop before it recorded seconds, and " s" was typed
+/* THE TIME AXIS'S UNIT (Cool Hand Luke, 2026-11-12). Every workshop before it recorded seconds, and " s" was typed
    into the axis title and four readouts. A battery logged by the minute, a week of hourly soil temperatures and
    a year of daily ones are not seconds, so the unit is read from the time column's own header, phyphox-style:
    "Time (min)" gives min. No parentheses, or "(s)", is seconds, which is every earlier deck unchanged. */
@@ -342,7 +342,7 @@ function series(P){
   for(let i=0;i<t.length;i++){ if(Number.isFinite(t[i])&&Number.isFinite(a[i])){T.push(t[i]);A.push(a[i]);} }
   return T.length?{t:T,a:A}:null;
 }
-/* `overlay:true` on a slot's CONFIG.panels entry (Lukewarm, 2026-11-12): the plot draws EVERY numeric column of
+/* `overlay:true` on a slot's CONFIG.panels entry (Cool Hand Luke, 2026-11-12): the plot draws EVERY numeric column of
    the slot at once, each in its own fixed color with a legend, instead of only the one the Signal names. The
    Signal's column is the heavy line and the one every tool acts on; the others are context. Built for the
    spoon, whose three columns are three places on one spoon, warming side by side. */
@@ -378,11 +378,15 @@ function slopeFit(s,P){ const r=selRange(s,P); if(!r||r[1]-r[0]<2) return null;
   const den=n*stt-st*st; if(!(Math.abs(den)>0)) return null;
   const m=(n*sty-st*sy)/den, b0=(sy-m*st)/n;
   return {m:m, b:b0-m*t0, t0:t0, t1:s.t[r[1]]}; }
-/* What the Slope readout PRINTS (Lukewarm, 2026-11-12), and so what `slopefit` checks and `autofill` hands over.
+/* What the Slope readout PRINTS (Cool Hand Luke, 2026-11-12), and so what `slopefit` checks and `autofill` hands over.
    Accelerations and the like keep their one decimal. A color column's slope is per MINUTE (`slopeScale`), and
    small, so it gets two significant figures below 1: "0.51 per min", "0.060 per min". */
 function slopeShown(P){ const s=series(P), L=s&&slopeFit(s,P); if(!L) return null;
-  const A=axisInfo(P.sigH), v=L.m*(A.slopeScale||1), a=Math.abs(v);
+  const A=axisInfo(P.sigH), TD=A.slopeScale&&tempDef(P);
+  // On a `temp:` slot (Cool Hand Luke, 2026-11-13, slopes back in place of fits) the slope is the TEMPERATURE's, in °C
+  // per SECOND, so that m c_p times it is watts. Two significant figures: "0.042 °C/s".
+  if(TD){ const v=L.m*TD.band, txt=Math.abs(v)>=1 ? v.toFixed(2) : v.toPrecision(2); return {txt, v:parseFloat(txt), unit:"°C/s", sym:"T", L}; }
+  const v=L.m*(A.slopeScale||1), a=Math.abs(v);
   const txt = A.slopeScale ? (a>=1 ? v.toFixed(2) : v.toPrecision(2)) : v.toFixed(1);
   return {txt, v:parseFloat(txt), unit: A.slopeScale ? A.rate : (tUnit(P)==="s" ? A.rate : A.unit+"/"+tUnit(P)), L}; }
 function slopeAutofill(){
@@ -497,7 +501,7 @@ function r2sine(t,a,amp,f,phase){
 // mid-deck, because a head-fixed x axis that has flexed 90° is not a direction any more (see the manifest).
 // `gx`/`gy`/`gz` (2026-10-13): the GYROSCOPE axes, kept distinct from the accelerometer's so a requireAxis
 // can never be satisfied by the wrong sensor in a raw-sensors export that carries both.
-// A longer word (Lukewarm, 2026-11-12: `requireAxis: bowl`, `tip`) names a column by how its header STARTS, for
+// A longer word (Cool Hand Luke, 2026-11-12: `requireAxis: bowl`, `tip`) names a column by how its header STARTS, for
 // data whose columns are places on a spoon rather than axes of a sensor.
 function axisRe(ax){ return ax==="abs" ? /absolute/i : /^g[xyz]$/.test(ax) ? new RegExp("gyroscope\\s*"+ax[1]+"\\b","i") : ax.length>1 ? new RegExp("^\\s*"+ax+"\\b","i") : new RegExp("acceleration\\s*"+ax+"\\b","i"); }
 function axisName(ax){ return ax==="abs" ? "absolute acceleration" : /^g[xyz]$/.test(ax) ? "the gyroscope's "+ax[1]+"-axis" : ax.length>1 ? "the "+ax : "the "+ax+"-axis"; }
@@ -516,7 +520,7 @@ function preferAxis(){
   (visiblePanels().length?visiblePanels():S.panels).forEach(P=>{
     if(!P.ds) return;
     const want=P.ds.headers.find(h=>h!==P.ds.timeH && axisRe(S.reqAxis).test(h));
-    // The window and every fit belong to the column they were dragged on. Carried across a switch (Lukewarm,
+    // The window and every fit belong to the column they were dragged on. Carried across a switch (Cool Hand Luke,
     // 2026-11-12: bowl on one step, tip on the next), the old column's green curve sat on the new column's trace
     // and `autofill` handed its numbers to the new step's box. A step that changes the Signal starts clean.
     if(want && want!==P.sigH){ P.sigH=want; if(P.selEl) P.selEl.value=want;
@@ -690,7 +694,7 @@ function syncDampedControls(){
   if(z && S.dfCtl.zFit && document.activeElement!==z) z.value=P.dfit.z.toFixed(3);
 }
 
-/* ---- Fit Exponential (Lukewarm, 2026-11-12) ----
+/* ---- Fit Exponential (Cool Hand Luke, 2026-11-12) ----
    Class U's Newton cooling, fitted to a dragged window: y ≈ y∞ + A·e^{−t/τ}, t counted from the window's left
    edge. τ is searched (a geometric sweep, then a golden-section polish); A, and y∞ when it is free, are linear
    and solved exactly at each τ. The model has no other terms.
@@ -699,7 +703,27 @@ function syncDampedControls(){
    stable τ: with y∞ free, a short window cannot tell a slow approach to 1 from a fast approach to 0.4. Leave
    it off and y∞ is fitted too, and printed, because for a heater in a cold chamber the plateau is itself a
    measurement. Cheap enough (one pass per τ) to follow the pointer, so the curve is live during the drag. */
-function expPin(P){ const d=PANELDEF.find(d=>(d.key||"")===P.key)||{}; return Number.isFinite(d.asymptote) ? d.asymptote : null; }
+/* `temp:{lo,band,room,roomKey}` on a slot (Cool Hand Luke, 2026-11-13): the slot's 0-to-1 color is ALSO a temperature,
+   T = lo + band × color, good between color 0 and 1 (the spoon: 12 °C to 17 °C). The plot grows a second axis in
+   °C, Fit Exponential is pinned to the ROOM's temperature (typed by the group into the input `roomKey`, else
+   `room`), and its readout is written in °C. The fit is still done in color units: the pin is just
+   (room − lo)/band there. */
+function tempDef(P){ const d=PANELDEF.find(d=>(d.key||"")===P.key)||{}; if(!d.temp) return null;
+  const r=S.answers[d.temp.roomKey]; return {lo:d.temp.lo, band:d.temp.band, room:Number.isFinite(r)?r:d.temp.room}; }
+function expPin(P){ const d=PANELDEF.find(d=>(d.key||"")===P.key)||{}; const TD=tempDef(P);
+  return TD ? (TD.room-TD.lo)/TD.band : (Number.isFinite(d.asymptote) ? d.asymptote : null); }
+/* What a temperature fit implies beyond its window (same slot): the temperature at t = 0 (when Record was
+   pressed) and the time at which the fitted curve passes 0 °C. Stored beside the step's τ as <key>_T0 and
+   <key>_t0C on every release, for a later step's `leadFn` to draw the whole warm-up. */
+function expDerived(){
+  if(typeof NARR==="undefined") return; const st=NARR[S.step]; if(!st || st.checkKind!=="expfit") return;
+  const P = st.fitSlot ? panelByKey(st.fitSlot) : visiblePanels().find(p=>p.efit); const TD=P&&tempDef(P); if(!P || !P.efit || !TD) return;
+  const F=P.efit, fs=fieldsOf(st), key=(fs[fs.length-1]||{}).key; if(!key || !(F.A<0)) return;
+  const cInf=F.c, c0=-TD.lo/TD.band;
+  S.answers[key+"_T0"]=TD.lo+TD.band*(cInf+F.A*Math.exp(F.t0/F.tau));
+  S.answers[key+"_t0C"]=F.t0-F.tau*Math.log((c0-cInf)/F.A);
+  S.answers[key+"_fit"]=F.tau;
+}
 function expEval(t,y,tau,pin){
   let see=0,se=0,sy=0,sye=0,n=t.length; const E=new Array(n);
   for(let i=0;i<n;i++){ const e=Math.exp(-t[i]/tau); E[i]=e; see+=e*e; se+=e; sy+=y[i]; sye+=y[i]*e; }
@@ -864,7 +888,14 @@ function updatePlotReadout(P){
       +'<span class="r2pop">Fraction of the variance in your selection the fit explains — 1 = perfect, 0 = no better than a flat line</span></span>');
   } else if(S.tool==="fitexp"){
     if(!P.efit){ show('<span class="ro-hint">drag across the stretch to fit</span>'); return; }
-    const E=expShown(P.efit,A.dp), tu=tUnit(P), nm = A.roman ? A.sym : '<i>'+A.sym+'</i>';
+    const E=expShown(P.efit,A.dp), tu=tUnit(P), nm = A.roman ? A.sym : '<i>'+A.sym+'</i>', TD=tempDef(P);
+    if(TD){   // a temperature fit: T ≈ room − (°C) e^{−t/τ}
+      show('<span class="formula"><i>T</i> ≈ '+TD.room.toFixed(1)+(E.A<0?" − ":" + ")+Math.abs(TD.band*P.efit.A).toFixed(1)
+        +' <i>e</i><sup>−<i>t</i>/'+expNum(E.tau)+'</sup>'
+        +' <span class="ro-hint" style="font-family:var(--font-sans)">(°C; <i>t</i> in '+tu+', counted from your window\'s left edge, '+E.t0.toFixed(timeDecimals(s))+' '+tu+')</span></span>'
+        +'<span class="r2" tabindex="0" style="display:block;width:max-content"><i>R</i>² = '+P.efit.r2.toFixed(3)
+        +'<span class="r2pop">Fraction of the variance in your selection the fit explains — 1 = perfect, 0 = no better than a flat line</span></span>');
+      return; }
     show('<span class="formula">'+nm+' ≈ '+(P.efit.pinned ? String(E.c) : E.c.toFixed(A.dp))+(E.A<0?" − ":" + ")+Math.abs(E.A).toFixed(A.dp)
       +' <i>e</i><sup>−<i>t</i>/'+expNum(E.tau)+'</sup>'
       +' <span class="ro-hint" style="font-family:var(--font-sans)">(<i>t</i> in '+tu+', counted from your window\'s left edge, '+E.t0.toFixed(timeDecimals(s))+' '+tu+')</span></span>'
@@ -874,7 +905,8 @@ function updatePlotReadout(P){
     if(P.point==null){ show('<span class="ro-hint">click or drag along the trace</span>'); return; }
     const i=nearest(s,P.point);
     const td = timeDecimals(s);          // never finer than the sample interval — see timeDecimals()
-    show('<span class="ro"><i>t</i> = '+s.t[i].toFixed(td)+' '+tUnit(P)+'&nbsp;·&nbsp;'+(A.roman?A.sym:'<i>'+A.sym+'</i>')+' = '+s.a[i].toFixed(A.dp)+(A.roman?'':' '+A.unit)+'</span>');
+    const TDp=A.slopeScale&&tempDef(P), Tp=TDp ? '&nbsp;·&nbsp;<i>T</i> ≈ '+(TDp.lo+TDp.band*s.a[i]).toFixed(1)+' °C' : '';   // a `temp:` slot reads in °C too
+    show('<span class="ro"><i>t</i> = '+s.t[i].toFixed(td)+' '+tUnit(P)+'&nbsp;·&nbsp;'+(A.roman?A.sym:'<i>'+A.sym+'</i>')+' = '+s.a[i].toFixed(A.dp)+(A.roman?'':' '+A.unit)+Tp+'</span>');
   } else if(S.tool==="avg"){
     const av=average(s,P); if(av==null){ show('<span class="ro-hint">drag a region to average</span>'); return; }
     show('<span class="ro">average '+(A.roman?A.sym:'<i>'+A.sym+'</i>')+' = '+av.toFixed(A.dp)+(A.roman?'':' '+A.unit)+'<span class="ro-ctx"> over '+Math.abs(P.sel.b-P.sel.a).toFixed(timeDecimals(s))+' '+tUnit(P)+'</span></span>');
@@ -885,7 +917,7 @@ function updatePlotReadout(P){
     // to about a tenth of a m/s, and no better.
     const R=slopeShown(P); if(!R){ show('<span class="ro-hint">drag across a stretch to fit a line to it</span>'); return; }
     const L=R.L;
-    show('<span class="ro">slope of '+(A.roman?A.sym:'<i>'+A.sym+'</i>')+' = '+R.txt+' '+R.unit+'<span class="ro-ctx"> over '+(L.t1-L.t0).toFixed(timeDecimals(s))+' '+tUnit(P)+'</span></span>');
+    show('<span class="ro">slope of '+(R.sym?'<i>'+R.sym+'</i>':A.roman?A.sym:'<i>'+A.sym+'</i>')+' = '+R.txt+' '+R.unit+'<span class="ro-ctx"> over '+(L.t1-L.t0).toFixed(timeDecimals(s))+' '+tUnit(P)+'</span></span>');
   } else if(S.tool==="crop"){
     // Crop is the one tool that reads out in AMBER, not green, and that is the point of the house rule
     // rather than an exception to it: green means "a number you measured", and a crop measures nothing.
@@ -968,7 +1000,9 @@ function renderPanel(P){
   // mB was 34, which put the axis title's cap-height straight through the tick labels' descenders. It only
   // showed when a tick happened to land at the horizontal center — Get Air's elevator files put "10" there
   // and printed it through the middle of "t (s)". The title now gets a row of its own rather than sharing.
-  const mL=58, mR=(showX||showV)?62:18, mT=16, mB=isLast?42:24, ph=H-mT-mB, px=W-mL-mR;
+  const TDp=tempDef(P);
+  const mL=TDp?112:58, mR=(showX||showV)?62:18, mT=16, mB=isLast?42:24, ph=H-mT-mB, px=W-mL-mR;
+  if(P.readout) P.readout.style.marginLeft = TDp ? "54px" : "";      // the readout sits just inside the plot's left edge, wherever that is
 
   // The TIME axis always spans the whole recording, cropped or not — that is the deliberate half of the
   // crop design. Only the VERTICAL axis rescales, so the discarded noise stays on screen, dimmed, at its
@@ -997,13 +1031,19 @@ function renderPanel(P){
       const qc=cropRange(qs,Q); const qa=qs.a.slice(qc[0],qc[1]+1);
       aLo=Math.min(aLo,Math.min.apply(null,qa)); aHi=Math.max(aHi,Math.max.apply(null,qa)); });
   }
-  // `yRange:[lo,hi]` on the slot's CONFIG.panels entry (Lukewarm, 2026-11-12): the axis always shows at least
+  // `yRange:[lo,hi]` on the slot's CONFIG.panels entry (Cool Hand Luke, 2026-11-12): the axis always shows at least
   // this much, so four spoon runs share one 0-to-1 scale and a run that got a fifth of the way looks like it.
   { const pd0=PANELDEF.find(d=>(d.key||"")===P.key)||{};
     if(Array.isArray(pd0.yRange)){ aLo=Math.min(aLo,pd0.yRange[0]); aHi=Math.max(aHi,pd0.yRange[1]); } }
   const OV=overlayCols(P);
   if(OV) OV.forEach(c=>{ for(const v of c.a){ if(v<aLo) aLo=v; if(v>aHi) aHi=v; } });
-  const Ay=niceTicks(aLo, aHi, 5);
+  let Ay=niceTicks(aLo, aHi, 5);
+  // `yFix:[lo,hi]` on the slot (Cool Hand Luke, 2026-11-13, Daniel): the vertical axis is EXACTLY this, whatever the data
+  // do, so every run is read on one scale. Traces are clipped to the plot, so a curve that spills just runs off.
+  { const pdx=PANELDEF.find(d=>(d.key||"")===P.key)||{};
+    if(Array.isArray(pdx.yFix)){ const lo=pdx.yFix[0], hi=pdx.yFix[1], st=niceStep(hi-lo,5), tk=[];
+      for(let v=Math.ceil(lo/st-1e-9)*st; v<=hi+1e-9; v+=st) tk.push(+v.toFixed(10));
+      Ay={lo, hi, ticks:tk, step:st}; } }
   const tx=t=>mL+(t-T.lo)/(T.hi-T.lo)*px;
   const ay=a=>mT+(Ay.hi-a)/(Ay.hi-Ay.lo)*ph;
   P.G=G={mL,mR,tLo:T.lo,tHi:T.hi};
@@ -1015,20 +1055,38 @@ function renderPanel(P){
     ctx.save(); ctx.strokeStyle=getCss("--grid"); ctx.globalAlpha=0.55; ctx.lineWidth=1;
     for(let v=st0; v<=Ay.hi+1e-9; v+=pdef.yMinor){ const y=ay(v); ctx.beginPath(); ctx.moveTo(mL,y); ctx.lineTo(W-mR,y); ctx.stroke(); }
     ctx.restore(); }
-  // `yBand:{lo,hi,label}` on the slot (Lukewarm, 2026-11-12): a faint amber band across the plot between two
+  // `yBand:{lo,hi,label}` on the slot (Cool Hand Luke, 2026-11-12): a faint amber band across the plot between two
   // values, with a small label at its right end. Context, not a measurement: it marks WHERE to measure (the
   // stretch of the spoon's color change that the deck reads as a temperature).
   if(pdef.yBand && pdef.yBand.hi>Ay.lo && pdef.yBand.lo<Ay.hi){ const y1=ay(Math.min(pdef.yBand.hi,Ay.hi)), y0=ay(Math.max(pdef.yBand.lo,Ay.lo));
     ctx.fillStyle=getCss("--band-amber"); ctx.fillRect(mL,y1,px,y0-y1); ctx.fillRect(mL,y1,px,y0-y1);
     if(pdef.yBand.label){ ctx.fillStyle=getCss("--edge"); ctx.font=font(11); ctx.textAlign="right"; ctx.textBaseline="bottom"; ctx.globalAlpha=.85;
       ctx.fillText(pdef.yBand.label, W-mR-6, y0-3); ctx.globalAlpha=1; } }
+  // `yGuides:[a,b,…]` on the STEP (Cool Hand Luke, 2026-11-13): thin white level lines across every plot on that step,
+  // a guide for where to measure (the spoon's 12.5 and 13.5 °C). Drawn only on the steps that ask for them.
+  const stG=NARR[S.step]; let guides=null;
+  if(stG && Array.isArray(stG.yGuides)) guides=stG.yGuides.filter(v=>v>=Ay.lo && v<=Ay.hi);
   // horizontal gridlines + left labels
   ctx.textBaseline="middle"; ctx.textAlign="right"; ctx.font=font(11);
   Ay.ticks.forEach(v=>{ const y=ay(v); ctx.strokeStyle=getCss(v===0?"--zero":"--grid"); ctx.lineWidth=1;
     ctx.beginPath(); ctx.moveTo(mL,y); ctx.lineTo(W-mR,y); ctx.stroke();
     ctx.fillStyle=getCss("--muted"); ctx.fillText(fmt(v), mL-8, y); });
+  if(guides && guides.length){ ctx.save(); ctx.strokeStyle="#ffffff"; ctx.globalAlpha=.9; ctx.lineWidth=1.25;
+    guides.forEach(v=>{ const y=Math.round(ay(v))+.5; ctx.beginPath(); ctx.moveTo(mL,y); ctx.lineTo(W-mR,y); ctx.stroke(); }); ctx.restore(); }
   // left axis title (tinted to the trace) — variable italic, unit roman
-  if(A.roman) axisTitleV(15, mT+ph/2, "", A.sym+" ("+A.unit+")", "--trace");   // a word, upright (the spoon's color)
+  if(TDp){
+    // two scales for one curve: the color (nearest the plot) and, left of it, the temperature it stands for.
+    // °C is marked only where the color means one: from `lo` (color 0, "or colder") to lo+band (color 1, "or warmer").
+    axisTitleV(mL-40, mT+ph/2, "", A.sym, "--muted");   // gray, like its ticks (Daniel, 2026-11-13)
+    const xT=mL-58; ctx.strokeStyle=getCss("--line"); ctx.lineWidth=1;
+    const yA=ay(Math.min(1,Ay.hi)), yB=ay(Math.max(0,Ay.lo)); ctx.beginPath(); ctx.moveTo(xT,yA); ctx.lineTo(xT,yB); ctx.stroke();
+    ctx.fillStyle=getCss("--ink"); ctx.font=font(11); ctx.textAlign="right"; ctx.textBaseline="middle";
+    for(let k=0;k<=TDp.band;k++){ const c=k/TDp.band; if(c<Ay.lo-1e-9 || c>Ay.hi+1e-9) continue; const y=ay(c);
+      ctx.beginPath(); ctx.moveTo(xT-4,y); ctx.lineTo(xT,y); ctx.stroke();
+      ctx.fillText((k===0?"≤ ":k===TDp.band?"≥ ":"")+(TDp.lo+k), xT-7, y); }
+    axisTitleV(13, mT+ph/2, "T", "(°C)", "--ink");
+  }
+  else if(A.roman) axisTitleV(15, mT+ph/2, "", A.sym+" ("+A.unit+")", "--trace");   // a word, upright (the spoon's color)
   else axisTitleV(15, mT+ph/2, A.sym, "("+A.unit+")", "--trace");
   // frame (left + bottom)
   ctx.strokeStyle=getCss("--line"); ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(mL,mT); ctx.lineTo(mL,mT+ph); ctx.lineTo(W-mR,mT+ph); ctx.stroke();
@@ -1068,12 +1126,9 @@ function renderPanel(P){
     ctx.strokeStyle=getCss("--avg"); ctx.lineWidth=num("--stroke-result");
     ctx.beginPath(); ctx.moveTo(tx(s.t[r[0]]),ay(av)); ctx.lineTo(tx(s.t[r[1]]),ay(av)); ctx.stroke(); ctx.lineWidth=1; } }
   // slope: the same amber band, and the fitted line in solid green across the window (the measured value)
+  // (the band goes under the traces; the line itself is drawn AFTER them, below, so the curves can't hide it)
   if(S.tool==="slope" && P.sel){ const L=slopeFit(s,P); if(L){
-    ctx.fillStyle=getCss("--band-amber"); ctx.fillRect(tx(L.t0),mT,tx(L.t1)-tx(L.t0),ph);
-    ctx.save(); ctx.beginPath(); ctx.rect(mL,mT,px,ph); ctx.clip();
-    ctx.strokeStyle=getCss("--result"); ctx.lineWidth=num("--stroke-result")+0.75;
-    ctx.beginPath(); ctx.moveTo(tx(L.t0),ay(L.m*L.t0+L.b)); ctx.lineTo(tx(L.t1),ay(L.m*L.t1+L.b)); ctx.stroke();
-    ctx.restore(); ctx.lineWidth=1; } }
+    ctx.fillStyle=getCss("--band-amber"); ctx.fillRect(tx(L.t0),mT,tx(L.t1)-tx(L.t0),ph); } }
 
   // The signal trace. Cropped, it is drawn TWICE: the whole recording dimmed, then the kept window in
   // full blue over the top. Both are clipped to the plot rectangle, because the discarded part is
@@ -1098,13 +1153,24 @@ function renderPanel(P){
   } else {
     polyline(s.t.map(tx), s.a.map(ay), "--trace", num("--stroke-trace"));
   }
+  // the Slope tool's fitted line, ON TOP of every trace (Daniel, 2026-11-15: under four overlaid curves it vanished)
+  if(S.tool==="slope" && P.sel){ const L=slopeFit(s,P); if(L){
+    ctx.strokeStyle=getCss("--result"); ctx.lineWidth=num("--stroke-result")+0.75;
+    ctx.beginPath(); ctx.moveTo(tx(L.t0),ay(L.m*L.t0+L.b)); ctx.lineTo(tx(L.t1),ay(L.m*L.t1+L.b)); ctx.stroke();
+    ctx.lineWidth=1; } }
   ctx.restore();
   if(OV){ // legend, top right: a swatch and the column's first word; the Signal's column in ink, the rest muted
     ctx.save(); ctx.font=font(12); ctx.textBaseline="middle"; ctx.textAlign="left";
     let x=W-mR-8; const y=mT+10;
+    const ICON = typeof CONFIG!=="undefined" && CONFIG && typeof CONFIG.legendIcon==="function";
     OV.slice().reverse().forEach(c=>{ ctx.font=(c.on?"600 ":"")+font(12); const w=ctx.measureText(c.name).width; x-=w;
-      ctx.fillStyle=getCss(c.on?"--ink":"--muted"); ctx.fillText(c.name,x,y);
-      x-=6; ctx.strokeStyle=getCss(c.color); ctx.lineWidth=c.on?3:2; ctx.beginPath(); ctx.moveTo(x-16,y); ctx.lineTo(x,y); ctx.stroke(); x-=16+14; });
+      // with avatars (Cool Hand Luke, 2026-11-13) the label itself carries the curve's color and there is no swatch
+      ctx.fillStyle=getCss(ICON ? c.color : (c.on?"--ink":"--muted")); ctx.fillText(c.name,x,y);
+      if(!ICON){ x-=6; ctx.strokeStyle=getCss(c.color); ctx.lineWidth=c.on?3:2; ctx.beginPath(); ctx.moveTo(x-16,y); ctx.lineTo(x,y); ctx.stroke(); x-=16; }
+      // `CONFIG.legendIcon(ctx, name, xRight, y, color, on)` (Cool Hand Luke, 2026-11-13): a little avatar left of the swatch,
+      // drawn by the deck's add-on (spoon-capture.js draws the spoon with the column's sample points lit); returns its width
+      if(typeof CONFIG!=="undefined" && CONFIG && typeof CONFIG.legendIcon==="function"){ ctx.save(); const iw=+CONFIG.legendIcon(ctx,c.name,x-4,y,getCss(c.color),c.on)||0; ctx.restore(); if(iw>0) x-=4+iw; }
+      x-=14; });
     ctx.restore(); }
 
   // Fit Sine: the fitted sine drawn over the selected window
@@ -1308,7 +1374,7 @@ function wirePointer(P){
     if(Math.abs(t-P.drag.t0)<1e-3){ P.sel=null; P.integ=null; P.fit=null; P.dfit=null; P.efit=null; }
     else { P.sel={a:P.drag.t0,b:t}; if(S.tool==="dblint"||S.tool==="integrate") doIntegrate(series(P),P); if(S.tool==="fitsine"){ doFitSine(series(P),P); syncFitControls(); }
       if(S.tool==="fitdamped"){ doFitDamped(series(P),P); syncDampedControls(); }
-      if(S.tool==="fitexp"){ doFitExp(series(P),P); expAutofill(); }
+      if(S.tool==="fitexp"){ doFitExp(series(P),P); expDerived(); expAutofill(); }
       if(S.tool==="slope") slopeAutofill(); }
     P.drag=null; render(); setReadout();
   });
@@ -1447,7 +1513,9 @@ function setTop(st){                                    // top region: analyzer 
     // distinct from `attribution:`, which is the lower-left CREDIT (who shot it, plus the source URL a
     // lint gate insists on). A credit answers "whose is this"; a caption answers "what am I looking at".
     const caption = st.caption ? '<div class="wscaption">'+st.caption+'</div>' : '';
-    tm.innerHTML = bg + strip + '<div class="titleslide'+(st.media?' overvid':'')+'">'
+    // `textAt:"bottom"` (Cool Hand Luke, 2026-11-13): the teaser and caption sit low in the panel and the scrim darkens
+    // only the bottom, for a clip whose subject is in the middle of the frame (a face the centered text covered).
+    tm.innerHTML = bg + strip + '<div class="titleslide'+(st.media?' overvid':'')+(st.textAt==="bottom"?' textlow':'')+'">'
       +(teaser?'<div class="teaser">'+teaser+'</div>':'')
       +'<div class="wstitle">'+(st.title||"")+'</div>'+caption+'</div>';
   } else {
@@ -1653,7 +1721,7 @@ function inputIssue(st){
                  : near(z,E.D/E.W,Math.max(0.0006,0.005*E.D/E.W)) ? "Close: that divides by the ringing rate $\\omega\\sqrt{1-\\zeta^2}$. Divide by $\\omega$ itself."
                  : "The exponent is $\\zeta\\omega$, and you have $\\omega$. What is left is $\\zeta$.";
       return fbText(st,"check","{label} doesn't follow from the function on screen. {hint}",{label:(fs[1]||{}).label||"ζ", hint:hint}); } }
-  /* `expfit` (Lukewarm, 2026-11-12): the typed τ (and, on a two-box step, the plateau before it) against the Fit
+  /* `expfit` (Cool Hand Luke, 2026-11-12): the typed τ (and, on a two-box step, the plateau before it) against the Fit
      Exponential readout on the step's plot. A wiring check, as `dampfit` is: the fit is the student's own, and the
      boxes have to say what it says, to the decimals each box asks for. */
   if(st.checkKind==="expfit"){ const fs=fieldsOf(st);
@@ -1669,14 +1737,14 @@ function inputIssue(st){
                             : "$\\tau$ is the number under $t$ in the exponent of the readout's function.")
                            : "The plateau is the first number in the readout's function, the value the curve is heading for.";
         return fbText(st,"check","{label} doesn't match the function on screen. {hint}",{label:f.label, hint:hint, expected:x}); } } }
-  /* `slopefit` (Lukewarm, 2026-11-12): the typed slope against the Slope readout on the step's plot, as printed. */
+  /* `slopefit` (Cool Hand Luke, 2026-11-12): the typed slope against the Slope readout on the step's plot, as printed. */
   if(st.checkKind==="slopefit"){ const f=fieldsOf(st)[0], v=f&&S.answers[f.key];
     const P = st.fitSlot ? panelByKey(st.fitSlot) : (visiblePanels().find(p=>p.sel) || null), R=P&&P.sel&&S.tool==="slope" ? slopeShown(P) : null;
     if(Number.isFinite(v)){
       if(!R){ if(!st.autofill && S.answers["seen_"+f.key]!==v) return fbText(st,"fit","Drag a window across the stretch with <b>Slope</b> first."); }
       else if(Math.abs(v-R.v)>0.02*Math.abs(R.v)+1e-9) return fbText(st,"check","{label} doesn't match the slope on screen.",{label:f.label, expected:R.txt});
       else S.answers["seen_"+f.key]=v; } }
-  /* `calc` (Lukewarm, 2026-11-12): a box whose value follows by arithmetic from boxes the group filled earlier.
+  /* `calc` (Cool Hand Luke, 2026-11-12): a box whose value follows by arithmetic from boxes the group filled earlier.
      The deck says how: CONFIG.calc[<input key>] = { f: a => expected, tol: 0.03, slips: [{ f: a => value, say: "…" }] },
      `a` being the answers so far. Within `tol` (relative) of f(a) passes; a value that lands on a named slip
      gets that slip's sentence as {hint}. Like `kspring` and `hz`, it checks the arithmetic, not the physics. */
@@ -2170,7 +2238,7 @@ function renderStep(){
     document.querySelectorAll("#tools button").forEach(x=>x.classList.toggle("on",x.dataset.tool==="fitdamped"));
     updateCtx(); resize(); setReadout(); updateFitLabel();
   }
-  // `tool: fitexp` pins Fit Exponential the same way (Lukewarm, 2026-11-12). With `CONFIG.pinTools`, `tool: point`
+  // `tool: fitexp` pins Fit Exponential the same way (Cool Hand Luke, 2026-11-12). With `CONFIG.pinTools`, `tool: point`
   // and `tool: avg` pin too; without it they stay what they were in every earlier deck, a note for the reader.
   if((st.tool==="fitexp" || (CONFIG.pinTools && (st.tool==="point" || st.tool==="avg" || st.tool==="slope"))) && S.tool!==st.tool && TOOLS.indexOf(st.tool)>=0){
     S.tool=st.tool;

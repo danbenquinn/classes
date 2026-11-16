@@ -284,6 +284,11 @@
   #topmedia .titleslide.overvid{position:relative;z-index:1;
     background:radial-gradient(ellipse at center,rgba(19,19,24,.55),rgba(19,19,24,.82));width:100%;height:100%;}
   #topmedia .titleslide.overvid .wstitle{text-shadow:0 2px 12px rgba(0,0,0,.85);}
+  /* `textAt:"bottom"`: the teaser and caption drop to the foot of the panel (clear of the lower-left credit),
+     and the scrim becomes a bottom-weighted fade, so the middle of the clip shows through. */
+  #topmedia .titleslide.textlow{justify-content:flex-end;padding-bottom:40px;gap:14px;}
+  #topmedia .titleslide.overvid.textlow{background:linear-gradient(to bottom,rgba(19,19,24,.18) 0%,rgba(19,19,24,.18) 45%,rgba(19,19,24,.86) 100%);}
+  #topmedia .titleslide.textlow .wscaption{margin-top:-4px;}
   /* `caption:` — what the background clip IS, one line under the title. Muted and small so it reads as a
      label on the footage rather than a second title, and pulled up close under the big text (the flex gap
      is sized for title-vs-teaser separation, which is far too much between a title and its own caption).
