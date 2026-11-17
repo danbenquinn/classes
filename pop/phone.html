@@ -1,0 +1,360 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Pop Timer</title>
+<style>
+  :root {
+    --bg: #f7f7f5; --fg: #1a1a1a; --muted: #6b6b6b; --line: #e2e2de; --card: #ffffff;
+    --accent: #1f6feb; --ok: #1a7f37; --rec: #cf222e; --warn: #9a6700;
+    --blue: #5e81b5; --amber: #e19c24;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #111213; --fg: #ececec; --muted: #9a9a9a; --line: #2a2b2d; --card: #1a1b1d;
+      --accent: #4c8dff; --ok: #3fb950; --rec: #ff6b6b; --warn: #d29922; }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--bg); color: var(--fg);
+    font: 17px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding: max(18px, env(safe-area-inset-top)) 18px max(18px, env(safe-area-inset-bottom));
+    -webkit-user-select: none; user-select: none;
+  }
+  main { max-width: 420px; margin: 0 auto; }
+  h1 { font-size: 24px; font-weight: 650; margin: 4px 0 4px; letter-spacing: -.01em; }
+  p { margin: 0 0 10px; color: var(--muted); }
+  button {
+    width: 100%; padding: 16px; border: 0; border-radius: 14px; margin-top: 10px;
+    background: var(--accent); color: #fff; font: 600 18px/1 inherit; font-family: inherit;
+  }
+  button.ghost { background: transparent; color: var(--fg); border: 1px solid var(--line); font-weight: 500; font-size: 16px; }
+  button.role { text-align: left; line-height: 1.3; }
+  button.role small { display: block; font-weight: 400; font-size: 14px; opacity: .85; margin-top: 3px; }
+  .row { display: flex; gap: 10px; }
+  .row > * { flex: 1; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px; margin-top: 14px; }
+  .lbl { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+  .meter { position: relative; height: 22px; background: var(--line); border-radius: 6px; overflow: hidden; margin: 8px 0 4px; }
+  .meter .bar { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: var(--ok); }
+  .meter .hold { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--fg); opacity: .5; left: 0; }
+  .meter .thr { position: absolute; top: -2px; bottom: -2px; width: 3px; background: var(--rec); left: 0; }
+  input[type=range] { width: 100%; }
+  .big { font: 650 40px/1.1 ui-monospace, "SF Mono", Menlo, monospace; font-variant-numeric: tabular-nums; margin: 4px 0; }
+  .unit { font-size: 17px; color: var(--muted); font-weight: 400; }
+  ol { margin: 6px 0 0; padding-left: 24px; font: 15px/1.6 ui-monospace, "SF Mono", Menlo, monospace; font-variant-numeric: tabular-nums; }
+  canvas { width: 100%; height: 110px; display: block; margin-top: 8px; }
+  .tag { display: inline-block; font-size: 13px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; margin: 2px 4px 0 0; }
+  .tag.ok { color: var(--ok); border-color: var(--ok); }
+  .tag.warn { color: var(--warn); border-color: var(--warn); }
+  .flash { animation: flash .6s ease-out; }
+  @keyframes flash { from { background: color-mix(in srgb, var(--amber) 45%, var(--card)); } }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Pop Timer</h1>
+  <div id="tags"></div>
+
+  <!-- 1. role -->
+  <section id="pickRole">
+    <p>Two phones start side by side, right next to the first balloon. Which one is this?</p>
+    <button class="role" data-role="1">Phone 1 · stays put<small>Sits beside both balloons the whole time.</small></button>
+    <button class="role" data-role="2">Phone 2 · walks away<small>Hears the first pop up close, then walks a measured distance down the hall before the second pop.</small></button>
+  </section>
+
+  <!-- 2. start -->
+  <section id="pickStart" hidden>
+    <p id="roleLine"></p>
+    <button id="go">Start listening</button>
+    <p style="margin-top:10px;font-size:14px">Keep this page open and the screen on. If the screen locks, the microphone stops.</p>
+  </section>
+
+  <!-- 3. listening -->
+  <section id="live" hidden>
+    <div class="card">
+      <div class="lbl">Sound level · red line is the trigger</div>
+      <div class="meter"><div class="bar" id="bar"></div><div class="hold" id="hold"></div><div class="thr" id="thr"></div></div>
+      <input type="range" id="thrSlider" min="0" max="100" step="1" aria-label="Trigger threshold">
+      <div style="display:flex;justify-content:space-between;font-size:13px;color:var(--muted)"><span>more sensitive</span><span id="thrVal"></span><span>less sensitive</span></div>
+    </div>
+
+    <div class="card" id="resultCard">
+      <div class="lbl">Time from pop 1 to pop 2</div>
+      <div class="big" id="interval">—</div>
+      <ol id="pops"></ol>
+      <canvas id="wave" width="800" height="220"></canvas>
+      <div style="font-size:13px;color:var(--muted)" id="waveLbl">The last pop's waveform appears here. The amber line is where it was timed.</div>
+    </div>
+
+    <div class="row">
+      <button class="ghost" id="undo">Undo last pop</button>
+      <button class="ghost" id="clear">Clear</button>
+    </div>
+    <button class="ghost" id="swap">Switch role</button>
+  </section>
+</main>
+
+<script src="common.js"></script>
+<script>
+// ─────────────────────────────────────────────────────────────
+// Balloon-pop timer (Workshop 6 prototype, 2026-11-17).
+//
+// Each phone times the gap between two pops on its OWN audio clock, to the
+// sample (1/48000 s). No clock is ever shared between phones:
+//   phone 1 (by the balloons) hears the gap as   T
+//   phone 2 (walked d away)   hears the gap as   T + d/c
+// so d/c = (gap on phone 2) − (gap on phone 1). Pop 1 is heard by both up close.
+//
+// URL: phone.html?room=ABCD   streams pops to viewer.html?room=ABCD (optional)
+//      &role=1|2              skip the role screen
+//      &hold=1.0              seconds ignored after a pop (echoes), default 1.0
+//      &sim=1 [&delay=87]     fake microphone: two pops 5 s apart, phone 2's second one late by `delay` ms
+// ─────────────────────────────────────────────────────────────
+const params = new URLSearchParams(location.search);
+const ROOM = (params.get("room") || "").toUpperCase();
+const SIM = params.has("sim");
+const SIM_DELAY_MS = +(params.get("delay") || 87.2);
+const HOLD_S = +(params.get("hold") || 1.0);
+const PRE_MS = 10, POST_MS = 40;                     // waveform kept around each pop
+const me = { id: "p-" + randomId(), role: "phone" };
+const $ = (id) => document.getElementById(id);
+
+let role = params.get("role") === "1" || params.get("role") === "2" ? params.get("role") : null;
+let ctx = null, node = null, sr = 48000, conn = null, wakeLock = null;
+let pops = [];               // {id, t, peak, snip, trig}
+let thr = 0.25;              // fraction of full scale
+let popSeq = 0;
+
+// threshold slider is logarithmic, 0.01 … 1.0 of full scale
+const s2thr = (s) => 0.01 * Math.pow(100, s / 100);
+const thr2s = (v) => Math.round(100 * Math.log(v / 0.01) / Math.log(100));
+try { const saved = +localStorage.getItem("pop-thr"); if (saved > 0) thr = saved; } catch {}
+
+// ── tags ───────────────────────────────────────────────────────
+function tags() {
+  const t = [];
+  if (role) t.push(`<span class="tag">Phone ${role}</span>`);
+  if (ROOM) t.push(`<span class="tag ${conn ? "ok" : "warn"}">${conn ? "Connected to " + ROOM : "Room " + ROOM + " · not connected"}</span>`);
+  else t.push(`<span class="tag">Standalone · no laptop</span>`);
+  if (SIM) t.push(`<span class="tag warn">Simulated microphone</span>`);
+  if (ctx) t.push(`<span class="tag">${sr} Hz</span>`);
+  $("tags").innerHTML = t.join("");
+}
+
+// ── role ───────────────────────────────────────────────────────
+function setRole(r) {
+  role = r;
+  $("pickRole").hidden = true;
+  if (!ctx) { $("pickStart").hidden = false; }
+  $("roleLine").textContent = r === "1"
+    ? "Phone 1 stays beside the balloons for both pops."
+    : "Phone 2 hears pop 1 up close, then walks a measured distance away before pop 2.";
+  tags(); sendState();
+}
+document.querySelectorAll("button.role").forEach((b) => b.onclick = () => setRole(b.dataset.role));
+$("swap").onclick = () => setRole(role === "1" ? "2" : "1");
+if (role) setRole(role);
+
+// ── the detector: runs on the audio thread, counts samples ────
+const WORKLET = `
+class PopDetector extends AudioWorkletProcessor {
+  constructor(o) {
+    super();
+    const p = o.processorOptions;
+    this.thr = p.thr; this.hold = Math.round(p.hold * sampleRate);
+    this.pre = Math.round(p.preMs / 1000 * sampleRate); this.post = Math.round(p.postMs / 1000 * sampleRate);
+    this.ring = new Float32Array(this.pre); this.ri = 0;
+    this.cap = null; this.quietUntil = 0; this.peak = 0; this.lastMeter = 0;
+    this.port.onmessage = (e) => { if (e.data.thr) this.thr = e.data.thr; };
+  }
+  process(inputs, outputs) {
+    const x = inputs[0] && inputs[0][0];
+    if (!x) return true;
+    for (let i = 0; i < x.length; i++) {
+      const v = x[i], a = v < 0 ? -v : v, f = currentFrame + i;
+      if (a > this.peak) this.peak = a;
+      if (this.cap) {
+        this.cap.buf[this.cap.n++] = v;
+        if (this.cap.n === this.cap.buf.length) {
+          this.port.postMessage({ type: "pop", trig: this.cap.trig, start: this.cap.start, buf: this.cap.buf }, [this.cap.buf.buffer]);
+          this.cap = null;
+        }
+      } else if (a >= this.thr && f >= this.quietUntil) {
+        const buf = new Float32Array(this.pre + this.post);
+        for (let k = 0; k < this.pre; k++) buf[k] = this.ring[(this.ri + k) % this.pre];
+        this.cap = { buf, n: this.pre, trig: f, start: f - this.pre };
+        this.cap.buf[this.cap.n++] = v;
+        this.quietUntil = f + this.hold;
+      }
+      this.ring[this.ri] = v; this.ri = (this.ri + 1) % this.pre;
+    }
+    if (currentFrame - this.lastMeter > sampleRate / 20) {
+      this.port.postMessage({ type: "level", peak: this.peak, frame: currentFrame });
+      this.peak = 0; this.lastMeter = currentFrame;
+    }
+    return true;
+  }
+}
+registerProcessor("pop-detector", PopDetector);`;
+
+// Onset, refined from the saved waveform: the first sample that rises clearly out of the
+// pre-pop noise AND reaches a fifth of the pop's early peak. Usually a few samples before
+// the trigger crossing; never after it.
+function refineOnset(buf, pre) {
+  let ss = 0; for (let k = 0; k < pre; k++) ss += buf[k] * buf[k];
+  const noise = Math.sqrt(ss / pre);
+  const early = Math.round(0.003 * sr);               // first 3 ms after the trigger
+  let pk = 0; for (let k = pre; k < Math.min(buf.length, pre + early); k++) pk = Math.max(pk, Math.abs(buf[k]));
+  const lvl = Math.max(6 * noise, 0.2 * pk);
+  for (let k = Math.max(0, pre - Math.round(0.005 * sr)); k <= pre; k++) if (Math.abs(buf[k]) >= lvl) return k;
+  return pre;
+}
+
+// ── start ──────────────────────────────────────────────────────
+$("go").onclick = async () => {
+  $("go").disabled = true; $("go").textContent = "Starting…";
+  try {
+    ctx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: "interactive" });
+    await ctx.resume();
+    sr = ctx.sampleRate;
+    const url = URL.createObjectURL(new Blob([WORKLET], { type: "application/javascript" }));
+    await ctx.audioWorklet.addModule(url);
+    node = new AudioWorkletNode(ctx, "pop-detector", { processorOptions: { thr, hold: HOLD_S, preMs: PRE_MS, postMs: POST_MS } });
+    let src;
+    if (SIM) src = simSource();
+    else {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: {
+        echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 } });
+      src = ctx.createMediaStreamSource(stream);
+    }
+    const mute = ctx.createGain(); mute.gain.value = 0;      // pulled to the speakers, silently, so it runs
+    src.connect(node); node.connect(mute); mute.connect(ctx.destination);
+    node.port.onmessage = onWorklet;
+  } catch (err) {
+    $("go").disabled = false; $("go").textContent = "Try again";
+    $("roleLine").textContent = "Couldn't start the microphone: " + (err.message || err) +
+      ". Allow microphone access when asked; this page needs Safari or Chrome over https.";
+    return;
+  }
+  $("pickStart").hidden = true; $("live").hidden = false;
+  $("thrSlider").value = thr2s(thr); showThr();
+  keepAwake(); tags(); render();
+  if (ROOM) connect();
+};
+
+function simSource() {
+  // 12 s of faint room noise with two pops: 2.000 s and 7.000 s, phone 2's second pop late by `delay`.
+  const n = Math.round(12 * sr), b = ctx.createBuffer(1, n, sr), d = b.getChannelData(0);
+  for (let i = 0; i < n; i++) d[i] = (Math.random() - 0.5) * 0.01;
+  const pop = (t0, amp) => {
+    const i0 = Math.round(t0 * sr);
+    for (let k = 0; k < 0.08 * sr && i0 + k < n; k++) d[i0 + k] += amp * (Math.random() * 2 - 1) * Math.exp(-k / (0.006 * sr));
+    for (let k = 1; k < 4; k++) {            // hallway echoes, quieter, within the hold-off
+      const ie = i0 + Math.round((0.05 + 0.11 * k) * sr);
+      for (let j = 0; j < 0.03 * sr && ie + j < n; j++) d[ie + j] += amp * 0.3 / k * (Math.random() * 2 - 1) * Math.exp(-j / (0.004 * sr));
+    }
+  };
+  pop(2.0, 0.9);
+  pop(7.0 + (role === "2" ? SIM_DELAY_MS / 1000 : 0), role === "2" ? 0.35 : 0.9);
+  const s = ctx.createBufferSource(); s.buffer = b; s.start(ctx.currentTime + 0.05);
+  return s;
+}
+
+// ── worklet messages ──────────────────────────────────────────
+let holdPk = 0, holdAt = 0;
+function onWorklet(e) {
+  const m = e.data;
+  if (m.type === "level") {
+    const now = performance.now();
+    if (m.peak > holdPk || now - holdAt > 1500) { holdPk = m.peak; holdAt = now; }
+    $("bar").style.width = pct(m.peak) + "%";
+    $("bar").style.background = m.peak >= thr ? "var(--rec)" : "var(--ok)";
+    $("hold").style.left = pct(holdPk) + "%";
+  } else if (m.type === "pop") {
+    const pre = m.trig - m.start;
+    const k = refineOnset(m.buf, pre);
+    let pk = 0; for (const v of m.buf) pk = Math.max(pk, Math.abs(v));
+    const p = { id: ++popSeq, t: (m.start + k) / sr, trig: m.trig / sr, peak: pk, snip: m.buf, onsetIdx: k, pre };
+    pops.push(p);
+    render(true);
+    if (conn) conn.send({ type: "pop", phone: me.id, role, sr, pop: packPop(p) });
+    sendState();
+  }
+}
+// meter is logarithmic too, so quiet far-away pops are visible: 0.003 → 0 %, 1.0 → 100 %
+const pct = (v) => Math.max(0, Math.min(100, 100 * Math.log(Math.max(v, 0.003) / 0.003) / Math.log(1 / 0.003)));
+function showThr() {
+  $("thr").style.left = pct(thr) + "%";
+  $("thrVal").textContent = "trigger " + thr.toFixed(thr < 0.1 ? 3 : 2);
+}
+$("thrSlider").oninput = (e) => {
+  thr = s2thr(+e.target.value); showThr();
+  node && node.port.postMessage({ thr });
+  try { localStorage.setItem("pop-thr", thr); } catch {}
+};
+
+// ── display ───────────────────────────────────────────────────
+function render(flash) {
+  const ol = $("pops");
+  ol.innerHTML = pops.map((p, i) => {
+    const gap = i ? `  (+${(p.t - pops[i - 1].t).toFixed(4)} s)` : "";
+    return `<li>${p.t.toFixed(4)} s${gap}</li>`;
+  }).join("");
+  if (pops.length >= 2) {
+    const g = pops[pops.length - 1].t - pops[pops.length - 2].t;
+    $("interval").innerHTML = g.toFixed(4) + ' <span class="unit">s</span>';
+  } else $("interval").innerHTML = pops.length ? '<span class="unit">Waiting for pop 2…</span>' : '<span class="unit">Waiting for pop 1…</span>';
+  drawWave(pops[pops.length - 1]);
+  if (flash) { const c = $("resultCard"); c.classList.remove("flash"); void c.offsetWidth; c.classList.add("flash"); }
+}
+function drawWave(p) {
+  const cv = $("wave"), g = cv.getContext("2d"), W = cv.width, H = cv.height;
+  g.clearRect(0, 0, W, H);
+  const fg = getComputedStyle(document.body).color;
+  g.strokeStyle = fg; g.globalAlpha = .25; g.beginPath(); g.moveTo(0, H / 2); g.lineTo(W, H / 2); g.stroke(); g.globalAlpha = 1;
+  if (!p) return;
+  const b = p.snip; let pk = 1e-6; for (const v of b) pk = Math.max(pk, Math.abs(v));
+  g.strokeStyle = "#5e81b5"; g.lineWidth = 2; g.beginPath();
+  for (let i = 0; i < b.length; i++) { const x = i / (b.length - 1) * W, y = H / 2 - b[i] / pk * (H / 2 - 6); i ? g.lineTo(x, y) : g.moveTo(x, y); }
+  g.stroke();
+  const xo = p.onsetIdx / (b.length - 1) * W;
+  g.strokeStyle = "#e19c24"; g.lineWidth = 3; g.beginPath(); g.moveTo(xo, 0); g.lineTo(xo, H); g.stroke();
+  $("waveLbl").textContent = `Pop ${pops.length}: ${PRE_MS} ms before to ${POST_MS} ms after · peak ${p.peak.toFixed(2)} of full scale` + (p.peak > 0.98 ? " (clipped, fine)" : "");
+}
+$("undo").onclick = () => { pops.pop(); render(); sendState(); };
+$("clear").onclick = () => { pops = []; render(); sendState(); };
+
+// ── room (optional) ───────────────────────────────────────────
+function packPop(p) {
+  // the waveform, to 3 decimals, for the laptop's plot
+  return { id: p.id, t: p.t, peak: +p.peak.toFixed(3), onsetIdx: p.onsetIdx, pre: p.pre,
+           snip: Array.from(p.snip, (v) => Math.round(v * 1000) / 1000) };
+}
+function sendState() {
+  if (!conn) return;
+  conn.send({ type: "state", phone: me.id, role, sr, pops: pops.map((p) => ({ id: p.id, t: p.t, peak: +p.peak.toFixed(3) })) });
+}
+async function connect() {
+  try {
+    conn = await openRoom(ROOM, me, {
+      onMessage: (m) => {
+        if (m.type === "whois") { sendState(); pops.forEach((p) => conn.send({ type: "pop", phone: me.id, role, sr, pop: packPop(p) })); }
+        else if (m.type === "clear" && (!m.phone || m.phone === me.id)) { pops = []; render(); sendState(); }
+      },
+      onPeers: () => {},
+    });
+    tags(); sendState();
+  } catch (err) { conn = null; tags(); setTimeout(connect, 3000); }
+}
+
+async function keepAwake() { try { if ("wakeLock" in navigator) wakeLock = await navigator.wakeLock.request("screen"); } catch {} }
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") { keepAwake(); ctx && ctx.resume(); }
+});
+tags();
+</script>
+</body>
+</html>

@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pop Timer · Viewer</title>
+<style>
+  :root {
+    --bg: #f7f7f5; --fg: #1a1a1a; --muted: #6b6b6b; --line: #e2e2de; --card: #ffffff;
+    --blue: #5e81b5; --amber: #e19c24; --green: #8fb032; --red: #eb6235; --ok: #1a7f37;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #111213; --fg: #ececec; --muted: #9a9a9a; --line: #2a2b2d; --card: #1a1b1d; --ok: #3fb950; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+    font: 16px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 20px 16px 40px; }
+  main { max-width: 1100px; margin: 0 auto; }
+  h1 { font-size: 26px; margin: 0 0 2px; letter-spacing: -.01em; }
+  .sub { color: var(--muted); margin: 0 0 16px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px; min-width: 0; }
+  .lbl { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+  .qr { background: #fff; padding: 10px; border-radius: 10px; line-height: 0; display: inline-block; }
+  .qr img { width: 180px; height: auto; image-rendering: pixelated; }
+  .url { font: 13px ui-monospace, Menlo, monospace; word-break: break-all; color: var(--muted); margin-top: 6px; }
+  .code { font: 700 34px/1 ui-monospace, Menlo, monospace; letter-spacing: .12em; }
+  .status { font-size: 14px; }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--line); margin-right: 6px; vertical-align: 1px; }
+  .dot.on { background: var(--ok); }
+  ol { margin: 6px 0 0; padding-left: 22px; font: 14px/1.6 ui-monospace, Menlo, monospace; font-variant-numeric: tabular-nums; }
+  .num { font: 650 30px/1.15 ui-monospace, Menlo, monospace; font-variant-numeric: tabular-nums; }
+  .num .u { font-size: 15px; color: var(--muted); font-weight: 400; }
+  canvas { width: 100%; height: 140px; display: block; margin-top: 8px; }
+  label { display: block; font-size: 14px; color: var(--muted); margin-top: 8px; }
+  input[type=number] { font: 600 20px ui-monospace, Menlo, monospace; width: 140px; padding: 6px 8px; border-radius: 8px;
+    border: 1px solid var(--line); background: var(--bg); color: var(--fg); }
+  button { font: 600 15px inherit; font-family: inherit; padding: 10px 14px; border-radius: 10px; border: 1px solid var(--line);
+    background: var(--card); color: var(--fg); cursor: pointer; margin: 10px 8px 0 0; }
+  button.primary { background: var(--blue); color: #fff; border-color: var(--blue); }
+  .math { font: 15px/1.7 ui-monospace, Menlo, monospace; }
+  table { border-collapse: collapse; width: 100%; font: 14px ui-monospace, Menlo, monospace; font-variant-numeric: tabular-nums; margin-top: 6px; }
+  th, td { text-align: right; padding: 4px 8px; border-bottom: 1px solid var(--line); }
+  th { font-family: -apple-system, sans-serif; font-weight: 600; color: var(--muted); font-size: 12px; text-transform: uppercase; }
+  .wide { grid-column: 1 / -1; }
+  .muted { color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Pop Timer · Viewer</h1>
+  <p class="sub">Two phones, two balloons, one hallway. Each phone times the gap between the pops on its own clock; the far phone's gap is longer by the time sound takes to cover the distance.</p>
+
+  <div class="grid">
+    <div class="card">
+      <div class="lbl">Join with both phones</div>
+      <div style="display:flex;gap:16px;align-items:center;margin-top:8px;flex-wrap:wrap">
+        <div class="qr" id="qr"></div>
+        <div><div class="lbl">Room</div><div class="code" id="room"></div></div>
+      </div>
+      <div class="url" id="url"></div>
+    </div>
+
+    <div class="card">
+      <div class="lbl">Setup</div>
+      <label>Distance from balloon 2 to phone 2 (m)
+        <br><input type="number" id="dist" step="0.01" min="0" value="30.00"></label>
+      <label>Air temperature (°C), for the prediction
+        <br><input type="number" id="temp" step="0.5" value="21"></label>
+      <div class="math muted" id="pred" style="margin-top:8px"></div>
+    </div>
+
+    <div class="card" id="card1"></div>
+    <div class="card" id="card2"></div>
+
+    <div class="card wide">
+      <div class="lbl">Result</div>
+      <div class="math" id="calc"></div>
+      <div class="num" id="c" style="margin-top:6px">—</div>
+      <button class="primary" id="save">Save trial</button>
+      <button id="clear">Clear both phones</button>
+      <table id="trials"><thead><tr><th>#</th><th>d (m)</th><th>gap 1 (s)</th><th>gap 2 (s)</th><th>Δ (ms)</th><th>c (m/s)</th><th>predicted</th></tr></thead><tbody></tbody></table>
+    </div>
+  </div>
+</main>
+
+<script src="vendor/qrcode.js"></script>
+<script src="common.js"></script>
+<script>
+const params = new URLSearchParams(location.search);
+const L = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+let ROOM = (params.get("room") || "").toUpperCase();
+if (!ROOM) { ROOM = Array.from(crypto.getRandomValues(new Uint8Array(4)), (b) => L[b % L.length]).join("");
+  const u = new URL(location.href); u.searchParams.set("room", ROOM); history.replaceState(null, "", u); }
+const $ = (id) => document.getElementById(id);
+const me = { id: "v-" + randomId(), role: "analyzer" };
+
+const phoneURL = new URL("phone.html", location.href);
+phoneURL.search = ""; phoneURL.searchParams.set("room", ROOM);
+if (LOCAL_MODE) phoneURL.searchParams.set("local", "1");
+$("room").textContent = ROOM;
+$("url").innerHTML = `<a href="${phoneURL.href}" target="_blank">${phoneURL.href}</a>`;
+try { const q = qrcode(0, "M"); q.addData(phoneURL.href); q.make(); $("qr").innerHTML = q.createImgTag(5, 0, "QR code for the phone page"); }
+catch { $("qr").hidden = true; }
+
+// phones by role: { id, sr, pops: [{id,t,peak}], snips: {id: {snip,onsetIdx}}, seen }
+const phones = { "1": null, "2": null };
+let present = new Set(), conn = null;
+
+function byId(id) { return ["1", "2"].map((r) => phones[r]).find((p) => p && p.id === id); }
+function onMessage(m) {
+  if (m.type !== "state" && m.type !== "pop") return;
+  if (!m.role) return;
+  // a phone that switched roles leaves its old slot
+  for (const r of ["1", "2"]) if (phones[r] && phones[r].id === m.phone && r !== m.role) { phones[m.role] = phones[r]; phones[r] = null; }
+  let p = phones[m.role];
+  if (!p || p.id !== m.phone) p = phones[m.role] = { id: m.phone, sr: m.sr, pops: [], snips: {} };
+  p.sr = m.sr;
+  if (m.type === "state") p.pops = m.pops;
+  else { p.snips[m.pop.id] = m.pop; if (!p.pops.some((q) => q.id === m.pop.id)) p.pops.push({ id: m.pop.id, t: m.pop.t, peak: m.pop.peak }); }
+  render();
+}
+
+function gap(p) {
+  if (!p || p.pops.length < 2) return null;
+  const n = p.pops.length; return p.pops[n - 1].t - p.pops[n - 2].t;
+}
+function predicted() { const T = +$("temp").value + 273.15; return Math.sqrt(1.4 * 287 * T); }
+
+function phoneCard(r) {
+  const p = phones[r], on = p && present.has(p.id);
+  const title = r === "1" ? "Phone 1 · stays by the balloons" : "Phone 2 · walks away";
+  if (!p) return `<div class="lbl">${title}</div><div class="status" style="margin-top:6px"><span class="dot"></span>not joined yet</div>`;
+  const g = gap(p);
+  const list = p.pops.map((q, i) => `<li>${q.t.toFixed(4)} s${i ? `  (+${(q.t - p.pops[i - 1].t).toFixed(4)})` : ""}  <span class="muted">peak ${q.peak.toFixed(2)}</span></li>`).join("");
+  return `<div class="lbl">${title}</div>
+    <div class="status" style="margin-top:6px"><span class="dot ${on ? "on" : ""}"></span>${on ? "connected" : "offline"} · ${p.sr} Hz</div>
+    <div class="num" style="margin-top:8px">${g == null ? '<span class="u">needs two pops</span>' : g.toFixed(4) + ' <span class="u">s between pops</span>'}</div>
+    <ol>${list || '<span class="muted">no pops yet</span>'}</ol>
+    <canvas id="cv${r}" width="900" height="260"></canvas>
+    <div class="muted" style="font-size:13px">Last two pops, ${10} ms before to ${40} ms after each; amber is where each was timed.</div>`;
+}
+function drawSnips(r) {
+  const p = phones[r], cv = $("cv" + r); if (!p || !cv) return;
+  const g = cv.getContext("2d"), W = cv.width, H = cv.height; g.clearRect(0, 0, W, H);
+  const last = p.pops.slice(-2).map((q) => p.snips[q.id]).filter(Boolean);
+  const cols = ["#5e81b5", "#8fb032"];
+  last.forEach((s, j) => {
+    const top = j * H / 2, h = H / 2, b = s.snip; let pk = 1e-6; for (const v of b) pk = Math.max(pk, Math.abs(v));
+    g.strokeStyle = cols[j]; g.lineWidth = 2; g.beginPath();
+    for (let i = 0; i < b.length; i++) { const x = i / (b.length - 1) * W, y = top + h / 2 - b[i] / pk * (h / 2 - 4); i ? g.lineTo(x, y) : g.moveTo(x, y); }
+    g.stroke();
+    const xo = s.onsetIdx / (b.length - 1) * W; g.strokeStyle = "#e19c24"; g.lineWidth = 3;
+    g.beginPath(); g.moveTo(xo, top + 2); g.lineTo(xo, top + h - 2); g.stroke();
+  });
+}
+
+function render() {
+  for (const r of ["1", "2"]) { $("card" + r).innerHTML = phoneCard(r); drawSnips(r); }
+  const g1 = gap(phones["1"]), g2 = gap(phones["2"]), d = +$("dist").value;
+  $("pred").textContent = `c = √(γRT) = √(1.4 · 287 · ${(+$("temp").value + 273.15).toFixed(2)}) = ${predicted().toFixed(1)} m/s → ${(d / predicted() * 1000).toFixed(1)} ms over ${d} m`;
+  if (g1 == null || g2 == null) { $("calc").textContent = "Waiting for two pops on each phone."; $("c").textContent = "—"; return null; }
+  const dt = g2 - g1, c = d / dt;
+  $("calc").innerHTML = `Δt = gap 2 − gap 1 = ${g2.toFixed(4)} − ${g1.toFixed(4)} = <b>${(dt * 1000).toFixed(2)} ms</b><br>c = d / Δt = ${d} m / ${(dt * 1000).toFixed(2)} ms`;
+  const off = (c / predicted() - 1) * 100;
+  $("c").innerHTML = dt > 0 ? `${c.toFixed(1)} <span class="u">m/s · ${off >= 0 ? "+" : ""}${off.toFixed(1)} % from √(γRT)</span>`
+                            : `<span class="u">Δt isn't positive: check which phone is which, or a missed or extra pop.</span>`;
+  return { d, g1, g2, dt, c };
+}
+const trials = [];
+$("save").onclick = () => {
+  const r = render(); if (!r || r.dt <= 0) return;
+  trials.push({ ...r, pred: predicted() });
+  $("trials").querySelector("tbody").innerHTML = trials.map((t, i) =>
+    `<tr><td>${i + 1}</td><td>${t.d.toFixed(2)}</td><td>${t.g1.toFixed(4)}</td><td>${t.g2.toFixed(4)}</td><td>${(t.dt * 1000).toFixed(2)}</td><td>${t.c.toFixed(1)}</td><td>${t.pred.toFixed(1)}</td></tr>`).join("");
+};
+$("clear").onclick = () => { conn && conn.send({ type: "clear" }); for (const r of ["1", "2"]) if (phones[r]) { phones[r].pops = []; phones[r].snips = {}; } render(); };
+$("dist").oninput = render; $("temp").oninput = render;
+
+(async () => {
+  render();
+  try {
+    conn = await openRoom(ROOM, me, {
+      onMessage,
+      onPeers: (list) => { present = new Set(list.map((p) => p.id)); render(); },
+    });
+    conn.send({ type: "whois" });
+  } catch (err) { $("calc").textContent = "Couldn't connect: " + err.message; }
+})();
+</script>
+</body>
+</html>
