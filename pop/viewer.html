@@ -75,8 +75,11 @@
 
     <div class="card wide">
       <div class="lbl">Result</div>
-      <div class="math" id="calc"></div>
+      <button class="primary" id="trialStart">Start trial on both phones</button>
+      <button id="trialStop">End trial on both phones</button>
+      <div class="math" id="calc" style="margin-top:10px"></div>
       <div class="num" id="c" style="margin-top:6px">—</div>
+      <div class="math muted" id="calcLive" style="margin-top:6px"></div>
       <button class="primary" id="save">Save trial</button>
       <button id="clear">Clear both phones</button>
       <table id="trials"><thead><tr><th>#</th><th>d (m)</th><th>gap 1 (s)</th><th>gap 2 (s)</th><th>Δ (ms)</th><th>c (m/s)</th><th>predicted</th></tr></thead><tbody></tbody></table>
@@ -116,15 +119,14 @@ function onMessage(m) {
   let p = phones[m.role];
   if (!p || p.id !== m.phone) p = phones[m.role] = { id: m.phone, sr: m.sr, pops: [], snips: {} };
   p.sr = m.sr;
-  if (m.type === "state") p.pops = m.pops;
+  if (m.type === "state") { p.pops = m.pops; p.rec = m.rec || []; p.recInfo = m.recInfo; p.recording = m.recording; p.drops = m.drops || 0; p.version = m.version; }
   else { p.snips[m.pop.id] = m.pop; if (!p.pops.some((q) => q.id === m.pop.id)) p.pops.push({ id: m.pop.id, t: m.pop.t, peak: m.pop.peak }); }
   render();
 }
 
-function gap(p) {
-  if (!p || p.pops.length < 2) return null;
-  const n = p.pops.length; return p.pops[n - 1].t - p.pops[n - 2].t;
-}
+function gapOf(list) { if (!list || list.length < 2) return null; const n = list.length; return list[n - 1].t - list[n - 2].t; }
+const gap = (p) => p ? gapOf(p.pops) : null;          // live
+const recGap = (p) => p ? gapOf(p.rec) : null;        // recorded trial
 function predicted() { const T = +$("temp").value + 273.15; return Math.sqrt(1.4 * 287 * T); }
 
 function phoneCard(r) {
@@ -133,9 +135,17 @@ function phoneCard(r) {
   if (!p) return `<div class="lbl">${title}</div><div class="status" style="margin-top:6px"><span class="dot"></span>not joined yet</div>`;
   const g = gap(p);
   const list = p.pops.map((q, i) => `<li>${q.t.toFixed(4)} s${i ? `  (+${(q.t - p.pops[i - 1].t).toFixed(4)})` : ""}  <span class="muted">peak ${q.peak.toFixed(2)}</span></li>`).join("");
+  const rg = recGap(p);
+  const recList = (p.rec || []).map((q, i) => `<li>${q.t.toFixed(4)} s${i ? `  (+${(q.t - p.rec[i - 1].t).toFixed(4)})` : ""}</li>`).join("");
+  const recLine = p.recording ? '<span style="color:var(--red)">● recording</span>'
+    : p.recInfo ? `${p.rec.length} pops in ${p.recInfo.len.toFixed(2)} s (${p.recInfo.mime || "default"})` : "no trial yet";
   return `<div class="lbl">${title}</div>
-    <div class="status" style="margin-top:6px"><span class="dot ${on ? "on" : ""}"></span>${on ? "connected" : "offline"} · ${p.sr} Hz</div>
-    <div class="num" style="margin-top:8px">${g == null ? '<span class="u">needs two pops</span>' : g.toFixed(4) + ' <span class="u">s between pops</span>'}</div>
+    <div class="status" style="margin-top:6px"><span class="dot ${on ? "on" : ""}"></span>${on ? "connected" : "offline"} · ${p.sr} Hz · ${p.version || "v1 (reload the phone page)"}${p.drops ? ` · <b>${p.drops}</b> live dropouts` : ""}</div>
+    <div class="lbl" style="margin-top:12px">Recorded trial · ${recLine}</div>
+    <div class="num" style="margin-top:4px">${rg == null ? '<span class="u">needs two pops</span>' : rg.toFixed(4) + ' <span class="u">s between the last two</span>'}</div>
+    <ol>${recList}</ol>
+    <div class="lbl" style="margin-top:12px">Live</div>
+    <div class="num" style="margin-top:4px;font-size:22px">${g == null ? '<span class="u">needs two pops</span>' : g.toFixed(4) + ' <span class="u">s</span>'}</div>
     <ol>${list || '<span class="muted">no pops yet</span>'}</ol>
     <canvas id="cv${r}" width="900" height="260"></canvas>
     <div class="muted" style="font-size:13px">Last two pops, ${10} ms before to ${40} ms after each; amber is where each was timed.</div>`;
@@ -157,11 +167,16 @@ function drawSnips(r) {
 
 function render() {
   for (const r of ["1", "2"]) { $("card" + r).innerHTML = phoneCard(r); drawSnips(r); }
-  const g1 = gap(phones["1"]), g2 = gap(phones["2"]), d = +$("dist").value;
+  const d = +$("dist").value;
   $("pred").textContent = `c = √(γRT) = √(1.4 · 287 · ${(+$("temp").value + 273.15).toFixed(2)}) = ${predicted().toFixed(1)} m/s → ${(d / predicted() * 1000).toFixed(1)} ms over ${d} m`;
+  const l1 = gap(phones["1"]), l2 = gap(phones["2"]);
+  $("calcLive").textContent = l1 != null && l2 != null ? `Live timer, for comparison: Δt = ${((l2 - l1) * 1000).toFixed(2)} ms` : "";
+  // the recorded trial is the measurement; fall back to the live timer only if no trial has two pops on both phones
+  let g1 = recGap(phones["1"]), g2 = recGap(phones["2"]), src = "recorded trial";
+  if (g1 == null || g2 == null) { g1 = l1; g2 = l2; src = "live timer (no recorded trial yet)"; }
   if (g1 == null || g2 == null) { $("calc").textContent = "Waiting for two pops on each phone."; $("c").textContent = "—"; return null; }
   const dt = g2 - g1, c = d / dt;
-  $("calc").innerHTML = `Δt = gap 2 − gap 1 = ${g2.toFixed(4)} − ${g1.toFixed(4)} = <b>${(dt * 1000).toFixed(2)} ms</b><br>c = d / Δt = ${d} m / ${(dt * 1000).toFixed(2)} ms`;
+  $("calc").innerHTML = `From the ${src}: Δt = gap 2 − gap 1 = ${g2.toFixed(4)} − ${g1.toFixed(4)} = <b>${(dt * 1000).toFixed(2)} ms</b><br>c = d / Δt = ${d} m / ${(dt * 1000).toFixed(2)} ms`;
   const off = (c / predicted() - 1) * 100;
   $("c").innerHTML = dt > 0 ? `${c.toFixed(1)} <span class="u">m/s · ${off >= 0 ? "+" : ""}${off.toFixed(1)} % from √(γRT)</span>`
                             : `<span class="u">Δt isn't positive: check which phone is which, or a missed or extra pop.</span>`;
@@ -176,6 +191,8 @@ $("save").onclick = () => {
 };
 $("clear").onclick = () => { conn && conn.send({ type: "clear" }); for (const r of ["1", "2"]) if (phones[r]) { phones[r].pops = []; phones[r].snips = {}; } render(); };
 $("dist").oninput = render; $("temp").oninput = render;
+$("trialStart").onclick = () => conn && conn.send({ type: "trial", action: "start" });
+$("trialStop").onclick = () => conn && conn.send({ type: "trial", action: "stop" });
 
 (async () => {
   render();
