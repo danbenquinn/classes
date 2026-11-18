@@ -870,14 +870,20 @@
     } else { hideAttrib(); }
     slidecap.style.display = 'none';
     const list = d.stack.split(',').map(s => s.trim()).filter(Boolean);
-    const cover = d.cover !== undefined, sync = d.sync !== undefined, loop = d.loop !== undefined, autoplay = d.autoplay !== undefined;
+    // data-stackstep (Class V's click-split pairs, 2026-11-18): two full-width, half-height tiles, each paused
+    // on its first frame; each → starts the next tile and leaves the ones already running alone, so a top
+    // clip that has not finished plays out while the bottom one starts. Each plays once and holds its last
+    // frame; once every tile has started, → advances. Tiles are object-fit:contain (cut them 1920×540).
+    const step = d.stackstep !== undefined;
+    const cover = d.cover !== undefined && !step, sync = d.sync !== undefined && !step, loop = d.loop !== undefined && !step, autoplay = d.autoplay !== undefined;
     const vraw = parseFloat(d.volume), vol = isNaN(vraw) ? 1 : Math.max(0, Math.min(1, vraw));
     const axes = (d.axes || '').split(',').map(s => s.trim());
     const mk = src => { const v = document.createElement('video'); v.playsInline = true; v.preload = 'auto';
       v.muted = (d.mute !== undefined) || vol === 0; v.volume = vol; v.loop = loop; v.src = src; return v; };
-    stackwrap.innerHTML = ''; stackwrap.classList.toggle('cover', cover); stackwrap.style.display = cover ? 'flex' : 'block';
+    stackwrap.innerHTML = ''; stackwrap.classList.toggle('cover', cover); stackwrap.classList.toggle('step', step);
+    stackwrap.style.display = (cover || step) ? 'flex' : 'block';
     let els, stripEls = [], axisEls = [], animEl = null;
-    if(cover){
+    if(cover || step){
       els = list.map(src => { const v = mk(src); stackwrap.appendChild(v); return v; });
     } else {
       const anim = mk(list[0]); anim.className = 'stack-anim';
@@ -917,7 +923,14 @@
     // restart); → while playing jumps straight to the next stop. After the last stop it plays out, and
     // the next → advances. A mouse click on a held stack resumes rather than restarting.
     const pauses = (d.pauses || '').split(',').map(x => parseFloat(x)).filter(x => !isNaN(x)).sort((a, b) => a - b);
-    cur._stack = { els, stripEls, axisEls, animEl, sync, loop, started: false, frozen: false, pauses, pi: 0, held: false };
+    cur._stack = { els, stripEls, axisEls, animEl, sync, loop, step, si: 0, started: false, frozen: false, pauses, pi: 0, held: false };
+    if(step){
+      // A paused <video> paints nothing until it has decoded a frame AND been asked for one (see showQuad).
+      els.forEach(v => { v.pause(); const paint = () => { if(v.paused){ try{ v.currentTime = 0.001; }catch(e){} } };
+        if(v.readyState >= 2) paint(); else v.addEventListener('loadeddata', paint, { once:true }); });
+      if(autoplay){ els[0].play().catch(() => {}); cur._stack.si = 1; cur._stack.started = true; }
+      return;
+    }
     if(autoplay || loop){ els.forEach(v => v.play().catch(() => {})); cur._stack.started = true; if(sync) startStackSync(cur._stack); }
     layoutStack(cur);
   }
@@ -943,7 +956,7 @@
   function resetStack(cur){
     const st = cur._stack; if(!st) return;
     if(stackRaf){ cancelAnimationFrame(stackRaf); stackRaf = null; }
-    st.started = false; st.frozen = false; st.els.forEach(v => { v.pause(); try{ v.currentTime = 0; }catch(e){} });
+    st.started = false; st.frozen = false; st.si = 0; st.els.forEach(v => { v.pause(); try{ v.currentTime = 0; }catch(e){} });
   }
   function startStackSync(st){                                 // master = clip 0; nudge any strip that drifts > ~60 ms
     if(stackRaf) cancelAnimationFrame(stackRaf);
@@ -968,6 +981,11 @@
     const curS = Reveal.getCurrentSlide();
     if(curS && curS._stack){                                   // stack slide: click toggles all tiles together
       const st = curS._stack;
+      if(st.step){                                             // stepped stack: pause/resume only the tiles already started
+        const live = st.els.slice(0, st.si).filter(v => !v.ended);
+        if(live.some(v => !v.paused)) live.forEach(v => v.pause()); else live.forEach(v => v.play().catch(() => {}));
+        return;
+      }
       if(st.held){ resumeStack(st); return; }
       if(st.els.some(v => !v.paused)) pauseStack(); else playStack(curS);
       return;
@@ -1730,6 +1748,11 @@
     // for that one the seal IS the reveal, and there is something to look at afterwards.
     if(cur && cur.classList.contains('poll') && cur.dataset.revealAt !== undefined && !isClosed(cur)) quietSeal(cur);
     else if(cur && cur.classList.contains('poll') && !isClosed(cur)){ sealPoll(cur); return; }
+    // Stepped stack (data-stackstep): each → starts the next paused tile, leaving the running ones alone; then → advances.
+    if(cur && cur.dataset.stack && cur.dataset.stackstep !== undefined && cur._stack && cur._stack.si < cur._stack.els.length){
+      const st = cur._stack, v = st.els[st.si++]; st.started = true;
+      try{ v.currentTime = 0; }catch(e){} v.play().catch(() => {}); return;
+    }
     // Synced video stack. Loop mode (data-loop): it's already looping; first → freezes on the last frame, next → advances.
     // Play-once mode: first → plays it together, next → advances.
     if(cur && cur.dataset.stack && cur.dataset.sync !== undefined){
@@ -1911,7 +1934,7 @@
     const cur = Reveal.getCurrentSlide();
     if(cur && cur.dataset.exitClass !== undefined){
       exitQuiz.querySelector('.eq-title').textContent = 'Class ' + (cur.dataset.exitClass || '') + ' Exit Quiz';
-      // published copies strip data-exit-pw: the notice shows, the password stays in-class-only
+      // published copies before Class V strip data-exit-pw (notice only); from V on they keep it (publish_deck, 2026-11-13)
       exitQuiz.querySelector('.eq-pw').textContent = cur.dataset.exitPw ? ('Password: ' + cur.dataset.exitPw) : '(password given in class)';
     }
     exitQuiz.style.display = 'none';           // always start hidden; the advance key reveals it

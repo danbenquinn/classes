@@ -283,6 +283,9 @@
   #stackwrap .stack-axis{ position:absolute; pointer-events:none; z-index:2; }
   #stackwrap.cover{ flex-direction:column; align-items:center; justify-content:center; }
   #stackwrap.cover video{ width:100%; height:50%; object-fit:cover; }
+  /* Stepped stack (data-stackstep, Class V): two full-width half-height tiles, letterboxed not cropped. */
+  #stackwrap.step{ flex-direction:column; align-items:center; justify-content:center; }
+  #stackwrap.step video{ width:100%; height:50%; object-fit:contain; }
   #stackwrap.cover video:first-child{ object-position:center 70%; }   /* nudge the sloth up so it doesn't spill off the bottom */
 
   /* Practice slides */
