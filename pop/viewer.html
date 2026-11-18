@@ -119,14 +119,15 @@ function onMessage(m) {
   let p = phones[m.role];
   if (!p || p.id !== m.phone) p = phones[m.role] = { id: m.phone, sr: m.sr, pops: [], snips: {} };
   p.sr = m.sr;
-  if (m.type === "state") { p.pops = m.pops; p.rec = m.rec || []; p.recInfo = m.recInfo; p.recording = m.recording; p.drops = m.drops || 0; p.version = m.version; }
+  if (m.type === "state") { p.pops = m.pops; p.rec = m.rec || []; p.best = m.best || []; p.recInfo = m.recInfo; p.recording = m.recording; p.drops = m.drops || 0; p.version = m.version; }
   else { p.snips[m.pop.id] = m.pop; if (!p.pops.some((q) => q.id === m.pop.id)) p.pops.push({ id: m.pop.id, t: m.pop.t, peak: m.pop.peak }); }
   render();
 }
 
 function gapOf(list) { if (!list || list.length < 2) return null; const n = list.length; return list[n - 1].t - list[n - 2].t; }
 const gap = (p) => p ? gapOf(p.pops) : null;          // live
-const recGap = (p) => p ? gapOf(p.rec) : null;        // recorded trial
+// recorded trial: the phone's combined gap (live where the two agree, recorded where the live timer slipped)
+const recGap = (p) => !p ? null : (p.best && p.best.length ? p.best[p.best.length - 1].gap : gapOf(p.rec));
 function predicted() { const T = +$("temp").value + 273.15; return Math.sqrt(1.4 * 287 * T); }
 
 function phoneCard(r) {
@@ -136,7 +137,12 @@ function phoneCard(r) {
   const g = gap(p);
   const list = p.pops.map((q, i) => `<li>${q.t.toFixed(4)} s${i ? `  (+${(q.t - p.pops[i - 1].t).toFixed(4)})` : ""}  <span class="muted">peak ${q.peak.toFixed(2)}</span></li>`).join("");
   const rg = recGap(p);
-  const recList = (p.rec || []).map((q, i) => `<li>${q.t.toFixed(4)} s${i ? `  (+${(q.t - p.rec[i - 1].t).toFixed(4)})` : ""}</li>`).join("");
+  const recList = (p.rec || []).map((q, i) => {
+    if (!i) return `<li>${q.t.toFixed(4)} s</li>`;
+    const b = p.best && p.best[i - 1], gp = b ? b.gap : q.t - p.rec[i - 1].t;
+    const note = !b || b.src === "live" ? "" : b.slip != null ? `  <span style="color:var(--red)">live slipped ${(b.slip * 1000).toFixed(0)} ms</span>` : "  recorded only";
+    return `<li>${q.t.toFixed(4)} s  (+${gp.toFixed(4)})${note}</li>`;
+  }).join("");
   const recLine = p.recording ? '<span style="color:var(--red)">● recording</span>'
     : p.recInfo ? `${p.rec.length} pops in ${p.recInfo.len.toFixed(2)} s (${p.recInfo.mime || "default"})` : "no trial yet";
   return `<div class="lbl">${title}</div>
