@@ -6058,6 +6058,287 @@
     return sim;
   }
 
+  // ============================================================================================
+  // MachPipe (data-sim="machpipe") — Class W, 2026-11-18/19 (Daniel). The opening of fluid dynamics as a
+  // sim: Class W's endless pipe of big, sparse molecules (gen/pipe_flow.py's look: white hard disks at 20 %
+  // packing, a pipe 3 tall whose ends wrap), run off both edges of the screen, with THREE sliders, a one-line
+  // readout under the pipe, and an energy graph behind a checkbox.
+  //
+  //   T — the absolute temperature, 20 to 600 K. It sets the JIGGLE: every molecule's velocity relative to
+  //       the shared mean is rescaled to √(T/300) (the pipe's walls hold the gas at T, like a thermostat).
+  //   v — the flow speed, 0 to 700 m/s to the right. It sets the SHARED part: the mean x-velocity.
+  //   g — gravity, 0 to 100 m/s² (2026-11-19, Daniel: "drag in gravity … a slight negative body force … and watch
+  //       a red band grow", the set-up for Bernoulli; units on the slider, the same day). A downward body force on
+  //       every molecule. To put g in m/s² the pipe is DRAWN 3 km TALL (MP_LUNIT = 1000 m per world unit; with
+  //       speeds in units of c(300 K) that makes 100 m/s² = 0.83 world units), which is roughly the height over
+  //       which real air thins noticeably at 10 m/s². At the top of the slider, settled at 300 K, about 4× as many
+  //       molecules sit in the bottom third of the pipe as in the top third: the big disks crowd each other and
+  //       resist being stacked, so it is milder than an ideal gas would be. (The first cut, a slider 0–1 with a
+  //       fifth of this pull, was too subtle, Daniel 2026-11-19.)
+  //
+  // THE PICTURE'S SPEEDS (the clips' convention, kept): at 300 K the jiggle is the clips' thermal speed 1, which
+  // the board treats as about the sound speed, and a molecule's drawn velocity is jiggle × √(T/300) + v/c(300 K),
+  // c(T) = √(γRT), γ = 1.4, R = 287 J/(kg K), c(300 K) = 347 m/s. So drift over jiggle on screen IS the Mach
+  // number, and colder at the same v is a higher M. The READOUT is the house numbers panel, top right, behind
+  // the 123 toggle (off at the start, Daniel 2026-11-19): "c = √(γRT) = … m/s" and "M = v/c = …" (the board's M, v and c).
+  //
+  // THE ENERGY GRAPH (checkbox "energy"; the block glides so pipe, readout and graph stay centered above the
+  // controls, Collision1D's rule). A live scrolling record like LauncherGame's: "now" at the right edge, eight
+  // seconds of history plus a live point at "now", a FROZEN energy axis drawn over the data (the most the gas can hold: full T, full v, full g), so a band's
+  // height means the same thing at every moment and dragging a slider visibly raises the lid. Three bands,
+  // bottom to top: KINETIC, the flow (blue, ½m v² per molecule, the shared part), THERMAL, the jiggle (amber, ½m|v_i − mean|²),
+  // and GRAVITATIONAL POTENTIAL (red, m g y_i above the floor). Each band is cut into one stripe PER MOLECULE in two
+  // alternating tints (the pipe wraps, so the same N molecules are always there): the flow stripes are all the
+  // same height, the jiggle stripes flicker as collisions trade energy between molecules while their sum holds
+  // still, and the gravity stripes are each molecule's height.
+  //
+  // THE GAS. Equal hard disks, elastic collisions with each other (minimal image across the wrap) and specular
+  // bounces off the two walls. The thermostat holds the jiggle's total at T and the mean x-velocity at v each
+  // frame; the mean y-velocity is LEFT ALONE, so gravity really does pull the gas down. Always running: no ▶
+  // needed, and → advances (everPlayed is set at mount).
+  // ============================================================================================
+  const MACHPIPE_CONTROLS_HTML = `
+      <canvas class="simcanvas"></canvas>
+      <button class="simbtn toggle-readout" title="show / hide numbers">123</button>
+      <div class="simctrls" style="gap:1.4em">
+        <button class="simbtn play" style="padding-left:.6em;padding-right:.6em">⏸ Pause</button>
+        <label><span class="var" style="color:var(--velocity)"><i>v</i>:</span> <input type="range" class="s-v" min="0" max="700" step="10"><input type="number" class="n-v" step="10" min="0" max="700"> m/s</label>
+        <label><span class="var" style="color:var(--friction)"><i>T</i>:</span> <input type="range" class="s-T" min="20" max="600" step="10"><input type="number" class="n-T" step="10" min="20" max="600"> K</label>
+        <label class="mp-g"><span class="var" style="color:var(--gravity)"><i>g</i>:</span> <input type="range" class="s-g" min="0" max="100" step="5"><input type="number" class="n-g" step="5" min="0" max="100"> m/s²</label>
+        <label class="netchk"><input type="checkbox" class="s-energy"> energy</label>
+      </div>`;
+
+  const MP_GAMMA = 1.4, MP_R = 287, MP_T0 = 300, MP_LUNIT = 1000;   // m per world unit: the pipe is drawn 3 km tall
+  const MP_GMAX = 100 * MP_LUNIT / (MP_GAMMA * MP_R * MP_T0);          // the g slider's top, 100 m/s², in world units (0.83)
+  const mpSound = T => Math.sqrt(MP_GAMMA * MP_R * T);
+
+  class MachPipe extends SimBase {
+    constructor(canvas, opts) {
+      super(canvas);
+      this.T = opts.T; this.v = opts.v; this.gs = opts.g || 0;
+      this.L = 16; this.Hp = 3; this.r = 0.18; this.pack = 0.2;          // world units; the pipe spans the screen
+      const N = Math.round(this.pack * this.L * this.Hp / (Math.PI * this.r * this.r));
+      let seed = 12345; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+      this.x = new Float64Array(N); this.y = new Float64Array(N);
+      this.vx = new Float64Array(N); this.vy = new Float64Array(N); this.N = N;
+      for (let i = 0; i < N; i++) {                                       // no overlaps (sparse: rejection is quick)
+        for (let k = 0; k < 400; k++) {
+          const px = rnd() * this.L, py = this.r + rnd() * (this.Hp - 2 * this.r);
+          let ok = true;
+          for (let j = 0; j < i && ok; j++) { let dx = px - this.x[j]; dx -= this.L * Math.round(dx / this.L);
+            if (dx * dx + (py - this.y[j]) ** 2 < 4.4 * this.r * this.r) ok = false; }
+          if (ok || k === 399) { this.x[i] = px; this.y[i] = py; break; }
+        }
+        const a = rnd() * TAU; this.vx[i] = Math.cos(a); this.vy[i] = Math.sin(a);
+      }
+      for (let k = 0; k < 240; k++) this._advance(1 / 60);              // warm up: a real spread of speeds
+      this._thermostat();
+      this.showEnergy = !!opts.energy; this.showReadout = false;   // the numbers panel starts hidden; 123 shows it (Daniel, 2026-11-19)
+      // the frozen energy axis: everything at its slider's top, gravity's band at the full-T, full-g settled state
+      const uMax = 700 / mpSound(MP_T0), jigMax = 0.5 * (600 / MP_T0);
+      this.eMax = N * (0.5 * uMax * uMax + jigMax + MP_GMAX * 1.2) * 1.04;   // gravity: the settled mean height at full g is ~1.1
+      this.gTail = 8; this.hist = []; this.simT = 0; this.lastSample = -1;
+      this.tB = tints(HOUSE.velocity, 3); this.tJ = tints(HOUSE.friction, 3); this.tG = tints(HOUSE.gravity, 3);
+      this.paused = false; this.running = true; this.everPlayed = true;
+    }
+    get uSim() { return this.v / mpSound(MP_T0); }                      // drawn drift, in jiggle-at-300-K units
+    get rmsSim() { return Math.sqrt(this.T / MP_T0); }                  // drawn jiggle
+    get g() { return this.gs * MP_LUNIT / (mpSound(MP_T0) ** 2); }   // gs is the slider's m/s²
+    get cSound() { return mpSound(this.T); }
+    get M() { return this.v / this.cSound; }
+    setT(T) { this.T = T; this._thermostat(); }
+    setV(v) { this.v = v; this._thermostat(); }
+    // hold the jiggle at T and the mean x-velocity at v; the mean y-velocity is gravity's business
+    _thermostat() {
+      const N = this.N; let mx = 0, my = 0;
+      for (let i = 0; i < N; i++) { mx += this.vx[i]; my += this.vy[i]; } mx /= N; my /= N;
+      let e = 0; for (let i = 0; i < N; i++) e += (this.vx[i] - mx) ** 2 + (this.vy[i] - my) ** 2;
+      const rms = Math.sqrt(e / N), k = rms > 0 ? this.rmsSim / rms : 1, u = this.uSim;
+      for (let i = 0; i < N; i++) { this.vx[i] = (this.vx[i] - mx) * k + u; this.vy[i] = (this.vy[i] - my) * k + my; }
+      this.myMean = my;
+    }
+    _advance(dt) {
+      const N = this.N, L = this.L, r = this.r, d2 = 4 * r * r, g = this.g || 0;
+      for (let i = 0; i < N; i++) {
+        this.vy[i] -= g * dt;
+        this.x[i] += this.vx[i] * dt; this.y[i] += this.vy[i] * dt;
+        this.x[i] -= L * Math.floor(this.x[i] / L);
+        if (this.y[i] < r) { this.y[i] = 2 * r - this.y[i]; this.vy[i] = Math.abs(this.vy[i]); }
+        if (this.y[i] > this.Hp - r) { this.y[i] = 2 * (this.Hp - r) - this.y[i]; this.vy[i] = -Math.abs(this.vy[i]); }
+      }
+      for (let i = 0; i < N; i++) for (let j = i + 1; j < N; j++) {
+        let dx = this.x[j] - this.x[i]; dx -= L * Math.round(dx / L);
+        const dy = this.y[j] - this.y[i], dd = dx * dx + dy * dy;
+        if (dd >= d2 || dd === 0) continue;
+        const dist = Math.sqrt(dd), nx = dx / dist, ny = dy / dist;
+        const rel = (this.vx[j] - this.vx[i]) * nx + (this.vy[j] - this.vy[i]) * ny;
+        if (rel < 0) { this.vx[i] += rel * nx; this.vy[i] += rel * ny; this.vx[j] -= rel * nx; this.vy[j] -= rel * ny; }
+        const push = (2 * r - dist) / 2;
+        this.x[i] -= nx * push; this.y[i] -= ny * push; this.x[j] += nx * push; this.y[j] += ny * push;
+      }
+    }
+    // per-molecule energies, m = 1: the flow ½u², the jiggle ½|v − mean|², gravity g·(height above the floor)
+    _sample() {
+      const N = this.N, u = this.uSim, my = this.myMean || 0, g = this.g;
+      const jig = new Float32Array(N), pe = new Float32Array(N);
+      for (let i = 0; i < N; i++) { jig[i] = 0.5 * ((this.vx[i] - u) ** 2 + (this.vy[i] - my) ** 2); pe[i] = g * (this.y[i] - this.r); }
+      this.hist.push({ t: this.simT, flow: 0.5 * u * u, jig, pe });
+      while (this.hist.length > 2 && this.hist[1].t < this.simT - this.gTail - 0.2) this.hist.shift();
+    }
+    step(now) {
+      const wall = Math.min(0.05, (now - (this.last || now)) / 1000); this.last = now;
+      if (this.y0 !== this.y0T) {                                       // glide to the new centered layout
+        const d = this.y0T - this.y0; this.y0 = Math.abs(d) < 0.5 ? this.y0T : this.y0 + d * Math.min(1, wall * 9);
+      }
+      if (!this.paused && wall > 0) {
+        const vmax = this.uSim + 4 * this.rmsSim + 2, n = Math.max(1, Math.ceil(vmax * wall / (0.4 * this.r)));
+        for (let k = 0; k < n; k++) this._advance(wall / n);
+        this._thermostat();
+        this.simT += wall;
+        if (this.simT - this.lastSample >= 1 / 30) { this._sample(); this.lastSample = this.simT; }
+      }
+      this.render();
+    }
+    // ---- layout: pipe (full width), readout line, then the graph if it is on; the block centered above the bar
+    resize() {
+      const dpr = window.devicePixelRatio || 1, w = this.c.clientWidth || this.c.width, h = this.c.clientHeight || this.c.height;
+      this.c.width = Math.round(w * dpr); this.c.height = Math.round(h * dpr);
+      this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0); this.W = w; this.H = h;
+      const bar = this.c.parentElement && this.c.parentElement.querySelector(".simctrls");
+      const barH = bar ? bar.getBoundingClientRect().height : h * 0.11;
+      this.avail = h - barH - h * 0.015;
+      this.s = w / this.L; this.pipeH = this.Hp * this.s;
+      this.gap = h * 0.05; this.gh = h * HOUSE.stackGraphH; this.gLab = h * 0.035;
+      this.panelH = HOUSE.sizeBody * h * 3.2;                           // the 123 panel's height, top right
+      this.layout(true);
+    }
+    layout(snap) {
+      const total = this.pipeH + (this.showEnergy ? this.gap + this.gh + this.gLab : 0);
+      const lo = this.showReadout ? this.panelH + this.H * 0.03 : 0;      // never under the numbers panel
+      this.y0T = Math.max(lo, (this.avail - total) / 2);
+      if (snap || this.y0 === undefined) this.y0 = this.y0T;
+    }
+    render() {
+      const ctx = this.ctx, W = this.W, H = this.H; if (!W || !H) return;
+      ctx.fillStyle = HOUSE.bg; ctx.fillRect(0, 0, W, H);
+      const s = this.s, top = this.y0, ph = this.pipeH, R = this.r * s;
+      ctx.fillStyle = HOUSE.mass;
+      for (let i = 0; i < this.N; i++) {
+        const px = this.x[i] * s, py = top + (this.Hp - this.y[i]) * s;
+        for (const off of [-W, 0, W]) {                                 // the copy that spans an edge, too
+          const qx = px + off; if (qx < -R || qx > W + R) continue;
+          ctx.beginPath(); ctx.arc(qx, py, R, 0, TAU); ctx.fill();
+        }
+      }
+      ctx.strokeStyle = HOUSE.boundary; ctx.lineWidth = Math.max(1.5, H * 0.003);
+      ctx.beginPath(); ctx.moveTo(0, top); ctx.lineTo(W, top); ctx.moveTo(0, top + ph); ctx.lineTo(W, top + ph); ctx.stroke();
+      if (this.showReadout) this._readout();
+      if (this.showEnergy) this._graph(top + ph + this.gap);
+    }
+    // the house numbers panel (Oscillator's): mono, top right, left of the 123 button, two rows
+    _readout() {
+      const ctx = this.ctx, fs = HOUSE.sizeBody * this.H;
+      const Ms = this.M < 9.995 ? this.M.toFixed(2) : this.M.toFixed(1);
+      const lines = [`c = \u221a(\u03b3RT) = ${Math.round(this.cSound)} m/s`, `M = v/c = ${Ms}`];
+      ctx.save(); ctx.font = fs + "px " + HOUSE.fontMono; ctx.textBaseline = "top";
+      const pad = fs * 0.55; let w = 0; lines.forEach(l => w = Math.max(w, ctx.measureText(l).width));
+      const lh = fs * 1.3, bx = this.W - w - pad * 2 - Math.max(fs * 4, 84), by = this.H * 0.02;
+      ctx.fillStyle = "rgba(0,0,0,0.42)"; ctx.fillRect(bx, by, w + pad * 2, lines.length * lh + pad);
+      ctx.fillStyle = "#cfe6ff"; lines.forEach((l, i) => ctx.fillText(l, bx + pad, by + pad * 0.7 + i * lh)); ctx.restore();
+    }
+    // the live record: "now" at the right edge, a frozen axis, one stripe per molecule per band
+    _graph(gy) {
+      const ctx = this.ctx, gh = this.gh, ax = this.W * 0.062, x1 = this.W * 0.79, ay = gy + gh, N = this.N;
+      const h = this.hist;
+      if (h.length >= 1) {
+        const t1 = this.simT, t0 = t1 - this.gTail;
+        // the record plus a LIVE point at "now" (this frame's energies), so the right edge moves with every
+        // frame instead of stepping each time a 30 Hz sample lands (Daniel, 2026-11-19: "a distracting jitter")
+        const vis = h.filter(p => p.t >= t0 - 0.1 && p.t < t1).concat([this._now()]);
+        const xOf = t => ax + (Math.max(t0, Math.min(t1, t)) - t0) / this.gTail * (x1 - ax), yOf = e => ay - (e / this.eMax) * gh;
+        const xs = vis.map(p => xOf(p.t));
+        // cumulative per-molecule totals, bottom up: N kinetic stripes, N thermal stripes, N gravity stripes
+        const K = 3 * N, cum = vis.map(p => { const c = new Float32Array(K); let acc = 0;
+          for (let i = 0; i < N; i++) { acc += p.flow; c[i] = acc; }
+          for (let i = 0; i < N; i++) { acc += p.jig[i]; c[N + i] = acc; }
+          for (let i = 0; i < N; i++) { acc += p.pe[i]; c[2 * N + i] = acc; }
+          return c; });
+        const col = k => { const b = k < N ? this.tB : k < 2 * N ? this.tJ : this.tG; return (k % N) % 2 ? b[2] : b[0]; };
+        const noPE = vis.every(p => p.pe.every(e => e === 0));
+        for (let k = K - 1; k >= 0; k--) {                                // painter's order: each stripe from the baseline
+          if (k >= 2 * N && noPE) continue;
+          ctx.fillStyle = col(k); ctx.beginPath(); ctx.moveTo(xs[0], ay);
+          for (let j = 0; j < vis.length; j++) ctx.lineTo(xs[j], yOf(cum[j][k]));
+          ctx.lineTo(xs[xs.length - 1], ay); ctx.closePath(); ctx.fill();
+        }
+        // each band's name at "now", right of the record, in its color, where the band is tall enough
+        const last = cum[cum.length - 1], fs = HOUSE.sizeCaption * this.H * 0.8, lx = x1 + this.W * 0.01;
+        const bands = [["kinetic", 0, last[N - 1], HOUSE.velocity], ["thermal", last[N - 1], last[2 * N - 1], HOUSE.friction],
+                       ["gravitational potential", last[2 * N - 1], last[3 * N - 1], HOUSE.gravity]];
+        ctx.font = fs + "px " + HOUSE.fontSans; ctx.textAlign = "left"; ctx.textBaseline = "middle";
+        for (const [name, lo, hi, c] of bands) {
+          const ylo = yOf(lo), yhi = yOf(hi); if (ylo - yhi < fs * 0.9) continue;
+          ctx.fillStyle = c; ctx.fillText(name, lx, (ylo + yhi) / 2);
+        }
+      }
+      // the axes LAST, over the data (Daniel, 2026-11-19)
+      ctx.save(); ctx.strokeStyle = HOUSE.ink; ctx.fillStyle = HOUSE.ink; ctx.lineWidth = 2; ctx.lineCap = "butt";
+      ctx.beginPath(); ctx.moveTo(ax, ay - gh * 0.45); ctx.lineTo(ax, ay); ctx.lineTo(x1, ay); ctx.stroke();
+      ctx.font = (HOUSE.sizeCaption * this.H * 0.85) + "px " + HOUSE.fontSans;
+      ctx.textAlign = "center"; ctx.textBaseline = "top"; ctx.fillText("time", ax + this.W * 0.022, ay + 4);
+      ctx.save(); ctx.translate(ax - 6, ay - gh * 0.225); ctx.rotate(-Math.PI / 2); ctx.textBaseline = "bottom"; ctx.fillText("energy", 0, 0); ctx.restore();
+      ctx.restore();
+    }
+    _now() {                                                            // this frame's per-molecule energies
+      const N = this.N, u = this.uSim, my = this.myMean || 0, g = this.g;
+      const jig = new Float32Array(N), pe = new Float32Array(N);
+      for (let i = 0; i < N; i++) { jig[i] = 0.5 * ((this.vx[i] - u) ** 2 + (this.vy[i] - my) ** 2); pe[i] = g * (this.y[i] - this.r); }
+      return { t: this.simT, flow: 0.5 * u * u, jig, pe };
+    }
+  }
+
+  function mountMachPipe(section) {
+    const d = section.dataset;
+    if (!section.querySelector(".simcanvas")) section.insertAdjacentHTML("beforeend", MACHPIPE_CONTROLS_HTML);
+    const canvas = section.querySelector(".simcanvas");
+    const sim = new MachPipe(canvas, { T: d.t !== undefined ? +d.t : 300, v: d.v !== undefined ? +d.v : 0,
+                                       g: d.g !== undefined ? +d.g : 0, energy: d.energy !== undefined });
+    const q = s => section.querySelector(s);
+    const readonly = window.self !== window.top;
+    const sT = q(".s-T"), nT = q(".n-T"), sV = q(".s-v"), nV = q(".n-v"), sG = q(".s-g"), nG = q(".n-g"), cE = q(".s-energy"), playBtn = q(".play");
+    sT.value = sim.T; nT.value = sim.T; sV.value = sim.v; nV.value = sim.v; sG.value = sim.gs; nG.value = sim.gs; cE.checked = sim.showEnergy;
+    // data-nogravity hides the g slider (a slide that is not ready for it yet)
+    if (d.nogravity !== undefined) { const lab = q(".mp-g"); if (lab) lab.style.display = "none"; }
+    const clamp = (el, v) => Math.max(+el.min, Math.min(+el.max, v));
+    const wire = (sl, nb, set) => {
+      sl.addEventListener("input", () => { if (nb) nb.value = sl.value; set(+sl.value); });
+      if (nb) nb.addEventListener("change", () => { const v = parseFloat(nb.value); const c = isNaN(v) ? +sl.value : clamp(sl, v);
+        nb.value = c; sl.value = c; set(c); });
+    };
+    wire(sT, nT, T => { sim.setT(T); if (sim.paused) sim.render(); });
+    wire(sV, nV, v => { sim.setV(v); if (sim.paused) sim.render(); });
+    wire(sG, nG, g => { sim.gs = g; if (sim.paused) sim.render(); });
+    cE.addEventListener("change", () => { sim.showEnergy = cE.checked; sim.layout(false); sim.render(); });
+    const rt = q(".toggle-readout");
+    if (rt) rt.addEventListener("click", () => { sim.showReadout = !sim.showReadout; rt.classList.toggle("on", sim.showReadout); sim.layout(false); sim.render(); });
+    const refreshPlay = () => { playBtn.textContent = sim.paused ? "▶ Play" : "⏸ Pause"; };
+    sim.refreshPlayBtn = refreshPlay;
+    playBtn.addEventListener("click", () => { sim.paused = !sim.paused; sim.last = performance.now(); refreshPlay(); });
+    // the deck's contract: play() on the first →, reset() on leaving; this sim is always running
+    sim.play = () => { sim.paused = false; sim.everPlayed = true; refreshPlay(); };
+    sim.reset = () => { sim.paused = false; refreshPlay(); };
+    if (readonly) {
+      [playBtn, sT, nT, sV, nV, sG, nG, cE, q(".toggle-readout")].forEach(el => { if (el) el.disabled = true; });
+      const c = q(".simctrls"); if (c) c.style.opacity = ".4";
+    }
+    let raf = null;
+    sim.start = () => { if (raf) return; sim.everPlayed = true; const loop = (now) => { sim.step(now); raf = requestAnimationFrame(loop); }; sim.last = performance.now(); raf = requestAnimationFrame(loop); };
+    sim.stop = () => { if (raf) { cancelAnimationFrame(raf); raf = null; } };
+    window.addEventListener("resize", () => { sim.resize(); sim.render(); });
+    refreshPlay(); sim.resize(); sim.render();
+    return sim;
+  }
+
   // Dispatcher: pick the preset from data-sim (default projectile).
   // The closed vocabulary of data-sim values, so mount() can tell "no attribute" (fall back to the
   // projectile, as it always has) from "an attribute nobody implemented" (say so). Keep in step with
@@ -6067,7 +6348,7 @@
     "projectile2d", "2d", "projectile2d-pair", "pair2d",
     "deflect", "game", "circle", "circular", "oscillator", "spring",
     "oscillator-game", "springgame", "attractor2d", "attractor", "grab", "launcher", "launchergame", "launcher-cliff", "launchercliff",
-    "platformbounce", "frictionramp", "coupledmass", "driven", "collision"
+    "platformbounce", "frictionramp", "coupledmass", "driven", "collision", "machpipe"
   ]);
 
   function mount(section) {
@@ -6103,6 +6384,7 @@
     if (kind === "frictionramp") return mountFrictionRamp(section);
     if (kind === "coupledmass") return mountCoupledMass(section);
     if (kind === "collision") return mountCollision(section);
+    if (kind === "machpipe") return mountMachPipe(section);
     return mountProjectile(section);
   }
 
@@ -6265,5 +6547,5 @@
     return sim;
   }
 
-  window.Interactive = { Projectile, Projectile2D, HandLift, HandLiftEnergy, DeflectGame, Circular, Oscillator, SpringGame, Attractor2D, Grab, LauncherGame, PlatformBounce, FrictionRamp, CoupledMass, Driven, Collision1D, mount, HOUSE, betaOf, dragStep, dragAdvance, histAt };
+  window.Interactive = { Projectile, Projectile2D, HandLift, HandLiftEnergy, DeflectGame, Circular, Oscillator, SpringGame, Attractor2D, Grab, LauncherGame, PlatformBounce, FrictionRamp, CoupledMass, Driven, Collision1D, MachPipe, mount, HOUSE, betaOf, dragStep, dragAdvance, histAt };
 })();
