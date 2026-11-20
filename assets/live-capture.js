@@ -24,7 +24,12 @@
    RATE. Supabase's free plan allows 100 Realtime messages a second for the whole project, and a batch
    counts twice (sent, then delivered). The phone sends ONE batch a second, so a room of 25 pairs all
    recording at once is ~50/s. The live plot therefore grows in one-second steps; it is a cue that the
-   recording is alive, not the measurement. */
+   recording is alive, not the measurement.
+
+   THE MICROPHONE (Thunder and Lightning, 2026-11-20). `live:{slots, mic:true, seconds:0.25, zoom:{w1:"w1z",…}, zoomMs:40}`
+   points the QR code at accel/mic.html instead. Record asks the phone for exactly `seconds` of raw microphone; the
+   phone sends it in batches and says "done" by itself, so there is no Stop. The slot gets "Time (ms)" and
+   "Pressure (arb.)", normalized to ±1, and the slot named in `zoom` gets its first `zoomMs` milliseconds. */
 (function(){
 "use strict";
 if(typeof NARR==="undefined" || typeof S==="undefined") return;
@@ -32,6 +37,7 @@ if(!NARR.some(st=>st && st.live)) return;
 
 const LCFG = Object.assign({
   phoneUrl: "https://danbenquinn.github.io/classes/accel/phone.html",
+  micUrl: "https://danbenquinn.github.io/classes/accel/mic.html",
   supabaseUrl: "https://rdbacwwbeyeqdkswwvjt.supabase.co",           // the poll project (see slide-suite/poll/POLL-SETUP.md)
   supabaseKey: "sb_publishable_IQNxMMynit0aWtOS3tjiRQ_h5sNo159",     // publishable: meant to ship in a page
   supabaseJs: "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js",
@@ -51,7 +57,9 @@ let ROOM = null;
 try { ROOM = sessionStorage.getItem("lc-room"); } catch(e){}
 if(!ROOM){ ROOM = newRoom(); try { sessionStorage.setItem("lc-room", ROOM); } catch(e){} }
 const ME = "a-" + Math.random().toString(36).slice(2,10);
-const phoneHref = ((LOCAL && QS.get("phone")) || LCFG.phoneUrl) + "?room=" + ROOM + (LOCAL ? "&local=1&sim=1" : "");
+const isMic = st => !!(st && st.live && st.live.mic);
+const hrefFor = st => ((LOCAL && QS.get(isMic(st) ? "mic" : "phone")) || (isMic(st) ? LCFG.micUrl : LCFG.phoneUrl)) + "?room=" + ROOM + (LOCAL ? "&local=1&sim=1" : "");
+let phoneHref = hrefFor(NARR.find(st=>st && st.live));
 
 const LC = {
   conn:null, status:"idle", error:null,
@@ -126,6 +134,7 @@ function onMsg(m){
     drawLive();
     if(LC.recState==="finishing" && LC.expected!=null && LC.seen.size>=LC.expected) finish();
   } else if(m.type==="done" && m.run===LC.run){
+    if(LC.mic && LC.recState==="rec") LC.recState="finishing";
     LC.expected=m.batches; if(LC.seen.size>=m.batches) finish();
   } else if(m.type==="error"){
     logEv("phone-error", { msg:m.msg });
@@ -150,6 +159,16 @@ function nextTarget(st){ const ks=liveSlots(st); return ks.find(k=>{ const P=pan
 function begin(){
   const P=panelByKey(LC.target); if(!P || !LC.phone) return;
   LC.run=Math.random().toString(36).slice(2,8);
+  LC.mic=isMic(NARR[S.step]);
+  if(LC.mic){
+    LC.buf={ t:[], a:[] }; LC.seen=new Set(); LC.expected=null;
+    LC.recState="rec"; LC.startedAt=performance.now();
+    P._lc="rec"; LC.error=null; P.ds=null; P.sel=null; P.point=null; P.fileName=null;
+    LC.conn.send({ type:"start", phone:LC.phone, run:LC.run, src:"mic", seconds:NARR[S.step].live.seconds||0.25 });
+    logEv("begin", { slot:P.key, mic:true }); render(); paint();
+    const myRun=LC.run; setTimeout(()=>{ if(LC.recState!=="idle" && LC.run===myRun){ LC.recState="finishing"; finish(); } }, 6000);   // a lost "done"
+    return;
+  }
   LC.axis=(NARR[S.step].requireAxis||"z").replace(/^g/,"");
   LC.buf={ t:[], a:[] }; LC.seen=new Set(); LC.expected=null;
   LC.recState="rec"; LC.startedAt=performance.now();
@@ -176,11 +195,14 @@ function stop(){
 function toParsed(B){
   const idx=B.t.map((_,i)=>i).sort((i,j)=>B.t[i]-B.t[j]);
   const pick=a=>idx.map(i=>a[i]);
+  if(LC.mic){ const a=pick(B.a), m=a.reduce((x,y)=>x+y,0)/(a.length||1); let pk=1e-9; a.forEach(v=>{ pk=Math.max(pk,Math.abs(v-m)); });
+    return { headers:["Time (ms)","Pressure p (arb.)"], cols:{ "Time (ms)":pick(B.t), "Pressure p (arb.)":a.map(v=>+((v-m)/pk).toFixed(4)) } }; }
   const H=["Time (s)","Linear Acceleration "+LC.axis+" (m/s^2)"];
   const cols={}; cols[H[0]]=pick(B.t); cols[H[1]]=pick(B.a);
   return { headers:H, cols };
 }
 function drawLive(){
+  if(LC.mic){ if(LC.recState==="finishing" && LC.expected!=null && LC.seen.size>=LC.expected) finish(); else paint(); return; }   // a quarter second: nothing to watch grow
   const P=panelByKey(LC.target); if(!P || P._lc!=="rec" || LC.buf.t.length<2) { paint(); return; }
   ingestParsed(toParsed(LC.buf), P);              // re-ingest: a second's worth of samples at a time, cheap
   P.fileName="live capture (recording…)";
@@ -192,6 +214,10 @@ function finish(){
   const P=panelByKey(LC.target); if(!P) return;
   if(LC.buf.t.length<10){ P.ds=null; P._lc=undefined; LC.error="No data came through from the phone. Is its page still open? Try again."; render(); paint(); return; }
   ingestParsed(toParsed(LC.buf), P);
+  if(LC.mic){ const st=NARR[S.step], zk=st.live.zoom && st.live.zoom[P.key], Z=zk && panelByKey(zk);
+    if(Z){ const full=toParsed(LC.buf), lim=st.live.zoomMs||40, n0=full.cols["Time (ms)"].findIndex(t=>t>lim);
+      const cut=n0<0?full.cols["Time (ms)"].length:n0, cols={}; full.headers.forEach(h=>cols[h]=full.cols[h].slice(0,cut));
+      ingestParsed({ headers:full.headers, cols }, Z); Z.supplied=true; if(Z.file) Z.file.style.display="none"; } }
   const n=LC.buf.t.length, dur=LC.buf.t[n-1]-LC.buf.t[0];
   P.fileName="live capture";
   P._lcMeta={ n, dur, rate: dur>0 ? (n-1)/dur : 0, run:LC.run };
@@ -233,7 +259,9 @@ function redo(k){
 
 /* ------------------------------ the card ------------------------------ */
 let QR_IMG=null;
+let QR_FOR=null;
 function qrImg(){
+  const want=hrefFor(NARR[S.step]); if(want!==QR_FOR){ QR_FOR=want; phoneHref=want; QR_IMG=null; }
   if(QR_IMG) return QR_IMG;
   try { const q=qrcode(0,"M"); q.addData(phoneHref); q.make(); QR_IMG=q.createDataURL(6,2); } catch(e){ QR_IMG=""; }
   return QR_IMG;
@@ -269,6 +297,8 @@ function paint(){
      +(LOCAL?'<p class="lc-sub"><a href="'+phoneHref+'" target="_blank">open a test phone tab</a></p>':'')
      +'</div></div>';
     if(LC.error) h+='<div class="lc-err">'+esc(LC.error)+'</div>';
+  } else if(LC.recState!=="idle" && LC.mic){
+    h+='<div class="lc-big lc-rec">Recording a quarter second…</div><p class="lc-sub">Keep the note going.</p>';
   } else if(LC.recState==="rec"){
     h+='<div class="lc-big lc-rec">Recording'+(multi?' · '+esc(((T&&T.label)||"").replace(/^.*—\s*/,"").toLowerCase()):'')+'</div>'
      +'<div class="lc-stats"><span id="lc-time">0.0 s</span> · <span>'+LC.buf.t.length+' samples</span></div>'
@@ -278,17 +308,18 @@ function paint(){
   } else if(T && T._lc==="review"){
     const m=T._lcMeta||{};
     h+='<div class="lc-big">Keep this run?</div>'
-     +'<p class="lc-sub">'+(m.n||0)+' samples over '+(m.dur||0).toFixed(1)+' s · '+Math.round(m.rate||0)+' per second</p>'
+     +(isMic(st) ? '<p class="lc-sub">'+(m.n||0)+' samples over '+(m.dur||0).toFixed(0)+' ms. A steady wave or a squeak: you can check it zoomed in on a later step.</p>'
+                 : '<p class="lc-sub">'+(m.n||0)+' samples over '+(m.dur||0).toFixed(1)+' s · '+Math.round(m.rate||0)+' per second</p>')
      +'<div class="lc-btns"><button class="deck-go lc-ghost" data-lc="again">Try again</button>'
      +'<button class="deck-go lc-accept" data-lc="accept">Accept</button></div>';
   } else {
     h+='<div class="lc-big lc-ok">✓ Phone connected</div>'
      +'<p class="lc-sub">'+(multi?'Next: the <b>'+esc(((T&&T.label)||"").replace(/^.*—\s*/,"").toLowerCase())+'</b> run. ':'')
-     +'Press <b>Record</b>, then do the experiment.</p>'
+     +(isMic(st) ? 'Start a steady note first, then press <b>Record</b>.</p>' : 'Press <b>Record</b>, then do the experiment.</p>')
      +'<button class="deck-go lc-begin" data-lc="begin"><span class="lc-dot"></span>Record</button>';
     if(LC.error) h+='<div class="lc-err">'+esc(LC.error)+'</div>';
   }
-  h+='<div class="lc-foot"><a href="#" data-lc="file">'+(LC.showFile?"Hide the file picker":"Use phyphox instead")+'</a></div>';
+  if(!isMic(st)) h+='<div class="lc-foot"><a href="#" data-lc="file">'+(LC.showFile?"Hide the file picker":"Use phyphox instead")+'</a></div>';
   if(LC.showFile) h+='<p class="lc-sub lc-filenote">Record in <b>phyphox → Acceleration (without g)</b>, export the CSV to this laptop, and choose it with the file picker'+(multi?' above each plot':' at the top left')+'.</p>';
   card.innerHTML=h;
   syncFilePickers(st);
@@ -340,8 +371,9 @@ renderPanel=function(P){
     const c=P.ctx, W=P.cv.clientWidth, H=P.cv.clientHeight; c.clearRect(0,0,W,H);
     c.fillStyle=getCss("--muted"); c.font=font(14); c.textAlign="center"; c.textBaseline="middle";
     const lab=(P.label||"").replace(/^.*—\s*/,"").toLowerCase();
-    c.fillText(LC.target!==P.key ? "The "+lab+" run goes here, after the "+((panelByKey(LC.target)||{}).label||"").replace(/^.*—\s*/,"").toLowerCase()+" one."
-             : LC.phone ? "Press Record below, then do the experiment. The recording draws here."
+    c.fillText(LC.target!==P.key ? (isMic(st) ? lab.replace(/^./,ch=>ch.toUpperCase())+" goes here, after "+((panelByKey(LC.target)||{}).label||"").replace(/^.*—\s*/,"").toLowerCase()+"."
+                                         : "The "+lab+" run goes here, after the "+((panelByKey(LC.target)||{}).label||"").replace(/^.*—\s*/,"").toLowerCase()+" one.")
+             : LC.phone ? (isMic(st) ? "Start a steady note, then press Record. A quarter second draws here." : "Press Record below, then do the experiment. The recording draws here.")
              : "Scan the code below with your phone to record into this plot.", W/2, H/2);
     return;
   }

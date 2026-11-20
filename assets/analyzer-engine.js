@@ -331,6 +331,16 @@ function axisInfo(h){
    a year of daily ones are not seconds, so the unit is read from the time column's own header, phyphox-style:
    "Time (min)" gives min. No parentheses, or "(s)", is seconds, which is every earlier deck unchanged. */
 function tUnit(P){ P=P||active(); const h=(P&&P.ds&&P.ds.timeH)||""; const m=h.match(/\(([^)]+)\)\s*$/); return m?m[1].trim():"s"; }
+/* THE HORIZONTAL AXIS NEED NOT BE TIME (Thunder and Lightning, 2026-11-20). Its first column's header names it,
+   phyphox-style: "Height h (m)", "Period T (ms)", "Travel time t (ms)" give the symbol (italic) and a word to
+   go before it. A header that starts with "Time" is every earlier deck: symbol t, no word. */
+function xSym(P){ P=P||active(); const h=(P&&P.ds&&P.ds.timeH)||"";
+  if(!h || /^\s*time\b/i.test(h)) return {sym:"t", word:""};
+  const m=h.match(/^(.*?)\b([A-Za-z])\s*\([^)]*\)\s*$/); return m ? {sym:m[2], word:m[1].trim()} : {sym:"t", word:""}; }
+/* `slope:{scale, unit, dp, intercept}` on a slot's CONFIG.panels entry: what Slope prints there. `scale` multiplies
+   the raw slope (m/ms × 1000 = m/s), `unit` replaces the computed one, `dp` sets its decimals, and `intercept`
+   adds where the line crosses zero on the horizontal axis (the whistle's hidden length). */
+function slopeDef(P){ const d=PANELDEF.find(d=>(d.key||"")===(P&&P.key))||{}; return d.slope||null; }
 
 /* ====================== series + math ========================
    Every function here takes an optional panel and falls back to the ACTIVE one, so the call sites that
@@ -386,6 +396,11 @@ function slopeShown(P){ const s=series(P), L=s&&slopeFit(s,P); if(!L) return nul
   // On a `temp:` slot (Cool Hand Luke, 2026-11-13, slopes back in place of fits) the slope is the TEMPERATURE's, in °C
   // per SECOND, so that m c_p times it is watts. Two significant figures: "0.042 °C/s".
   if(TD){ const v=L.m*TD.band, txt=Math.abs(v)>=1 ? v.toFixed(2) : v.toPrecision(2); return {txt, v:parseFloat(txt), unit:"°C/s", sym:"T", L}; }
+  const SD=slopeDef(P);
+  if(SD){ const v=L.m*(SD.scale||1), txt=v.toFixed(SD.dp!=null?SD.dp:1);
+    const out={txt, v:parseFloat(txt), unit: SD.unit || (A.unit+"/"+tUnit(P)), L};
+    if(SD.intercept){ out.icpt=L.b; out.icptTxt=L.b.toFixed(A.dp); }
+    return out; }
   const v=L.m*(A.slopeScale||1), a=Math.abs(v);
   const txt = A.slopeScale ? (a>=1 ? v.toFixed(2) : v.toPrecision(2)) : v.toFixed(1);
   return {txt, v:parseFloat(txt), unit: A.slopeScale ? A.rate : (tUnit(P)==="s" ? A.rate : A.unit+"/"+tUnit(P)), L}; }
@@ -906,7 +921,7 @@ function updatePlotReadout(P){
     const i=nearest(s,P.point);
     const td = timeDecimals(s);          // never finer than the sample interval — see timeDecimals()
     const TDp=A.slopeScale&&tempDef(P), Tp=TDp ? '&nbsp;·&nbsp;<i>T</i> ≈ '+(TDp.lo+TDp.band*s.a[i]).toFixed(1)+' °C' : '';   // a `temp:` slot reads in °C too
-    show('<span class="ro"><i>t</i> = '+s.t[i].toFixed(td)+' '+tUnit(P)+'&nbsp;·&nbsp;'+(A.roman?A.sym:'<i>'+A.sym+'</i>')+' = '+s.a[i].toFixed(A.dp)+(A.roman?'':' '+A.unit)+Tp+'</span>');
+    show('<span class="ro"><i>'+xSym(P).sym+'</i> = '+s.t[i].toFixed(td)+' '+tUnit(P)+'&nbsp;·&nbsp;'+(A.roman?A.sym:'<i>'+A.sym+'</i>')+' = '+s.a[i].toFixed(A.dp)+(A.roman?'':' '+A.unit)+Tp+'</span>');
   } else if(S.tool==="avg"){
     const av=average(s,P); if(av==null){ show('<span class="ro-hint">drag a region to average</span>'); return; }
     show('<span class="ro">average '+(A.roman?A.sym:'<i>'+A.sym+'</i>')+' = '+av.toFixed(A.dp)+(A.roman?'':' '+A.unit)+'<span class="ro-ctx"> over '+Math.abs(P.sel.b-P.sel.a).toFixed(timeDecimals(s))+' '+tUnit(P)+'</span></span>');
@@ -917,7 +932,10 @@ function updatePlotReadout(P){
     // to about a tenth of a m/s, and no better.
     const R=slopeShown(P); if(!R){ show('<span class="ro-hint">drag across a stretch to fit a line to it</span>'); return; }
     const L=R.L;
-    show('<span class="ro">slope of '+(R.sym?'<i>'+R.sym+'</i>':A.roman?A.sym:'<i>'+A.sym+'</i>')+' = '+R.txt+' '+R.unit+'<span class="ro-ctx"> over '+(L.t1-L.t0).toFixed(timeDecimals(s))+' '+tUnit(P)+'</span></span>');
+    const XS=xSym(P);
+    show('<span class="ro">slope of '+(R.sym?'<i>'+R.sym+'</i>':A.roman?A.sym:'<i>'+A.sym+'</i>')+' = '+R.txt+' '+R.unit
+      +(R.icptTxt!=null ? '&nbsp;·&nbsp;at <i>'+XS.sym+'</i> = 0 the line is at <i>'+A.sym+'</i> = '+R.icptTxt+' '+A.unit : '')
+      +'<span class="ro-ctx"> over '+(L.t1-L.t0).toFixed(timeDecimals(s))+' '+tUnit(P)+'</span></span>');
   } else if(S.tool==="crop"){
     // Crop is the one tool that reads out in AMBER, not green, and that is the point of the house rule
     // rather than an exception to it: green means "a number you measured", and a crop measures nothing.
@@ -1018,6 +1036,9 @@ function renderPanel(P){
   let tLo0=s.t[0], tHi0=s.t[s.t.length-1];
   if(NARR[S.step] && NARR[S.step].matchX) visiblePanels().forEach(Q=>{ const qs=series(Q); if(!qs) return;
     tLo0=Math.min(tLo0,qs.t[0]); tHi0=Math.max(tHi0,qs.t[qs.t.length-1]); });
+  const pdE=PANELDEF.find(d=>(d.key||"")===P.key)||{};
+  if(pdE.extendTo0) tLo0=Math.min(tLo0,0);              // Thunder and Lightning's whistle: the line is read where it meets zero
+  if(pdE.pad){ const sp=(tHi0-tLo0)||1; tLo0-=pdE.pad*sp; tHi0+=pdE.pad*sp; }   // a few dots need room at the ends
   const T=niceTicks(tLo0, tHi0, 6);
   const cr=cropRange(s,P);
   const inA=s.a.slice(cr[0],cr[1]+1);
@@ -1037,6 +1058,8 @@ function renderPanel(P){
     if(Array.isArray(pd0.yRange)){ aLo=Math.min(aLo,pd0.yRange[0]); aHi=Math.max(aHi,pd0.yRange[1]); } }
   const OV=overlayCols(P);
   if(OV) OV.forEach(c=>{ for(const v of c.a){ if(v<aLo) aLo=v; if(v>aHi) aHi=v; } });
+  if(pdE.extendTo0 && S.tool==="slope" && P.sel){ const L0=slopeFit(s,P); if(L0){ aLo=Math.min(aLo,L0.b); aHi=Math.max(aHi,L0.b); } }
+  if(pdE.dots){ const sp=(aHi-aLo)||Math.abs(aHi)||1; aLo-=0.08*sp; aHi+=0.08*sp; }
   let Ay=niceTicks(aLo, aHi, 5);
   // `yFix:[lo,hi]` on the slot (Cool Hand Luke, 2026-11-13, Daniel): the vertical axis is EXACTLY this, whatever the data
   // do, so every run is read on one scale. Traces are clipped to the plot, so a curve that spills just runs off.
@@ -1094,9 +1117,9 @@ function renderPanel(P){
   ctx.textAlign="center"; ctx.textBaseline="top"; ctx.fillStyle=getCss("--muted"); ctx.font=font(11);
   T.ticks.forEach(v=>{ ctx.fillText(fmt(v), tx(v), mT+ph+7); });
   if(isLast){ const yy=mT+ph+31; ctx.textAlign="left"; ctx.textBaseline="alphabetic"; ctx.fillStyle=getCss("--muted");   // x-axis title: t italic, (s) roman
-    const ut=" ("+tUnit(P)+")";
-    ctx.font=ifont(12); const vw=ctx.measureText("t").width; ctx.font=font(12); const uw=ctx.measureText(ut).width;
-    const x0=mL+px/2-(vw+uw)/2; ctx.font=ifont(12); ctx.fillText("t",x0,yy); ctx.font=font(12); ctx.fillText(ut,x0+vw,yy); }
+    const ut=" ("+tUnit(P)+")", XS=xSym(P), wd=XS.word ? XS.word+" " : "";
+    ctx.font=font(12); const ww=ctx.measureText(wd).width; ctx.font=ifont(12); const vw=ctx.measureText(XS.sym).width; ctx.font=font(12); const uw=ctx.measureText(ut).width;
+    const x0=mL+px/2-(ww+vw+uw)/2; ctx.font=font(12); ctx.fillText(wd,x0,yy); ctx.font=ifont(12); ctx.fillText(XS.sym,x0+ww,yy); ctx.font=font(12); ctx.fillText(ut,x0+ww+vw,yy); }
 
   // Double Integrate — show the two steps a→v→x: the SINGLE integral v(t) as a faint amber GUIDE (context,
   // auto-scaled to fit, sharing the y=0 line — no axis), with GREEN shading of the area under it. That green
@@ -1150,9 +1173,16 @@ function renderPanel(P){
     // overlay: the other columns first, thinner; the Signal's column last and heavier, each in its own color
     OV.filter(c=>!c.on).forEach(c=>{ ctx.globalAlpha=.8; polyline(c.t.map(tx), c.a.map(ay), c.color, 1.25); ctx.globalAlpha=1; });
     const on=OV.find(c=>c.on); polyline(s.t.map(tx), s.a.map(ay), on?on.color:"--trace", 2.25);
+  } else if(pdE.dots){
+    // a handful of measured points (Thunder and Lightning: four landings, five whistle notes, fifteen hallway delays)
+    ctx.fillStyle=getCss("--trace"); for(let i=0;i<s.t.length;i++){ ctx.beginPath(); ctx.arc(tx(s.t[i]),ay(s.a[i]),5,0,2*Math.PI); ctx.fill(); }
   } else {
     polyline(s.t.map(tx), s.a.map(ay), "--trace", num("--stroke-trace"));
   }
+  if(pdE.extendTo0 && S.tool==="slope" && P.sel){ const L=slopeFit(s,P); if(L){     // dashed, from zero to the window
+    ctx.strokeStyle=getCss("--result"); ctx.lineWidth=1.5; ctx.setLineDash([6,5]);
+    ctx.beginPath(); ctx.moveTo(tx(0),ay(L.b)); ctx.lineTo(tx(L.t0),ay(L.m*L.t0+L.b)); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle=getCss("--result"); ctx.beginPath(); ctx.arc(tx(0),ay(L.b),5,0,2*Math.PI); ctx.fill(); } }
   // the Slope tool's fitted line, ON TOP of every trace (Daniel, 2026-11-15: under four overlaid curves it vanished)
   if(S.tool==="slope" && P.sel){ const L=slopeFit(s,P); if(L){
     ctx.strokeStyle=getCss("--result"); ctx.lineWidth=num("--stroke-result")+0.75;
@@ -1627,6 +1657,7 @@ function decimalsOf(raw){
 function inputIssue(st){
   const fields=fieldsOf(st);
   for(const f of fields){
+    if(f.skip && S.answers[f.key+"_skip"]) continue;          // excused by its "no clear peaks" tick
     const v=S.answers[f.key];
     // `hint.input` replaces THIS message only — the nothing-entered-yet one. The range and checkKind
     // messages below are computed from what the student actually typed, so they are always more useful
@@ -2403,6 +2434,13 @@ function renderStep(){
       if(st.autofill){ inp.readOnly=true; inp.tabIndex=-1; inp.classList.add("autofill"); inp.placeholder="from fit";
                        inp.title = st.checkKind==="expfit" ? "Filled in from your Fit Exponential window" : st.checkKind==="slopefit" ? "Filled in from your Slope window" : "Filled in from your Fit Damped window"; }
       if(S.answers[f.key]!=null) inp.value=S.answers[f.key];
+      // `skip:"no clear peaks"` on a field (Thunder and Lightning, 2026-11-20): a tick that excuses the box. Ticked, the box is
+      // emptied and locked, the input checks pass over it, and S.answers[key+"_skip"] tells a deck's plot to leave the row out.
+      if(f.skip){ const lab=document.createElement("label"); lab.className="skipchk";
+        lab.innerHTML='<input type="checkbox"> '+f.skip; row.appendChild(lab);
+        const cb=lab.querySelector("input"), sync=()=>{ inp.disabled=cb.checked; if(cb.checked){ inp.value=""; S.answers[f.key]=NaN; S.raw[f.key]=""; } };
+        cb.checked=!!S.answers[f.key+"_skip"]; sync();
+        cb.addEventListener("change",()=>{ S.answers[f.key+"_skip"]=cb.checked; sync(); S.answers["ok"+S.step]=false; clearFb(); refreshNext(); }); }
       // `input`, not `change`: `change` only fires on blur, so a student who retyped a number and
       // reached straight for Enter was being judged on the previous one. Editing any value RETRACTS
       // the submission — what they had checked is not what is in the boxes any more.

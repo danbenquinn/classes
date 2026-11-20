@@ -1,0 +1,379 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Hallway Ping Timer</title>
+<style>
+  :root {
+    --bg: #f7f7f5; --fg: #1a1a1a; --muted: #6b6b6b; --line: #e2e2de; --card: #ffffff;
+    --accent: #1f6feb; --ok: #1a7f37; --rec: #cf222e; --warn: #9a6700; --amber: #e19c24;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #111213; --fg: #ececec; --muted: #9a9a9a; --line: #2a2b2d; --card: #1a1b1d;
+      --accent: #4c8dff; --ok: #3fb950; --rec: #ff6b6b; --warn: #d29922; }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { background: var(--bg); color: var(--fg);
+    font: 17px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding: max(14px, env(safe-area-inset-top)) 16px max(18px, env(safe-area-inset-bottom));
+    -webkit-user-select: none; user-select: none; }
+  main { max-width: 460px; margin: 0 auto; }
+  button { padding: 15px; border: 0; border-radius: 14px; background: var(--accent); color: #fff;
+    font: 600 17px/1 inherit; font-family: inherit; width: 100%; }
+  button.ghost { background: transparent; color: var(--fg); border: 1px solid var(--line); font-weight: 500; }
+  button.small { width: auto; padding: 7px 12px; font-size: 14px; border-radius: 10px; }
+  button:disabled { opacity: .45; }
+  .top { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+  .dist { font: 700 30px/1 ui-monospace, "SF Mono", Menlo, monospace; }
+  .dist small { font: 500 13px -apple-system, sans-serif; color: var(--muted); display: block; margin-bottom: 3px; }
+  .watch { font: 650 30px/1 ui-monospace, "SF Mono", Menlo, monospace; font-variant-numeric: tabular-nums; text-align: right; }
+  .watch small { font: 500 13px -apple-system, sans-serif; color: var(--muted); display: block; margin-bottom: 3px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px; margin-top: 12px; }
+  .lbl { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+  .meter { position: relative; height: 22px; background: var(--line); border-radius: 6px; overflow: hidden; margin: 8px 0 4px; }
+  .meter .bar { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: var(--ok); }
+  .meter .hold { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--fg); opacity: .5; left: 0; }
+  .meter .thr { position: absolute; top: -2px; bottom: -2px; width: 3px; background: var(--rec); left: 0; }
+  input[type=range] { width: 100%; }
+  select { font: 600 18px inherit; font-family: inherit; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line);
+    background: var(--card); color: var(--fg); }
+  .grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 12px; }
+  .dists { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin-top: 12px; }
+  .dists button { font-size: 18px; padding: 16px 0; }
+  .ping { display: flex; justify-content: space-between; align-items: center; padding: 9px 0; border-bottom: 1px solid var(--line);
+    font: 16px ui-monospace, Menlo, monospace; font-variant-numeric: tabular-nums; }
+  .ping:last-child { border-bottom: 0; }
+  .trialhead { font-size: 13px; color: var(--muted); margin-top: 10px; text-transform: uppercase; letter-spacing: .05em; }
+  .msg { margin-top: 10px; font-size: 15px; min-height: 1.4em; }
+  .msg.warn { color: var(--rec); } .msg.ok { color: var(--ok); }
+  .rec { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--rec); margin-right: 6px; animation: pulse 1s infinite; }
+  @keyframes pulse { 50% { opacity: .3; } }
+  .qr { background: #fff; padding: 10px; border-radius: 10px; line-height: 0; display: inline-block; margin-top: 8px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <section id="pick">
+    <h2 style="margin:6px 0 4px">Hallway Ping Timer</h2>
+    <p style="color:var(--muted);margin:0">How far will this phone be from the test ping?</p>
+    <div class="dists" id="dists"></div>
+  </section>
+
+  <section id="app" hidden>
+    <div class="top">
+      <div class="dist"><small>distance</small><span id="distLbl"></span></div>
+      <div class="watch"><small>stopwatch</small><span id="watch">00:00:00</span></div>
+    </div>
+
+    <div class="card">
+      <div class="top">
+        <div class="lbl">Sound level · red line is the trigger</div>
+        <div id="listenTag" style="font-size:14px;color:var(--muted)">not listening</div>
+      </div>
+      <div class="meter"><div class="bar" id="bar"></div><div class="hold" id="hold"></div><div class="thr" id="thr"></div></div>
+      <input type="range" id="thrSlider" min="0" max="100" step="1" aria-label="Trigger threshold">
+      <div style="display:flex;justify-content:space-between;font-size:13px;color:var(--muted)"><span>more sensitive</span><span id="thrVal"></span><span>less sensitive</span></div>
+    </div>
+
+    <div class="card">
+      <div class="top">
+        <div class="lbl">Pings</div>
+        <label style="font-size:15px">Trial <select id="trial"><option>1</option><option>2</option><option>3</option></select></label>
+      </div>
+      <div id="pings"></div>
+      <div class="top" style="margin-top:10px"><span></span><button class="ghost small" id="delAll">Delete all</button></div>
+    </div>
+
+    <div class="grid3">
+      <button id="start">Start listening</button>
+      <button class="ghost" id="stop" disabled>Stop listening</button>
+      <button class="ghost" id="submit">Submit trials</button>
+    </div>
+    <div class="msg" id="msg"></div>
+
+    <div style="margin-top:22px;font-size:13px;color:var(--muted)">
+      <a href="#" id="showQR" style="color:var(--accent)">Show a QR code for another phone</a> ·
+      <a href="#" id="changeDist" style="color:var(--accent)">change distance</a> · <span id="ver"></span>
+      <div id="qrBox" hidden><div class="qr" id="qr"></div></div>
+    </div>
+  </section>
+</main>
+
+<script src="vendor/qrcode.js"></script>
+<script>
+// ─────────────────────────────────────────────────────────────
+// Hallway Ping Timer · Workshop 6, Part 3 (2026-11-20).
+//
+// Five phones; each picks its distance from the TEST ping (0, 8, 16, 24, 32 m). Per trial: all five side by
+// side, SYNC ping; four walk out; TEST ping. The page records the moment each ping crosses the trigger, on the
+// phone's own audio clock (to the sample), with 1 s of echoes ignored after each. The stopwatch counts up from
+// page load and labels each ping ("Ping heard at 01:12:75"); the submitted times are the audio-clock seconds.
+//
+// THE SLIP CHECK (from the Nov 18 hallway test: the live audio graph on some phones slips whole 40 ms chunks).
+// While listening, the page also records the microphone with MediaRecorder. On Stop listening it decodes that
+// recording and finds the pings in it; for any trial whose two pings fell in one listening session, the gap
+// between them is compared with the recording's gap, and if they differ by more than 10 ms the recording's
+// gap replaces the live one (t2 = t1 + recorded gap). Nothing about this shows on screen; the row records it.
+//
+// SUBMIT needs exactly two pings in each of the three trials, then saves one row per phone to Supabase
+// (`save_class_run`, workshop "W6-hallway-<d>m"); the deck reads the five newest.
+// The instructor key comes from the link (#k=…), else it is asked for once and remembered.
+//
+// URL: hallway.html#k=KEY   ·   &sim=1 in the query: fake microphone (pings every few s; ?slip=s adds a 40 ms live slip)
+// ─────────────────────────────────────────────────────────────
+const VERSION = "v1 · Nov 20";
+const DISTS = [0, 8, 16, 24, 32];
+const HOLD_S = 1.0, AGREE_S = 0.010, PRE_MS = 10, POST_MS = 40;
+const SUPA = "https://rdbacwwbeyeqdkswwvjt.supabase.co", SUPA_KEY = "sb_publishable_IQNxMMynit0aWtOS3tjiRQ_h5sNo159";
+const params = new URLSearchParams(location.search), SIM = params.has("sim"), SLIP = +(params.get("slip") || 0);
+const $ = (id) => document.getElementById(id);
+const T0 = performance.now();
+let dist = null, ctx = null, node = null, sr = 48000, stream = null, listening = false;
+let audioToPerf = null;     // performance.now() ms at audio time 0, learned from the level messages
+let pings = [];             // {id, t, trial, session, perf}
+let seq = 0, session = 0, rec = null, sessions = {};   // sessions[n] = {recPops, offset} after analysis
+let thr = 0.25;
+try { const v = +localStorage.getItem("hall-thr"); if (v > 0) thr = v; } catch {}
+const keyFromHash = new URLSearchParams(location.hash.slice(1)).get("k");
+if (keyFromHash) try { localStorage.setItem("hall-key", keyFromHash); } catch {}
+
+// ── distance ────────────────────────────────────────────────
+$("dists").innerHTML = DISTS.map((d) => `<button data-d="${d}">${d} m</button>`).join("");
+$("dists").querySelectorAll("button").forEach((b) => b.onclick = () => { dist = +b.dataset.d; showApp(); });
+function showApp() {
+  $("pick").hidden = true; $("app").hidden = false; $("distLbl").textContent = dist + " m";
+  try { localStorage.setItem("hall-dist", dist); } catch {}
+}
+$("changeDist").onclick = (e) => { e.preventDefault(); $("pick").hidden = false; $("app").hidden = true; };
+$("ver").textContent = VERSION;
+
+// ── stopwatch ───────────────────────────────────────────────
+const fmt = (ms) => { const cs = Math.floor(ms / 10), m = Math.floor(cs / 6000), s = Math.floor(cs / 100) % 60, h = cs % 100;
+  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}:${String(h).padStart(2, "0")}`; };
+(function tick() { $("watch").textContent = fmt(performance.now() - T0); requestAnimationFrame(tick); })();
+
+// ── threshold ───────────────────────────────────────────────
+const s2thr = (s) => 0.01 * Math.pow(100, s / 100), thr2s = (v) => Math.round(100 * Math.log(v / 0.01) / Math.log(100));
+const pct = (v) => Math.max(0, Math.min(100, 100 * Math.log(Math.max(v, 0.003) / 0.003) / Math.log(1 / 0.003)));
+function showThr() { $("thr").style.left = pct(thr) + "%"; $("thrVal").textContent = "trigger " + thr.toFixed(thr < 0.1 ? 3 : 2); }
+$("thrSlider").value = thr2s(thr); showThr();
+$("thrSlider").oninput = (e) => { thr = s2thr(+e.target.value); showThr(); node && node.port.postMessage({ thr });
+  try { localStorage.setItem("hall-thr", thr); } catch {} };
+
+// ── detector (audio thread) ─────────────────────────────────
+const WORKLET = `
+class Pinger extends AudioWorkletProcessor {
+  constructor(o) { super(); const p = o.processorOptions;
+    this.thr = p.thr; this.hold = Math.round(p.hold * sampleRate); this.pre = Math.round(p.pre * sampleRate); this.post = Math.round(p.post * sampleRate);
+    this.ring = new Float32Array(this.pre); this.ri = 0; this.cap = null; this.quiet = 0; this.pk = 0; this.last = 0; this.on = false;
+    this.shift = 0; this.slipAt = p.slipAt || 0;
+    this.port.onmessage = (e) => { if (e.data.thr) this.thr = e.data.thr; if ("on" in e.data) this.on = e.data.on; }; }
+  process(inputs) {
+    const x = inputs[0] && inputs[0][0]; if (!x) return true;
+    for (let i = 0; i < x.length; i++) {
+      if (this.slipAt && currentFrame + i >= this.slipAt * sampleRate) { this.shift += Math.round(0.04 * sampleRate); this.slipAt = 0; }
+      const v = x[i], a = v < 0 ? -v : v, f = currentFrame + i + this.shift;
+      if (a > this.pk) this.pk = a;
+      if (this.cap) { this.cap.buf[this.cap.n++] = v;
+        if (this.cap.n === this.cap.buf.length) { this.port.postMessage({ type: "ping", trig: this.cap.trig, start: this.cap.start, buf: this.cap.buf }, [this.cap.buf.buffer]); this.cap = null; } }
+      else if (this.on && a >= this.thr && f >= this.quiet) {
+        const buf = new Float32Array(this.pre + this.post);
+        for (let k = 0; k < this.pre; k++) buf[k] = this.ring[(this.ri + k) % this.pre];
+        this.cap = { buf, n: this.pre, trig: f, start: f - this.pre }; this.cap.buf[this.cap.n++] = v; this.quiet = f + this.hold; }
+      this.ring[this.ri] = v; this.ri = (this.ri + 1) % this.pre;
+    }
+    if (currentFrame - this.last > sampleRate / 20) { this.port.postMessage({ type: "level", pk: this.pk, frame: currentFrame }); this.pk = 0; this.last = currentFrame; }
+    return true;
+  }
+}
+registerProcessor("pinger", Pinger);`;
+
+function refineOnset(buf, pre, rate) {
+  let ss = 0; for (let k = 0; k < pre; k++) ss += buf[k] * buf[k];
+  const noise = Math.sqrt(ss / pre), early = Math.round(0.003 * rate);
+  let pk = 0; for (let k = pre; k < Math.min(buf.length, pre + early); k++) pk = Math.max(pk, Math.abs(buf[k]));
+  const lvl = Math.max(6 * noise, 0.2 * pk);
+  for (let k = Math.max(0, pre - Math.round(0.005 * rate)); k <= pre; k++) if (Math.abs(buf[k]) >= lvl) return k;
+  return pre;
+}
+
+async function ensureAudio() {
+  if (ctx) return;
+  ctx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: "interactive" });
+  await ctx.resume(); sr = ctx.sampleRate;
+  await ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([WORKLET], { type: "application/javascript" })));
+  node = new AudioWorkletNode(ctx, "pinger", { processorOptions: { thr, hold: HOLD_S, pre: PRE_MS / 1000, post: POST_MS / 1000, slipAt: SLIP } });
+  let src;
+  if (SIM) { src = simSource(); const d = ctx.createMediaStreamDestination(); src.connect(d); stream = d.stream; }
+  else { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 } });
+    src = ctx.createMediaStreamSource(stream); }
+  const mute = ctx.createGain(); mute.gain.value = 0; src.connect(node); node.connect(mute); mute.connect(ctx.destination);
+  node.port.onmessage = onWorklet;
+  try { if ("wakeLock" in navigator) await navigator.wakeLock.request("screen"); } catch {}
+}
+function simSource() {
+  // 60 s: pings at 3 s and 9 s, 23 and 29, 43 and 49; the second of each pair late by d/343.9 s
+  const n = Math.round(60 * sr), b = ctx.createBuffer(1, n, sr), x = b.getChannelData(0);
+  for (let i = 0; i < n; i++) x[i] = (Math.random() - 0.5) * 0.01;
+  const ping = (t0, amp) => { const i0 = Math.round(t0 * sr);
+    for (let k = 0; k < 0.06 * sr && i0 + k < n; k++) x[i0 + k] += amp * Math.sin(2 * Math.PI * 2400 * k / sr) * Math.exp(-k / (0.01 * sr)); };
+  const late = (dist || 0) / 343.9;
+  for (const t of [3, 23, 43]) { ping(t, 0.9); ping(t + 6 + late, 0.9 / (1 + (dist || 0) / 8)); }
+  const s = ctx.createBufferSource(); s.buffer = b; s.start(ctx.currentTime + 0.05); return s;
+}
+
+let holdPk = 0, holdAt = 0;
+function onWorklet(e) {
+  const m = e.data;
+  if (m.type === "level") {
+    audioToPerf = performance.now() - m.frame / sr * 1000;
+    const now = performance.now(); if (m.pk > holdPk || now - holdAt > 1500) { holdPk = m.pk; holdAt = now; }
+    $("bar").style.width = pct(m.pk) + "%"; $("bar").style.background = m.pk >= thr ? "var(--rec)" : "var(--ok)";
+    $("hold").style.left = pct(holdPk) + "%";
+  } else if (m.type === "ping" && listening) {
+    const pre = m.trig - m.start, k = refineOnset(m.buf, pre, sr), t = (m.start + k) / sr;
+    pings.push({ id: ++seq, t, trial: +$("trial").value, session, perf: (audioToPerf ?? performance.now()) + t * 1000 - T0 });
+    renderPings(); say("");
+  }
+}
+
+// ── listening sessions (each one also recorded, for the slip check) ─
+$("start").onclick = async () => {
+  $("start").disabled = true;
+  try { await ensureAudio(); }
+  catch (e) { $("start").disabled = false; say("Couldn't start the microphone: " + (e.message || e) + ". Allow microphone access; use Safari or Chrome.", "warn"); return; }
+  session++; listening = true; node.port.postMessage({ on: true });
+  startRecorder(session);
+  $("stop").disabled = false; $("listenTag").innerHTML = '<span class="rec"></span>listening';
+};
+$("stop").onclick = () => stopListening();
+async function stopListening() {
+  if (!listening) return;
+  listening = false; node.port.postMessage({ on: false });
+  $("stop").disabled = true; $("start").disabled = false; $("listenTag").textContent = "not listening";
+  await stopRecorder();
+}
+function pickMime() {
+  for (const m of ["audio/webm;codecs=opus", "audio/mp4", "audio/webm"]) if (window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)) return m;
+  return "";
+}
+function startRecorder(n) {
+  if (!window.MediaRecorder || !stream) return;
+  try {
+    const mime = pickMime(), chunks = [];
+    const mr = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 64000 } : undefined);
+    mr.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+    rec = { n, mr, chunks, mime: mr.mimeType || mime, done: null };
+    rec.done = new Promise((res) => { mr.onstop = res; });
+    mr.start();
+  } catch { rec = null; }
+}
+async function stopRecorder() {
+  const r = rec; rec = null; if (!r) return;
+  r.mr.stop(); await r.done;
+  try {
+    const buf = await ctx.decodeAudioData(await new Blob(r.chunks, { type: r.mime }).arrayBuffer());
+    sessions[r.n] = { recPops: findPops(buf.getChannelData(0), buf.sampleRate) };
+  } catch (e) { sessions[r.n] = { err: String(e.message || e) }; }
+}
+function findPops(x, rate) {
+  const step = Math.max(1, Math.floor(x.length / 20000)), s = [];
+  for (let i = 0; i < x.length; i += step) s.push(Math.abs(x[i]));
+  s.sort((a, b) => a - b);
+  const noise = s[Math.floor(s.length / 2)] || 1e-6;
+  let mx = 0; for (let i = 0; i < x.length; i++) mx = Math.max(mx, Math.abs(x[i]));
+  const th = Math.max(0.05 * mx, 25 * noise), pre = Math.round(PRE_MS / 1000 * rate), post = Math.round(POST_MS / 1000 * rate), hold = Math.round(HOLD_S * rate);
+  const out = [];
+  for (let i = pre; i < x.length - post; i++) {
+    if (Math.abs(x[i]) < th) continue;
+    out.push((i - pre + refineOnset(x.slice(i - pre, i + post), pre, rate)) / rate); i += hold;
+  }
+  return out;
+}
+
+// ── the list ────────────────────────────────────────────────
+function renderPings() {
+  const h = [1, 2, 3].map((tr) => {
+    const ps = pings.filter((p) => p.trial === tr);
+    if (!ps.length) return "";
+    return `<div class="trialhead">Trial ${tr}</div>` + ps.map((p) =>
+      `<div class="ping"><span>Ping heard at ${fmt(p.perf)}</span><button class="ghost small" data-id="${p.id}">Delete</button></div>`).join("");
+  }).join("");
+  $("pings").innerHTML = h || '<div style="color:var(--muted);font-size:15px;margin-top:8px">No pings yet. Start listening.</div>';
+  $("pings").querySelectorAll("button").forEach((b) => b.onclick = () => { pings = pings.filter((p) => p.id !== +b.dataset.id); renderPings(); });
+}
+let delArmed = 0;
+$("delAll").onclick = () => {
+  if (!pings.length) return;
+  if (Date.now() - delArmed > 3000) { delArmed = Date.now(); $("delAll").textContent = "Tap again to delete all"; setTimeout(() => $("delAll").textContent = "Delete all", 3000); return; }
+  pings = []; renderPings(); $("delAll").textContent = "Delete all"; delArmed = 0;
+};
+function say(t, cls) { $("msg").textContent = t; $("msg").className = "msg " + (cls || ""); }
+
+// ── submit ──────────────────────────────────────────────────
+function checkedTrial(tr) {
+  const ps = pings.filter((p) => p.trial === tr).sort((a, b) => a.t - b.t), [a, b] = ps;
+  const out = { trial: tr, t1: +a.t.toFixed(5), t2: +b.t.toFixed(5), t2_live: +b.t.toFixed(5), check: "none" };
+  const ses = a.session === b.session ? sessions[a.session] : null;
+  if (!ses) { out.check = a.session === b.session ? "no recording" : "split sessions"; return out; }
+  if (ses.err || !ses.recPops || ses.recPops.length < 2) { out.check = "recording unusable"; return out; }
+  // the recording's clock = the live clock minus a near-constant offset: match each live ping to the nearest recorded one
+  const sesPings = pings.filter((p) => p.session === a.session);
+  let best = 0, bestN = -1;
+  for (const p of sesPings) for (const r of ses.recPops) {
+    const o = p.t - r, n = sesPings.filter((q) => ses.recPops.some((rr) => Math.abs(q.t - rr - o) < 0.1)).length;
+    if (n > bestN) { bestN = n; best = o; }
+  }
+  const ra = ses.recPops.find((r) => Math.abs(a.t - r - best) < 0.1), rb = ses.recPops.find((r) => Math.abs(b.t - r - best) < 0.1);
+  if (ra == null || rb == null) { out.check = "not found in recording"; return out; }
+  const lg = b.t - a.t, rg = rb - ra;
+  out.rec_gap = +rg.toFixed(5);
+  if (Math.abs(lg - rg) < AGREE_S) out.check = "agrees";
+  else { out.check = "live slipped"; out.slip_ms = +((lg - rg) * 1000).toFixed(1); out.t2 = +(a.t + rg).toFixed(5); }
+  return out;
+}
+function getKey() {
+  try { const k = localStorage.getItem("hall-key"); if (k) return k; } catch {}
+  const k = prompt("Instructor key (asked once on this phone)"); if (k) try { localStorage.setItem("hall-key", k.trim()); } catch {}
+  return k && k.trim();
+}
+$("submit").onclick = async () => {
+  if (dist == null) return;
+  if (listening) await stopListening();
+  for (const tr of [1, 2, 3]) {
+    const n = pings.filter((p) => p.trial === tr).length;
+    if (n !== 2) { say(`Trial ${tr} has ${n} ping${n === 1 ? "" : "s"}. Each trial needs exactly two: the sync ping and the test ping. ${n > 2 ? "Delete the extra ones." : "Pick the trial at the top before listening."}`, "warn"); return; }
+  }
+  const trials = [1, 2, 3].map(checkedTrial);
+  const run = { distance: dist, trials, sr, version: VERSION, ua: navigator.userAgent.slice(0, 160), submitted: new Date().toISOString() };
+  if (SIM && params.has("dry")) { window.__lastRun = run; say("Dry run: not sent. " + JSON.stringify(trials.map((t) => t.check)), "ok"); pings = []; renderPings(); return; }
+  const key = getKey(); if (!key) { say("Submit needs the instructor key.", "warn"); return; }
+  $("submit").disabled = true; say("Sending…");
+  try {
+    const r = await fetch(SUPA + "/rest/v1/rpc/save_class_run", { method: "POST",
+      headers: { "Content-Type": "application/json", apikey: SUPA_KEY },
+      body: JSON.stringify({ p_key: key, p_workshop: "W6-hallway-" + dist + "m", p_run: run }) });
+    if (!r.ok) { const t = await r.text(); if (/instructor key/.test(t)) try { localStorage.removeItem("hall-key"); } catch {}
+      throw new Error(/instructor key/.test(t) ? "wrong instructor key" : "HTTP " + r.status); }
+    pings = []; sessions = {}; renderPings();
+    say(`Submitted: ${dist} m, three trials. This phone is cleared.`, "ok");
+  } catch (e) { say("Didn't send (" + e.message + "). Your pings are still here; try again.", "warn"); }
+  $("submit").disabled = false;
+};
+
+// ── QR for the next phone ───────────────────────────────────
+$("showQR").onclick = (e) => {
+  e.preventDefault(); const box = $("qrBox"); box.hidden = !box.hidden; if (box.hidden) return;
+  let k = null; try { k = localStorage.getItem("hall-key"); } catch {}
+  const u = new URL(location.href); u.hash = k ? "k=" + k : "";
+  const q = qrcode(0, "M"); q.addData(u.href); q.make(); $("qr").innerHTML = q.createImgTag(5, 0, "QR code for this page");
+};
+
+try { const d = localStorage.getItem("hall-dist"); if (d !== null && params.has("keepdist")) { dist = +d; showApp(); } } catch {}
+renderPings();
+</script>
+</body>
+</html>
