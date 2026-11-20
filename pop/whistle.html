@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Whistle Recorder</title>
+<style>
+  :root {
+    --bg: #f7f7f5; --fg: #1a1a1a; --muted: #6b6b6b; --line: #e2e2de; --card: #ffffff;
+    --accent: #1f6feb; --ok: #1a7f37; --rec: #cf222e; --blue: #5e81b5; --amber: #e19c24;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #111213; --fg: #ececec; --muted: #9a9a9a; --line: #2a2b2d; --card: #1a1b1d;
+      --accent: #4c8dff; --ok: #3fb950; --rec: #ff6b6b; }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { background: var(--bg); color: var(--fg);
+    font: 17px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding: max(18px, env(safe-area-inset-top)) 16px max(18px, env(safe-area-inset-bottom)); }
+  main { max-width: 480px; margin: 0 auto; }
+  h1 { font-size: 24px; margin: 4px 0 4px; letter-spacing: -.01em; }
+  p { margin: 0 0 10px; color: var(--muted); }
+  button { width: 100%; padding: 16px; border: 0; border-radius: 14px; margin-top: 10px;
+    background: var(--accent); color: #fff; font: 600 18px/1 inherit; font-family: inherit; }
+  button.ghost { background: transparent; color: var(--fg); border: 1px solid var(--line); font-weight: 500; font-size: 16px; }
+  button.small { width: auto; padding: 8px 12px; margin: 0; font-size: 14px; }
+  button:disabled { opacity: .5; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px; margin-top: 14px; }
+  .lbl { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+  .meter { position: relative; height: 18px; background: var(--line); border-radius: 6px; overflow: hidden; margin: 8px 0 2px; }
+  .meter .bar { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: var(--ok); }
+  canvas { width: 100%; display: block; margin-top: 8px; }
+  .row { display: flex; gap: 10px; align-items: center; }
+  input[type=number] { font: 600 20px ui-monospace, Menlo, monospace; width: 110px; padding: 8px; border-radius: 10px;
+    border: 1px solid var(--line); background: var(--bg); color: var(--fg); }
+  .big { font: 650 30px/1.1 ui-monospace, "SF Mono", Menlo, monospace; font-variant-numeric: tabular-nums; }
+  ul { list-style: none; padding: 0; margin: 6px 0 0; }
+  li { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line);
+    font: 15px ui-monospace, Menlo, monospace; font-variant-numeric: tabular-nums; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Whistle Recorder</h1>
+  <p>Start the note first, then tap Record while it's still sounding. The phone keeps exactly 0.25 s.</p>
+
+  <button id="go">Start microphone</button>
+
+  <section id="live" hidden>
+    <div class="card">
+      <div class="lbl">Sound level</div>
+      <div class="meter"><div class="bar" id="bar"></div></div>
+      <button id="recBtn">Record 0.25 s</button>
+    </div>
+
+    <div class="card" id="clipCard" hidden>
+      <div class="lbl">This clip</div>
+      <canvas id="full" width="900" height="200"></canvas>
+      <div style="font-size:13px;color:var(--muted)">All 0.25 s. Below: the first 20 ms, zoomed in.</div>
+      <canvas id="zoom" width="900" height="200"></canvas>
+      <div class="row" style="justify-content:space-between;margin-top:10px">
+        <div><div class="lbl">Estimated pitch</div><div class="big" id="freq">—</div></div>
+        <div><div class="lbl">Extension (cm)</div><input type="number" id="len" step="0.5" min="0" inputmode="decimal"></div>
+      </div>
+      <div class="row">
+        <button id="save">Keep this clip</button>
+        <button class="ghost" id="discard">Discard</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="lbl">Kept clips</div>
+      <ul id="list"><li style="color:var(--muted)">none yet</li></ul>
+      <button id="dl" disabled>Download all as one CSV</button>
+    </div>
+  </section>
+</main>
+
+<script>
+// Whistle Recorder (Workshop 6 sample data, 2026-11-20). Records 0.25 s of raw microphone at the
+// phone's own rate (echo cancellation, noise suppression and auto-gain off), estimates the pitch by
+// autocorrelation, and exports every kept clip as one wide CSV: time (s), then one column per clip,
+// headed by its extension in cm. Signal is in the microphone's arbitrary units ("pressure, arb.").
+const CLIP_S = 0.25;
+const $ = (id) => document.getElementById(id);
+let ctx = null, node = null, sr = 48000, clip = null;
+const kept = [];   // {len, f, x: Float32Array}
+
+const WORKLET = `
+class Grab extends AudioWorkletProcessor {
+  constructor(o) { super(); this.n = o.processorOptions.n; this.buf = null; this.k = 0; this.pk = 0; this.last = 0;
+    this.port.onmessage = () => { this.buf = new Float32Array(this.n); this.k = 0; }; }
+  process(inputs) {
+    const x = inputs[0] && inputs[0][0]; if (!x) return true;
+    for (let i = 0; i < x.length; i++) {
+      const a = Math.abs(x[i]); if (a > this.pk) this.pk = a;
+      if (this.buf) { this.buf[this.k++] = x[i];
+        if (this.k === this.n) { this.port.postMessage({ type: "clip", buf: this.buf }, [this.buf.buffer]); this.buf = null; } }
+    }
+    if (currentFrame - this.last > sampleRate / 20) { this.port.postMessage({ type: "level", pk: this.pk }); this.pk = 0; this.last = currentFrame; }
+    return true;
+  }
+}
+registerProcessor("grab", Grab);`;
+
+$("go").onclick = async () => {
+  $("go").disabled = true; $("go").textContent = "Starting…";
+  try {
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    await ctx.resume(); sr = ctx.sampleRate;
+    await ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([WORKLET], { type: "application/javascript" })));
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: {
+      echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 } });
+    node = new AudioWorkletNode(ctx, "grab", { processorOptions: { n: Math.round(CLIP_S * sr) } });
+    const mute = ctx.createGain(); mute.gain.value = 0;
+    ctx.createMediaStreamSource(stream).connect(node); node.connect(mute); mute.connect(ctx.destination);
+    node.port.onmessage = onMsg;
+  } catch (e) {
+    $("go").disabled = false; $("go").textContent = "Try again";
+    alert("Couldn't start the microphone: " + (e.message || e)); return;
+  }
+  $("go").hidden = true; $("live").hidden = false;
+  try { if ("wakeLock" in navigator) await navigator.wakeLock.request("screen"); } catch {}
+};
+
+function onMsg(e) {
+  const m = e.data;
+  if (m.type === "level") {
+    const p = Math.max(0, Math.min(100, 100 * Math.log(Math.max(m.pk, 0.003) / 0.003) / Math.log(1 / 0.003)));
+    $("bar").style.width = p + "%"; $("bar").style.background = m.pk > 0.98 ? "var(--rec)" : "var(--ok)";
+  } else if (m.type === "clip") {
+    clip = { x: m.buf, f: pitch(m.buf) };
+    $("recBtn").disabled = false; $("recBtn").textContent = "Record 0.25 s";
+    showClip();
+  }
+}
+$("recBtn").onclick = () => { if (!node) return; $("recBtn").disabled = true; $("recBtn").textContent = "Recording…"; node.port.postMessage("go"); };
+
+// pitch by autocorrelation, 150–5000 Hz: the first lag whose correlation reaches 85 % of the best one
+// (avoids picking a multiple of the period), refined with a parabola through its neighbors
+function pitch(x) {
+  const n = Math.min(x.length, Math.round(0.1 * sr));
+  let mean = 0; for (let i = 0; i < n; i++) mean += x[i]; mean /= n;
+  const y = new Float32Array(n); for (let i = 0; i < n; i++) y[i] = x[i] - mean;
+  const lo = Math.floor(sr / 5000), hi = Math.ceil(sr / 150), r = new Float32Array(hi + 2);
+  for (let L = lo - 1; L <= hi + 1; L++) { let s = 0; for (let i = 0; i + L < n; i++) s += y[i] * y[i + L]; r[L] = s / (n - L); }
+  let best = 0; for (let L = lo; L <= hi; L++) best = Math.max(best, r[L]);
+  if (best <= 0) return null;
+  for (let L = lo; L <= hi; L++) {
+    if (r[L] >= 0.85 * best && r[L] >= r[L - 1] && r[L] >= r[L + 1]) {
+      const d = (r[L - 1] - r[L + 1]) / (2 * (r[L - 1] - 2 * r[L] + r[L + 1]) || 1);
+      return sr / (L + d);
+    }
+  }
+  return null;
+}
+
+function draw(cv, x, n, color) {
+  const g = cv.getContext("2d"), W = cv.width, H = cv.height; g.clearRect(0, 0, W, H);
+  let pk = 1e-6; for (let i = 0; i < n; i++) pk = Math.max(pk, Math.abs(x[i]));
+  g.strokeStyle = getComputedStyle(document.body).color; g.globalAlpha = .2; g.beginPath(); g.moveTo(0, H / 2); g.lineTo(W, H / 2); g.stroke(); g.globalAlpha = 1;
+  g.strokeStyle = color; g.lineWidth = 1.5; g.beginPath();
+  const step = Math.max(1, Math.floor(n / (W * 2)));
+  for (let i = 0; i < n; i += step) { const px = i / (n - 1) * W, py = H / 2 - x[i] / pk * (H / 2 - 4); i ? g.lineTo(px, py) : g.moveTo(px, py); }
+  g.stroke();
+}
+function showClip() {
+  $("clipCard").hidden = false;
+  draw($("full"), clip.x, clip.x.length, "#5e81b5");
+  draw($("zoom"), clip.x, Math.round(0.02 * sr), "#5e81b5");
+  $("freq").innerHTML = clip.f ? Math.round(clip.f) + ' <span style="font-size:15px;color:var(--muted)">Hz</span>' : "—";
+  $("len").focus();
+}
+$("save").onclick = () => {
+  if (!clip) return;
+  const len = $("len").value.trim();
+  if (len === "") { $("len").focus(); return; }
+  kept.push({ len: +len, f: clip.f, x: clip.x }); clip = null; $("clipCard").hidden = true; $("len").value = ""; list();
+};
+$("discard").onclick = () => { clip = null; $("clipCard").hidden = true; };
+function list() {
+  $("list").innerHTML = kept.length ? kept.map((c, i) =>
+    `<li><span>${c.len} cm · ${c.f ? Math.round(c.f) + " Hz" : "no pitch"}</span><button class="ghost small" data-i="${i}">Delete</button></li>`).join("")
+    : '<li style="color:var(--muted)">none yet</li>';
+  $("list").querySelectorAll("button").forEach((b) => b.onclick = () => { kept.splice(+b.dataset.i, 1); list(); });
+  $("dl").disabled = !kept.length;
+}
+$("dl").onclick = () => {
+  const n = Math.min(...kept.map((c) => c.x.length));
+  const head = ["time (s)", ...kept.map((c) => `extension ${c.len} cm (pressure, arb.)`)];
+  const rows = [head.map((h) => `"${h}"`).join(",")];
+  for (let i = 0; i < n; i++) rows.push([(i / sr).toFixed(7), ...kept.map((c) => c.x[i].toFixed(5))].join(","));
+  const meta = `# whistle clips · ${sr} Hz · ${CLIP_S} s each · pitch estimates: ` + kept.map((c) => `${c.len} cm ${c.f ? c.f.toFixed(1) : "?"} Hz`).join("; ");
+  const blob = new Blob([meta + "\n" + rows.join("\n")], { type: "text/csv" });
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
+  a.download = "whistle-clips-" + new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-") + ".csv";
+  document.body.appendChild(a); a.click(); a.remove();
+};
+</script>
+</body>
+</html>
