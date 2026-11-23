@@ -17,10 +17,10 @@
    the step says so and offers "Check again". "Use the sample data" loads CONFIG.w6.sample (simulated; see the
    manifest) and says so; teacher mode does that by itself.
 
-   THE TABLE, in three stages, on `hall:` steps (top: html, <div id="w6-hall">):
-     stage 0  t1 and t2 as recorded                                 (h-table, until its question is answered)
-     stage 1  t1 − t1 (all zero) and t2 − t1                        (h-table answered; h-delay until answered)
-     stage 2  one column, (t2 − t1) − (t2 − t1) of the 0 m phone, ms (h-delay answered; h-howc)
+   THE TABLE, on `hall:` steps (top: html, <div id="w6-hall">). Since 2026-11-23 each phone syncs itself (its sync ping
+   is 0, so t1 = 0 and t2 = its stopwatch t), which leaves two stages:
+     stage 1  each phone's t, seconds                               (h-table, until its question is answered)
+     stage 2  t − t of the 0 m phone in the same trial, ms           (h-table answered; h-howc)
    Each change flashes the cells that changed; the t1 column fades out on the way to stage 2. */
 (function(){
 "use strict";
@@ -95,8 +95,8 @@ const fmtAt=d=>d ? d.toLocaleTimeString([], { hour:"numeric", minute:"2-digit" }
 let lastStage=null;
 function stageFor(st, i){
   const done=typeof stepComplete==="function" && stepComplete(i);
-  if(st.hall==="table") return done ? 1 : 0;
-  if(st.hall==="gap") return done ? 2 : 1;
+  // 2026-11-23: the phones sync themselves (sync ping = 0), so the table opens on each phone's stopwatch t and has two stages
+  if(st.hall==="table") return done ? 2 : 1;
   return 2;
 }
 function paintAll(){ const st=NARR[S.step]; if(st && st.hall) paint(st); }
@@ -111,14 +111,14 @@ function paint(st){
     el.innerHTML=h; return;
   }
   const T=trials(), fx=v=>v.toFixed(4), cls=flash?" w6-flash":"";
-  const head = stage===0 ? ['$t_1$ (s)','$t_2$ (s)'] : stage===1 ? ['$t_1-t_1$','$t_2-t_1$ (s)'] : ['$(t_2-t_1)-(t_2-t_1)_{0\\,\\text{m}}$ (ms)'];
+  const head = stage===1 ? ['$t$ (s)'] : ['$t-t_{0\\,\\text{m}}$ (ms)'];
   h+='<div class="w6-grid w6-s'+stage+'">';
   C.dists.forEach(d=>{
     h+='<div class="w6-card"><div class="w6-d">'+d+' m'+(H.missing.indexOf(d)>=0?' <span class="w6-mut">(no data)</span>':'')+'</div><table><tr><th>trial</th>'
       +head.map(x=>'<th>'+x+'</th>').join("")+'</tr>';
     T.forEach(k=>{ const r=row(d,k);
       if(!r){ h+='<tr><td>'+k+'</td>'+head.map(()=>'<td>—</td>').join("")+'</tr>'; return; }
-      const cells = stage===0 ? [fx(r.t1), fx(r.t2)] : stage===1 ? [fx(0), fx(r.t2-r.t1)] : [(delayMs(d,k)??NaN).toFixed(2)];
+      const cells = stage===1 ? [fx(r.t2-r.t1)] : [(delayMs(d,k)??NaN).toFixed(2)];
       h+='<tr><td>'+k+'</td>'+cells.map(c=>'<td class="'+cls.trim()+'">'+c+'</td>').join("")+'</tr>'; });
     h+='</table></div>'; });
   h+='</div><p class="w6-src">'+(H.src==="live" ? '<b>Class run</b>, submitted by '+fmtAt(H.at)+(H.missing.length?' · missing: '+H.missing.map(d=>d+' m').join(", "):'')
@@ -138,6 +138,36 @@ function onStep(){
   if(ks.indexOf("wplot")>=0) buildWhistle();
   if(st.hall || ks.indexOf("hall")>=0){ if(H.rows) buildHall(); loadHall(false); }
   if(st.hall){ lastStage=null; paint(st); }
+  if(st.vidclock) clock(st);
+}
+
+/* ------------------------------ a clip with a stopwatch (`vidclock:true` on a top:"video" step) ------------------------------
+   Daniel, 2026-11-23: the Poltergeist storm. The engine plays a top video autoplaying, looped and muted; this one is taken over:
+   paused at 0, sound ON, no loop, a millisecond timer over the picture, ▶/⏸ (one button), ⟲ (from the start), and a scrub bar,
+   so students can stop on the flash and on the thunder and read both times. `credit:` on the step prints over the corner. */
+const fmtClock=s=>{ const m=Math.floor(s/60), r=s-60*m; return (m?m+":"+(r<10?"0":""):"")+r.toFixed(3)+" s"; };
+function clock(st){
+  const tm=document.getElementById("topmedia"); const v=tm && tm.querySelector("video.topvid"); if(!v) return;
+  if(v._w6clock && tm.querySelector(".w6-vc")) return;
+  v._w6clock=true; v.loop=false; v.removeAttribute("loop"); v.autoplay=false; v.muted=false; v.removeAttribute("muted");
+  try{ v.pause(); v.currentTime=0; }catch(e){}
+  const box=document.createElement("div"); box.className="w6-vc";
+  box.innerHTML='<div class="w6-vc-time">0.000 s</div>'
+    +(st.credit?'<div class="w6-vc-credit">'+st.credit+'</div>':'')
+    +'<div class="w6-vc-bar"><button class="w6-vc-btn" data-vc="play" aria-label="Play">▶</button>'
+    +'<button class="w6-vc-btn" data-vc="replay" aria-label="Replay from the start">⟲</button>'
+    +'<input class="w6-vc-scrub" type="range" min="0" max="1000" step="1" value="0" aria-label="Position in the clip"></div>';
+  tm.appendChild(box);
+  const T=box.querySelector(".w6-vc-time"), P=box.querySelector('[data-vc="play"]'), R=box.querySelector(".w6-vc-scrub");
+  const sync=()=>{ P.textContent=v.paused?"▶":"⏸"; P.setAttribute("aria-label", v.paused?"Play":"Pause"); };
+  P.onclick=()=>{ if(v.paused){ if(v.ended) v.currentTime=0; v.play().catch(()=>{}); } else v.pause(); };
+  box.querySelector('[data-vc="replay"]').onclick=()=>{ v.currentTime=0; v.play().catch(()=>{}); };
+  const dur=()=> Number.isFinite(v.duration) && v.duration>0 ? v.duration : (v.seekable && v.seekable.length ? v.seekable.end(v.seekable.length-1) : 0);
+  R.oninput=()=>{ v.pause(); const d=dur(); if(d) v.currentTime=R.value/1000*d; };
+  v.addEventListener("play", sync); v.addEventListener("pause", sync); v.addEventListener("ended", sync);
+  (function tick(){ if(!box.isConnected) return; T.textContent=fmtClock(v.currentTime||0);
+    { const d=dur(); if(d && document.activeElement!==R) R.value=Math.round(v.currentTime/d*1000); } requestAnimationFrame(tick); })();
+  sync();
 }
 // Five stacked whistle plots (w-rec, w-blur, w-period) need more of the page than the engine's 3:2 split gives them:
 // the bottom one, which also carries the axis title, was left with no plot at all. Those steps get 62:38 and slim strips.
@@ -158,7 +188,7 @@ css.textContent=`
 .w6-card th{font:600 12px var(--font-sans);color:var(--muted);text-align:right;padding:2px 4px;}
 .w6-card th:first-child,.w6-card td:first-child{text-align:left;color:var(--muted);}
 .w6-card td{text-align:right;padding:3px 4px;border-top:1px solid var(--line);}
-.w6-s2 .w6-card table{width:auto;margin:0 auto;}
+.w6-s1 .w6-card table,.w6-s2 .w6-card table{width:auto;margin:0 auto;}
 .w6-flash{animation:w6flash 1.2s ease-out;}
 @keyframes w6flash{from{background:var(--band-amber);}}
 .w6-src{font-size:var(--fs-label);color:var(--muted);margin:0 14px 10px;}
@@ -171,6 +201,15 @@ body.w6-five .pstrip{padding-top:1px;padding-bottom:1px;min-height:0;}
 body.w6-five .pstrip input[type=file]{display:none;}
 #stepbody .skipchk{margin-left:12px;font-size:var(--fs-label);color:var(--muted);white-space:nowrap;}
 @media (max-width:900px){.w6-grid{grid-template-columns:repeat(2,minmax(0,1fr));}}
+.w6-vc{position:absolute;inset:0;z-index:5;pointer-events:none;}
+.w6-vc-time{position:absolute;top:14px;left:16px;font:700 34px var(--font-mono);font-variant-numeric:tabular-nums;color:#fff;
+  background:rgba(0,0,0,.55);padding:4px 12px;border-radius:8px;}
+.w6-vc-credit{position:absolute;top:18px;right:16px;font:italic 13px var(--font-sans);color:#ddd;background:rgba(0,0,0,.45);padding:3px 9px;border-radius:6px;}
+.w6-vc-bar{position:absolute;left:16px;right:16px;bottom:46px;display:flex;align-items:center;gap:10px;pointer-events:auto;
+  background:rgba(0,0,0,.55);padding:8px 12px;border-radius:10px;}
+.w6-vc-btn{font-size:20px;line-height:1;width:44px;height:38px;border-radius:8px;border:1px solid rgba(255,255,255,.4);background:rgba(255,255,255,.08);color:#fff;cursor:pointer;}
+.w6-vc-btn:hover{background:rgba(255,255,255,.2);}
+.w6-vc-scrub{flex:1;accent-color:var(--accent);}
 `;
 document.head.appendChild(css);
 if(NARR[S.step]) renderStep();

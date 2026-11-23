@@ -1686,8 +1686,11 @@ function inputIssue(st){
       // multiplied by 2π is almost always a frequency in hertz. Naming the slip beats "too small".
       if(v>0 && v<f.range[0] && /rad\/s/.test(String(f.unit||"")) && v*2*Math.PI>=f.range[0] && v*2*Math.PI<=f.range[1])
         return fbText(st,"hz","{label} looks like a frequency in hertz, cycles per second. $\\omega$ is in rad/s, and one cycle is $2\\pi$ radians.",V);
-      if(v<f.range[0]) return fbText(st,"low","That value looks too small to be right — re-read the question, check your units, and try again.",V);
-      if(v>f.range[1]) return fbText(st,"high","That value looks too large to be right — re-read the question, check your units, and try again.",V);
+      // `feedback.low.<key>` / `feedback.high.<key>` (2026-11-23, Thunder and Lightning): one box's own message on a
+      // multi-box step, before the step-wide one (a time and a distance on one step are too small in different ways).
+      const own=sit=>{ const h=st.feedbackWhen||st.hint; return (h && typeof h==="object" && h[sit+"."+f.key]!=null) ? sit+"."+f.key : sit; };
+      if(v<f.range[0]) return fbText(st,own("low"),"That value looks too small to be right — re-read the question, check your units, and try again.",V);
+      if(v>f.range[1]) return fbText(st,own("high"),"That value looks too large to be right — re-read the question, check your units, and try again.",V);
     }
     // Precision LAST among the per-field checks: a number that is out of range is wrong in a way that
     // matters more than how it is written, and hearing about the decimals first would be noise.
