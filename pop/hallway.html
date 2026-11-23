@@ -48,6 +48,8 @@
   .msg.warn { color: var(--rec); } .msg.ok { color: var(--ok); }
   .dists { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin-top: 12px; }
   .dists button { font-size: 18px; padding: 16px 0; }
+  .tip { cursor: pointer; } .tip .i { font-size: 12px; color: var(--accent); }
+  .tipnote { grid-column: 1 / -1; font-size: 13px; color: var(--muted); margin-top: 2px; }
   .distlab { font-size: 15px; color: var(--muted); }
   button.wide { display: block; width: 100%; margin-top: 12px; padding: 16px; font-size: 18px; border-radius: 12px; }
   button.wide.confirm { background: var(--warn); }
@@ -70,10 +72,11 @@
     </div>
 
     <div class="card lv">
-      <span class="lab">Volume</span>
+      <span class="lab tip" id="lpTip">log |Δ<i>p</i>| <span class="i">ⓘ</span></span>
       <div class="track"><div class="meter"><div class="bar" id="bar"></div><div class="hold" id="hold"></div></div><div class="redline" id="redline"></div></div>
       <span class="lab">Trigger</span>
       <div class="slider" id="slider" role="slider" aria-label="Trigger"><div class="rail"></div><div class="knob" id="knob"></div></div>
+      <div class="tipnote" id="lpNote" hidden>log of the pressure difference between measured and background pressure (its peak over the last 50 ms, in the microphone's uncalibrated units)</div>
     </div>
 
     <div id="trials"></div>
@@ -104,7 +107,7 @@
 // URL test switches: ?sim=1 (fake microphone: pings at 3/9, 23/29, 43/49 s; the test pings late by d/343.9 s),
 // &slip=s (the live timer gains 40 ms at s seconds), &dry=1 (Submit doesn't send).
 // ─────────────────────────────────────────────────────────────
-const VERSION = "v4 · Nov 23";
+const VERSION = "v5 · Nov 23";
 const DISTS = [0, 8, 16, 24, 32];
 const AGREE_S = 0.010, PRE_MS = 10, POST_MS = 40;
 const SUPA = "https://rdbacwwbeyeqdkswwvjt.supabase.co", SUPA_KEY = "sb_publishable_IQNxMMynit0aWtOS3tjiRQ_h5sNo159";
@@ -118,6 +121,7 @@ try { const v = +localStorage.getItem("hall-thr"); if (v > 0) thr = v; } catch {
 const keyFromHash = new URLSearchParams(location.hash.slice(1)).get("k");
 if (keyFromHash) try { localStorage.setItem("hall-key", keyFromHash); } catch {}
 $("ver").textContent = VERSION;
+$("lpTip").onclick = () => { $("lpNote").hidden = !$("lpNote").hidden; };   // a tap, not a hover: phones don't show title tooltips
 
 // ── distance ────────────────────────────────────────────────
 $("dists").innerHTML = DISTS.map((d) => `<button data-d="${d}">${d} m</button>`).join("");
@@ -134,7 +138,8 @@ const two = (x) => String(x).padStart(2, "0");
 const hund = (s) => { const cs = Math.floor(s * 100 + 1e-6); return `${two(Math.floor(cs / 6000))}:${two(Math.floor(cs / 100) % 60)}:${two(cs % 100)}`; };   // stopwatch, hundredths
 const msec = (s) => { const ms = Math.round(s * 1000); return `${two(Math.floor(ms / 60000))}:${two(Math.floor(ms / 1000) % 60)}.${String(ms % 1000).padStart(3, "0")}`; };   // a ping, milliseconds
 
-// ── meter + trigger: one track, one mapping (log scale, 0.003 → 0 %, 1.0 → 100 %) ─
+// ── meter + trigger: one track, one mapping. The bar is log |Δp| (Daniel, 2026-11-23): the log of the peak pressure
+//    swing in the last 50 ms, in the microphone's uncalibrated units (full scale = 1); 0.003 → 0 %, 1.0 → 100 %. ─
 const pct = (v) => Math.max(0, Math.min(100, 100 * Math.log(Math.max(v, 0.003) / 0.003) / Math.log(1 / 0.003)));
 const fromPct = (p) => 0.003 * Math.pow(1 / 0.003, p / 100);
 function showThr() { const p = pct(thr) + "%"; $("redline").style.left = p; $("knob").style.left = p; }
