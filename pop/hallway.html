@@ -48,6 +48,9 @@
   .msg.warn { color: var(--rec); } .msg.ok { color: var(--ok); }
   .dists { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin-top: 12px; }
   .dists button { font-size: 18px; padding: 16px 0; }
+  .distlab { font-size: 15px; color: var(--muted); }
+  button.wide { display: block; width: 100%; margin-top: 12px; padding: 16px; font-size: 18px; border-radius: 12px; }
+  button.wide.confirm { background: var(--warn); }
   .ver { margin-top: 10px; font-size: 11px; color: var(--muted); text-align: center; }
   [hidden] { display: none !important; }
 </style>
@@ -62,19 +65,20 @@
 
   <section id="app" hidden>
     <div class="row">
-      <button id="submit">Submit trials</button>
+      <span class="distlab">Distance from test ping:</span>
       <div class="dist"><span id="distLbl"></span><button class="ghost small" id="change">change</button></div>
     </div>
-    <div class="msg" id="msg"></div>
 
     <div class="card lv">
-      <span></span>
+      <span class="lab">Volume</span>
       <div class="track"><div class="meter"><div class="bar" id="bar"></div><div class="hold" id="hold"></div></div><div class="redline" id="redline"></div></div>
       <span class="lab">Trigger</span>
       <div class="slider" id="slider" role="slider" aria-label="Trigger"><div class="rail"></div><div class="knob" id="knob"></div></div>
     </div>
 
     <div id="trials"></div>
+    <button id="submit" class="wide">Submit trials</button>
+    <div class="msg" id="msg"></div>
     <div class="ver" id="ver"></div>
   </section>
 </main>
@@ -100,7 +104,7 @@
 // URL test switches: ?sim=1 (fake microphone: pings at 3/9, 23/29, 43/49 s; the test pings late by d/343.9 s),
 // &slip=s (the live timer gains 40 ms at s seconds), &dry=1 (Submit doesn't send).
 // ─────────────────────────────────────────────────────────────
-const VERSION = "v2 · Nov 23";
+const VERSION = "v4 · Nov 23";
 const DISTS = [0, 8, 16, 24, 32];
 const AGREE_S = 0.010, PRE_MS = 10, POST_MS = 40;
 const SUPA = "https://rdbacwwbeyeqdkswwvjt.supabase.co", SUPA_KEY = "sb_publishable_IQNxMMynit0aWtOS3tjiRQ_h5sNo159";
@@ -117,7 +121,12 @@ $("ver").textContent = VERSION;
 
 // ── distance ────────────────────────────────────────────────
 $("dists").innerHTML = DISTS.map((d) => `<button data-d="${d}">${d} m</button>`).join("");
-$("dists").querySelectorAll("button").forEach((b) => b.onclick = () => { dist = +b.dataset.d; $("pick").hidden = true; $("app").hidden = false; $("distLbl").textContent = dist + " m"; });
+$("dists").querySelectorAll("button").forEach((b) => b.onclick = async () => {
+  dist = +b.dataset.d; $("pick").hidden = true; $("app").hidden = false; $("distLbl").textContent = dist + " m";
+  // the volume bar is live from the start (Daniel, 2026-11-23). iPhones only start audio from a tap, and this is one.
+  try { if (ctx) ctx.resume().catch(() => {}); await ensureAudio(); if (ctx.state !== "running") ctx.resume().catch(() => {}); }
+  catch (e) { say("Couldn't start the microphone: " + (e.message || e) + ". Allow microphone access; use Safari or Chrome.", "warn"); }
+});
 $("change").onclick = () => { $("pick").hidden = false; $("app").hidden = true; };
 
 // ── formats ─────────────────────────────────────────────────
@@ -174,16 +183,21 @@ function refineOnset(buf, pre, rate) {
   for (let k = Math.max(0, pre - Math.round(0.005 * rate)); k <= pre; k++) if (Math.abs(buf[k]) >= lvl) return k;
   return pre;
 }
-async function ensureAudio() {
-  if (ctx) return;
+let audioReady = null;
+function ensureAudio() { return audioReady || (audioReady = openAudio().catch((e) => { audioReady = null; ctx = null; throw e; })); }
+async function openAudio() {
+  // The microphone FIRST: its permission prompt can come up as the page opens. The audio context is made without
+  // awaiting resume(): opened before any tap, an iPhone's context stays suspended (a resume() there would never settle,
+  // and would hold everything behind it) until the first tap, which the pointerdown handler below and the distance
+  // buttons both use to start it. The worklet loads into a suspended context fine.
+  const mic = SIM ? null : await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 } });
   ctx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: "interactive" });
-  await ctx.resume(); sr = ctx.sampleRate;
+  ctx.resume().catch(() => {}); sr = ctx.sampleRate;
   await ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([WORKLET], { type: "application/javascript" })));
   node = new AudioWorkletNode(ctx, "pinger", { processorOptions: { thr, pre: PRE_MS / 1000, post: POST_MS / 1000, slipAt: SLIP } });
   let src;
   if (SIM) { src = simSource(); const d = ctx.createMediaStreamDestination(); src.connect(d); stream = d.stream; }
-  else { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 } });
-    src = ctx.createMediaStreamSource(stream); }
+  else { stream = mic; src = ctx.createMediaStreamSource(stream); }
   const mute = ctx.createGain(); mute.gain.value = 0; src.connect(node); node.connect(mute); mute.connect(ctx.destination);
   node.port.onmessage = onWorklet;
   try { if ("wakeLock" in navigator) await navigator.wakeLock.request("screen"); } catch {}
@@ -279,9 +293,8 @@ function render() {
     const L = (w) => listen && listen.trial === tr.n && listen.which === w;
     const btn = (w, ok) => `<button class="small ${L(w) ? "listening" : ""}" data-act="${L(w) ? "stop" : "start"}" data-n="${tr.n}" data-w="${w}" ${ok ? "" : "disabled"}>${L(w) ? "Stop listening" : "Start listening"}</button>`;
     const gap = tr.test ? (tr.fix != null ? tr.fix : tr.test.t - tr.sync.t) : null;
-    const watch = gap != null ? hund(gap) : "00:00:00";
     return `<div class="card trial">
-      <div class="row"><h3>Trial ${tr.n}</h3><span class="watch ${tr.sync && !tr.test ? "on" : ""}" id="w${tr.n}">⏱ ${watch}</span>
+      <div class="row"><h3>Trial ${tr.n}</h3>${tr.sync && !tr.test ? `<span class="watch on" id="w${tr.n}">⏱ 00:00:00</span>` : "<span></span>"}
         <button class="ghost small" data-act="del" data-n="${tr.n}" ${tr.sync || L("sync") ? "" : "disabled"}>${tr.delArm && Date.now() - tr.delArm < 3000 ? "Tap again" : "Delete data"}</button></div>
       <div class="ping"><span class="name">Sync ping</span>${tr.sync ? `<span class="heard">heard at 00:00.000</span>` : btn("sync", true)}</div>
       <div class="ping"><span class="name">Test ping</span>${tr.test ? `<span class="heard">heard at ${msec(gap)}</span>` : btn("test", !!tr.sync)}</div>
@@ -312,10 +325,18 @@ function getKey() {
   const k = prompt("Instructor key (asked once on this phone)"); if (k) try { localStorage.setItem("hall-key", k.trim()); } catch {}
   return k && k.trim();
 }
+let subArm = 0;
+function disarm() { subArm = 0; $("submit").textContent = "Submit trials"; $("submit").classList.remove("confirm"); }
 $("submit").onclick = async () => {
   if (dist == null) return;
   const missing = T.filter((tr) => !tr.sync || !tr.test).map((tr) => tr.n);
   if (missing.length) { say(`Trial${missing.length > 1 ? "s" : ""} ${missing.join(" and ")} ${missing.length > 1 ? "need" : "needs"} both pings before you can submit.`, "warn"); return; }
+  // "Are you sure?" (Daniel, 2026-11-23): the first tap arms it for 4 s, a second tap sends. No browser dialog.
+  if (!subArm || Date.now() - subArm > 4000) {
+    subArm = Date.now(); $("submit").textContent = "Are you sure? Tap again to submit"; $("submit").classList.add("confirm");
+    setTimeout(() => { if (Date.now() - subArm >= 4000) disarm(); }, 4100); return;
+  }
+  disarm();
   if (listen) stopListening();
   $("submit").disabled = true; say("Checking…");
   const trials = [];
@@ -339,6 +360,9 @@ $("submit").onclick = async () => {
   $("submit").disabled = false;
 };
 render();
+// ask for the microphone as soon as the page opens, so the permission prompt is out of the way before the hallway
+if (!SIM && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) ensureAudio().catch(() => {});
+document.addEventListener("pointerdown", () => { if (ctx && ctx.state !== "running") ctx.resume(); }, { capture: true });
 </script>
 </body>
 </html>
