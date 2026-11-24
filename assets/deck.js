@@ -1813,6 +1813,35 @@
     player.play().catch(()=>{});
   });
 
+  // ---------- SLIDE NUMBERS (Daniel, 2026-11-19): small, subtle, lower right ----------
+  // Opt-in per deck, `<div class="reveal" data-slide-numbers>`, set on every deck from Class W on (the
+  // earlier decks are retrofitted next semester, not back-propagated). 1 is the walk-in (`section.warmup`)
+  // and the count ENDS on the exit-quiz slide (the one with `data-exit-class`): the title and the remote
+  // QR before it and the whole tail after it (exit quiz, practice run, supplemental, homework) carry no
+  // number. The same count is printed beside each beat of the board sheet (board_sheet.py's
+  // `slide_numbers`, from the manifest's order, which check_wiring holds equal to this DOM's), so
+  // "slide 14" means the same slide on the sheet, the projector and the remote.
+  (function slideNumbers(){
+    const root = document.querySelector('.reveal');
+    if(!root || !root.hasAttribute('data-slide-numbers')) return;
+    const secs = [...document.querySelectorAll('.reveal .slides > section')];
+    const first = secs.findIndex(s => s.classList.contains('warmup'));
+    const last  = secs.findIndex(s => s.dataset.exitClass !== undefined);
+    if(first < 0 || last < first) return;
+    const tag = document.createElement('div'); tag.id = 'slidenum';
+    // between reveal's ← and → (Daniel, 2026-11-19); the body corner when a deck has no controls.
+    // reveal builds .controls during initialize, so re-home the tag on each show until it is there.
+    document.body.appendChild(tag);
+    const home = () => { const c = document.querySelector('.reveal .controls'); if(c && tag.parentNode !== c) c.appendChild(tag); };
+    const show = () => { home();
+      const i = secs.indexOf(Reveal.getCurrentSlide());
+      const on = i >= first && i <= last && !Reveal.isOverview();
+      tag.textContent = on ? String(i - first + 1) : ''; tag.style.display = on ? 'block' : 'none';
+    };
+    Reveal.on('ready', show); Reveal.on('slidechanged', show);
+    Reveal.on('overviewshown', show); Reveal.on('overviewhidden', show);
+  })();
+
   Reveal.on('ready', configure);
   Reveal.on('slidechanged', configure);
   // Re-arm quiz slides when you leave them, so returning shows the un-revealed question.

@@ -634,3 +634,13 @@
    The way back is unchanged and there are two of them: `.` on the laptop, or the phone's own button,
    which now reads "Show" while the room is dark. Added 2026-08-24 with the phone blackout. */
 .reveal .pause-overlay .resume-button{ display: none !important; }
+
+/* Slide numbers (data-slide-numbers on .reveal, 2026-11-19): small, subtle, semi-transparent, lower right,
+   above the media layer and below every control. Walk-in = 1 through the exit-quiz slide; see deck.js. */
+#slidenum{ position:fixed; right:1.1vw; bottom:0.9vh; z-index:30; pointer-events:none; display:none;
+  font:600 15px/1 Inter, system-ui, sans-serif; letter-spacing:.04em; color:#fff; opacity:.32;
+  text-shadow:0 0 3px rgba(0,0,0,.6); font-variant-numeric:tabular-nums; }
+/* …centered in the gap between reveal's ← and → buttons (36px each, 14px apart, flush to the controls'
+   bottom-right corner, which is the 0×0 .controls box itself) — Daniel, 2026-11-19. */
+.reveal .controls #slidenum{ position:absolute; right:auto; bottom:auto; left:-48px; top:-32px;
+  transform:translate(-50%, -50%); }
