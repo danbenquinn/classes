@@ -71,8 +71,10 @@ const NARR = [
 
   { id:"group",
     top:"title",
+    media:"media/poltergeist-walkin.mp4",
     strip:"course-map-W6.svg",
     group:{ max:4 },
+    attribution:"Poltergeist (1982)",
     lead:"<p>Welcome to <b>Thunder and Lightning</b>, the last workshop. Sign in your group: each person types their <b>computing ID</b> into a box.</p><p>Then enter the access code, given out as the workshop begins.</p>",
     code:{ hash:6727775826700498, label:"Workshop access code", wrong:"Access code will be provided as the workshop begins." } },
 
@@ -83,8 +85,9 @@ const NARR = [
 
   { id:"p-stair-go",
     top:"html",
-    html:"<div class='bigeq'><span class='kicker'>Part 1 · Pressure</span>Landing B · Landing 1 · Landing 2 · Landing 3</div>",
-    lead:"<p><b>Field trip: the stairwell by the elevator.</b> You just watched a barometer inside a balloon; first, let's see what a barometer does when you simply climb some stairs. Take a phone with phyphox and open <b>Pressure</b>. On each of the four landings:</p><ol><li>Stand still and press ▶.</li><li>Watch the reading settle for 10 seconds or so.</li><li>Write it down to <b>two decimal places</b> in hPa. The last digits will wander; pick the value it hovers around.</li></ol><p class=\"aside\">Walk, don't run, and keep the phone at about the same height (in your hand, at your waist) on every landing.</p>",
+    stairlive:true,
+    html:"<div id='w6-stairlive'></div>",
+    lead:"<p><b>Part 1 · Pressure. Field trip: the stairwell by the elevator.</b> You just watched a barometer inside a balloon; first, let's see what a barometer does when you simply climb some stairs. Take a phone with phyphox and open <b>Pressure</b>. On each of the four landings:</p><ol><li>Stand still and press ▶.</li><li>Watch the reading settle for 10 seconds or so.</li><li>Write it down to <b>two decimal places</b> in hPa. The last digits will wander; pick the value it hovers around.</li></ol><p class=\"aside\">Walk, don't run, and keep the phone at about the same height (in your hand, at your waist) on every landing.</p>",
     feedback:"Got them. Did the number go up or down as you climbed?",
     feedbackWhen:{"empty": "Four boxes, one for each landing.", "dp": "Two decimal places, in hPa."},
     inputs:[
@@ -161,14 +164,18 @@ const NARR = [
     feedbackWhen:{"wrong": "<b>Discuss for a minute.</b> Find the highest point on the plot. Was the balloon small or big at that moment?"} },
 
   { id:"w-intro",
-    top:"html",
-    html:"<div class='bigeq'><span class='kicker'>Part 2 · The Slide Whistle</span>pitch $f$ = cycles per second</div>",
+    top:"video",
+    media:"media/free-bird.mp4",
+    soundbtn:true,
+    attribution:"Hi I'm Dan · TikTok",
     lead:"<p><b>Part 2: a slide whistle.</b> Your whistle is a tube of air with a plunger inside. Blowing across the window sets the air in the tube ringing (Class T), and the plunger sets how long the column of air is.</p><p>The one length you can measure from outside is $X$: from the <b>end of the plastic whistle to the end of the metal handle</b>. Pull the handle out and $X$ grows by exactly as much as the air column does.</p>" },
 
   { id:"w-predict",
-    top:"html",
-    html:"<div class='bigeq'><span class='kicker'>Predict first</span>double the air column → pitch ?</div>",
-    lead:"<p>In Class T, a pipe's pitch came from round trips: a squeeze runs down the column and back, and the note repeats every round trip.</p>",
+    top:"video",
+    media:"media/free-bird.mp4",
+    soundbtn:true,
+    attribution:"Hi I'm Dan · TikTok",
+    lead:"<p><b>Predict first.</b> In Class T, a pipe's pitch came from round trips: a squeeze runs down the column and back, and the note repeats every round trip.</p>",
     check:"If you <b>double</b> the length of the air column, what should happen to the pitch?",
     choices:["It doubles: a longer column rings faster", "It halves: the round trip takes twice as long, so the note repeats half as often", "It stays the same: the speed of sound didn't change", "It drops to a quarter"],
     answer:1,

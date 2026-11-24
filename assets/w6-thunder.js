@@ -139,6 +139,53 @@ function onStep(){
   if(st.hall || ks.indexOf("hall")>=0){ if(H.rows) buildHall(); loadHall(false); }
   if(st.hall){ lastStage=null; paint(st); }
   if(st.vidclock) clock(st);
+  if(st.stairlive) stairLive();
+  if(st.soundbtn) soundBtn();
+}
+
+/* ------------------------------ the stairwell, live (`stairlive:true`, p-stair-go) ------------------------------
+   Daniel, 2026-11-23: the plot is on screen from the start, and each landing appears as it's typed. Height is FROZEN
+   (Landing B at 0 to Landing 3 at 3 floors up); pressure starts on a guess from Quinn's sample (1007.5–1009.6 hPa),
+   follows a lone point that falls outside it, and fits the points once there are two. Drawn here as SVG, in the
+   engine's colors; the next step (p-stair-plot) is the engine's own plot of the same four numbers, with Slope. */
+const LAND=[["p_B","B"],["p_1","1"],["p_2","2"],["p_3","3"]];
+function niceStep(span){ const r=span/5, p=Math.pow(10,Math.floor(Math.log10(r))), m=r/p; return (m<1.5?1:m<3.5?2:m<7.5?5:10)*p; }
+function stairLive(){
+  const el=document.getElementById("w6-stairlive"); if(!el) return;
+  const css=n=>getComputedStyle(document.body).getPropertyValue(n).trim()||"#888";
+  const W=el.clientWidth||900, Hh=el.clientHeight||400, mL=86, mR=30, mT=26, mB=58, pw=W-mL-mR, ph=Hh-mT-mB;
+  const pts=LAND.map(([k,lab],i)=>({ h:i*C.floor, p:A()[k], lab })).filter(q=>ok(q.p) && q.p>800 && q.p<1200);
+  let lo=1007.5, hi=1009.6;
+  if(pts.length===1 && (pts[0].p<lo || pts[0].p>hi)){ const c=pts[0].p, half=(hi-lo)/2; lo=c-half; hi=c+half; }
+  if(pts.length>=2){ const ps=pts.map(q=>q.p); let a=Math.min(...ps), b=Math.max(...ps); const sp=Math.max(b-a,0.2); lo=a-0.15*sp; hi=b+0.15*sp; }
+  const x0=-0.6, x1=3*C.floor+0.6, X=h=>mL+(h-x0)/(x1-x0)*pw, Y=p=>mT+(hi-p)/(hi-lo)*ph;
+  const st=niceStep(hi-lo), dp=st<0.1?2:st<1?1:0;
+  let g="";
+  for(let v=Math.ceil(lo/st)*st; v<=hi+1e-9; v+=st){ const y=Y(v);
+    g+=`<line x1="${mL}" x2="${mL+pw}" y1="${y}" y2="${y}" stroke="${css("--line")}" stroke-width="1"/>`
+      +`<text x="${mL-8}" y="${y+4}" text-anchor="end" font-size="13" fill="${css("--muted")}">${v.toFixed(dp)}</text>`; }
+  LAND.forEach(([k,lab],i)=>{ const x=X(i*C.floor);
+    g+=`<line x1="${x}" x2="${x}" y1="${mT}" y2="${mT+ph}" stroke="${css("--line")}" stroke-width="1" stroke-dasharray="3 4"/>`
+      +`<text x="${x}" y="${mT+ph+20}" text-anchor="middle" font-size="13" fill="${css("--muted")}">Landing ${lab} · ${(i*C.floor).toFixed(2)} m</text>`; });
+  g+=`<text x="${mL+pw/2}" y="${Hh-10}" text-anchor="middle" font-size="13" fill="${css("--muted")}">height <tspan font-style="italic">h</tspan> (m)</text>`
+    +`<text transform="translate(18,${mT+ph/2}) rotate(-90)" text-anchor="middle" font-size="13" fill="${css("--muted")}">pressure <tspan font-style="italic">p</tspan> (hPa)</text>`;
+  pts.forEach(q=>{ g+=`<circle cx="${X(q.h)}" cy="${Y(q.p)}" r="7" fill="${css("--trace")}"/>`
+    +`<text x="${X(q.h)+12}" y="${Y(q.p)-10}" font-size="14" font-family="var(--font-mono)" fill="${css("--ink")}">${q.p.toFixed(2)}</text>`; });
+  if(!pts.length) g+=`<text x="${mL+pw/2}" y="${mT+ph/2}" text-anchor="middle" font-size="15" fill="${css("--muted")}">Each landing appears here as you type it in below.</text>`;
+  el.innerHTML=`<svg width="${W}" height="${Hh}" viewBox="0 0 ${W} ${Hh}" style="display:block">${g}</svg>`;
+}
+document.addEventListener("input", e=>{ const st=NARR[S.step]; if(st && st.stairlive && e.target.closest && e.target.closest("#stepbody")) setTimeout(stairLive,0); });
+addEventListener("resize", ()=>{ const st=NARR[S.step]; if(st && st.stairlive) stairLive(); });
+
+/* ------------------------------ a sound switch on a looping top video (`soundbtn:true`) ------------------------------
+   The engine's top videos play muted and loop (right for a room of forty laptops). Free Bird (w-intro, w-predict) gets
+   a small button to hear it; the engine keeps the same <video> across consecutive steps, so the choice carries over. */
+function soundBtn(){
+  const tm=document.getElementById("topmedia"); const v=tm && tm.querySelector("video.topvid"); if(!v || tm.querySelector(".w6-snd")) return;
+  const b=document.createElement("button"); b.className="w6-snd";
+  const sync=()=>{ b.textContent=v.muted?"🔇 Sound off":"🔊 Sound on"; };
+  b.onclick=()=>{ v.muted=!v.muted; if(!v.muted){ v.currentTime=0; v.play().catch(()=>{}); } sync(); };
+  sync(); tm.appendChild(b);
 }
 
 /* ------------------------------ a clip with a stopwatch (`vidclock:true` on a top:"video" step) ------------------------------
@@ -202,6 +249,8 @@ body.w6-five .pstrip input[type=file]{display:none;}
 #stepbody .skipchk{margin-left:12px;font-size:var(--fs-label);color:var(--muted);white-space:nowrap;}
 @media (max-width:900px){.w6-grid{grid-template-columns:repeat(2,minmax(0,1fr));}}
 .w6-vc{position:absolute;inset:0;z-index:5;pointer-events:none;}
+#w6-stairlive{position:absolute;inset:0;}
+.w6-snd{position:absolute;right:16px;bottom:16px;z-index:6;font:600 14px var(--font-sans);padding:8px 12px;border-radius:8px;border:1px solid rgba(255,255,255,.35);background:rgba(0,0,0,.55);color:#fff;cursor:pointer;}
 .w6-vc-time{position:absolute;top:14px;left:16px;font:700 34px var(--font-mono);font-variant-numeric:tabular-nums;color:#fff;
   background:rgba(0,0,0,.55);padding:4px 12px;border-radius:8px;}
 .w6-vc-credit{position:absolute;top:18px;right:16px;font:italic 13px var(--font-sans);color:#ddd;background:rgba(0,0,0,.45);padding:3px 9px;border-radius:6px;}
