@@ -28,7 +28,7 @@ const codeHash = s => cyrb53(String(s||"").trim().toLowerCase());   // normalize
 // with a letter someone puts on a graphic, so this is house-wide rather than a Workshop 1 switch.
 const ROMAN=["i","ii","iii","iv","v","vi","vii","viii","ix","x","xi","xii"];
 const choiceLabel = i => ROMAN[i] || String(i+1);
-const TOOLDEF={point:"Select Point", avg:"Average Value", integrate:"Integrate", dblint:"Double Integrate", fitsine:"Fit Sine", fitdamped:"Fit Damped", fitexp:"Fit Exponential", crop:"Crop", slope:"Slope"};
+const TOOLDEF={point:"Select Point", avg:"Average Value", integrate:"Integrate", dblint:"Double Integrate", fitsine:"Fit Sine", fitdamped:"Fit Damped", fitexp:"Fit Exponential", fitinv:"Fit 1/X", magnify:"Magnify", crop:"Crop", slope:"Slope"};
 const TOOLS=(typeof CONFIG!=='undefined'&&CONFIG&&Array.isArray(CONFIG.tools)&&CONFIG.tools.length)
   ? CONFIG.tools.filter(t=>TOOLDEF[t]) : ["point","avg","dblint","fitsine"];
 const _toolsHTML=TOOLS.map((t,i)=>'<button data-tool="'+t+'"'+(i===0?' class="on"':'')+'>'+TOOLDEF[t]+'</button>').join("");
@@ -133,7 +133,7 @@ const S = {
    always meant when there was only one. This is the whole reason the refactor is small: series(),
    doIntegrate(), inputIssue(), stepComplete() and the Fit Sine block were not touched. A single-panel
    workshop resolves every one of them to panel 0, forever. */
-const PANEL_FIELDS=["ds","sigH","fileName","point","sel","drag","integ","fit","dfit","efit","crop"];
+const PANEL_FIELDS=["ds","sigH","fileName","point","sel","drag","integ","fit","dfit","efit","ifit","crop"];
 function active(){ return S.panels[S.activeIdx] || S.panels[0] || null; }
 PANEL_FIELDS.forEach(k=>Object.defineProperty(S,k,{
   get(){ const P=active(); return P?P[k]:null; },
@@ -162,7 +162,7 @@ function makePanel(def,i){
     cv:root.querySelector("canvas"),
     readout:root.querySelector(".plotreadout"),
     G:{},
-    ds:null, sigH:null, fileName:null, point:null, sel:null, drag:null, integ:null, fit:null, dfit:null, efit:null, crop:null };
+    ds:null, sigH:null, fileName:null, point:null, sel:null, drag:null, integ:null, fit:null, dfit:null, efit:null, ifit:null, crop:null };
   P.ctx=P.cv.getContext("2d");
   P.file.addEventListener("change",e=>{ S.activeIdx=i; if(e.target.files[0]) handleFile(e.target.files[0],P); });
   P.selEl.addEventListener("change",e=>{ S.activeIdx=i; P.sigH=e.target.value;
@@ -170,6 +170,7 @@ function makePanel(def,i){
     if(S.tool==="fitsine"&&P.sel) doFitSine(series(P),P);
     if(S.tool==="fitdamped"&&P.sel) doFitDamped(series(P),P);
     if(S.tool==="fitexp"&&P.sel) doFitExp(series(P),P);
+    if(S.tool==="fitinv"&&P.sel) doFitInv(series(P),P);
     updateCtx(); resize(); setReadout();
     if(typeof refreshNext==="function") refreshNext(); });   // a `gate:"abs"` step passes on this choice
   wirePointer(P);
@@ -272,7 +273,7 @@ function ingestParsed(parsed,P){
   if(S.reqAxis){ const want=nums.find(h=>axisRe(S.reqAxis).test(h)); if(want) pick=want; }
   P.sigH = pick; sel.value=P.sigH;
   applyAxisLock();                          // a fresh upload rebuilds the options; re-apply the step's lock
-  P.point=null; P.sel=null; P.integ=null; P.efit=null; P.crop=null; P._bias=null; P._biasFor=null;
+  P.point=null; P.sel=null; P.integ=null; P.efit=null; P.ifit=null; P.crop=null; P._bias=null; P._biasFor=null;
   updateCtx(); resize(); setReadout();
   // A `gate:"data"` step completes the moment a file lands, with no button involved — so this is one
   // of the places Next's look has to be recomputed, or it stays dark over a step that is now passable.
@@ -539,7 +540,7 @@ function preferAxis(){
     // 2026-11-12: bowl on one step, tip on the next), the old column's green curve sat on the new column's trace
     // and `autofill` handed its numbers to the new step's box. A step that changes the Signal starts clean.
     if(want && want!==P.sigH){ P.sigH=want; if(P.selEl) P.selEl.value=want;
-      P.sel=null; P.point=null; P.integ=null; P.fit=null; P.dfit=null; P.efit=null; changed=true; }
+      P.sel=null; P.point=null; P.integ=null; P.fit=null; P.dfit=null; P.efit=null; P.ifit=null; changed=true; }
   });
   // …and is REDRAWN. Nothing else repaints the canvas on step entry, so the plot kept showing the previous
   // step's column (and its window) under a dropdown that already named the new one, until the first click.
@@ -784,6 +785,40 @@ function expAutofill(){
   if(typeof refreshNext==="function") refreshNext();
 }
 
+/* ---- Fit 1/X (Thunder and Lightning, 2026-11-25, Daniel) ----
+   y ≈ A/(x + h): the slide whistle's resonant frequency against the handle's position X, where the air column is
+   X plus a hidden length h. Fitted as the straight line 1/y = x/A + h/A through the window's points (closed form,
+   stable at five dots), so A = 1/slope and h = intercept/slope; R² is reported on y as plotted. Like every fit it
+   follows the drag. When the window takes in EVERY point (P.ifit.all), the x axis slides left after the release to
+   take in the curve's vertical asymptote at x = −h, drawn dashed: the hidden length shows itself. */
+function invFit(X,Y){
+  const n=X.length; if(n<2) return null; const Z=Y.map(v=>1/v); if(Z.some(z=>!Number.isFinite(z))) return null;
+  const mx=X.reduce((p,q)=>p+q,0)/n, mz=Z.reduce((p,q)=>p+q,0)/n; let sxx=0,sxz=0;
+  for(let i=0;i<n;i++){ sxx+=(X[i]-mx)**2; sxz+=(X[i]-mx)*(Z[i]-mz); }
+  if(!(sxx>0)) return null; const m=sxz/sxx, b=mz-m*mx; if(!(m>0)) return null;
+  const A=1/m, h=b/m, my=Y.reduce((p,q)=>p+q,0)/n; let sst=0,sse=0;
+  for(let i=0;i<n;i++){ const f=A/(X[i]+h); sst+=(Y[i]-my)**2; sse+=(Y[i]-f)**2; }
+  return {A, h, r2: sst>0 ? 1-sse/sst : 1};
+}
+function doFitInv(s,P){
+  P=P||active(); if(!s){ P.ifit=null; return; }
+  const r=selRange(s,P); if(!r || r[1]-r[0]<1){ P.ifit=null; return; }
+  P.ifit=invFit(s.t.slice(r[0],r[1]+1), s.a.slice(r[0],r[1]+1));
+  if(P.ifit){ P.ifit.all = r[0]===0 && r[1]===s.t.length-1; P.ifit.n=r[1]-r[0]+1; P.ifit.N=s.t.length; }
+}
+// What the readout PRINTS, and what a deck's check should compare against: A to three significant figures, h to 2 dp.
+function invShown(F){ return {A:parseFloat(F.A.toPrecision(3)), h:parseFloat(F.h.toFixed(2))}; }
+// The reveal: P._invLo eases from the axis's own left end to one that takes in x = −h (1.2 s), then stays.
+function invAxisLo(P, base, tHi){
+  const F=P.ifit; if(!(S.tool==="fitinv" && F && F.all && P.sel && F.h>0)){ P._inv=null; return base; }
+  const want=niceTicks(Math.min(base, -F.h-0.12*(tHi+F.h)), tHi, 6).lo;
+  if(!P._inv || P._inv.to!==want) P._inv={from: P._inv ? P._inv.cur : base, to:want, t0:performance.now(), cur:base};
+  const u=Math.min(1,(performance.now()-P._inv.t0)/1200), e=u<.5?2*u*u:1-Math.pow(-2*u+2,2)/2;
+  P._inv.cur=P._inv.from+(P._inv.to-P._inv.from)*e; P._inv.done=u>=1;
+  if(!P._inv.done) requestAnimationFrame(()=>render());
+  return P._inv.cur;
+}
+
 /* ====================== contextual controls ==================== */
 function updateCtx(){
   const box=$("ctx"); box.innerHTML="";
@@ -916,6 +951,17 @@ function updatePlotReadout(P){
       +' <span class="ro-hint" style="font-family:var(--font-sans)">(<i>t</i> in '+tu+', counted from your window\'s left edge, '+E.t0.toFixed(timeDecimals(s))+' '+tu+')</span></span>'
       +'<span class="r2" tabindex="0" style="display:block;width:max-content"><i>R</i>² = '+P.efit.r2.toFixed(3)
       +'<span class="r2pop">Fraction of the variance in your selection the fit explains — 1 = perfect, 0 = no better than a flat line</span></span>');
+  } else if(S.tool==="magnify"){
+    if(P.hover==null){ show('<span class="ro-hint">hover over the trace to magnify it</span>'); return; }
+    show('<span class="ro"><i>'+xSym(P).sym+'</i> = '+P.hover.toFixed(timeDecimals(s))+' '+tUnit(P)+'&nbsp;·&nbsp;magnified ×25</span>');
+  } else if(S.tool==="fitinv"){
+    if(!P.ifit){ show('<span class="ro-hint">drag across the points to fit</span>'); return; }
+    const E=invShown(P.ifit), xs=xSym(P).sym, nm = A.roman ? A.sym : '<i>'+A.sym+'</i>';
+    show('<span class="formula">'+nm+' ≈ '+E.A+' / (<i>'+xs+'</i> '+(E.h<0?'− ':'+ ')+Math.abs(E.h).toFixed(2)+')'
+      +(P.ifit.all ? '' : ' <span class="ro-hint" style="font-family:var(--font-sans)">('+P.ifit.n+' of '+P.ifit.N+' points)</span>')+'</span>'
+      +(P.ifit.all && P.ifit.h>0 ? '<span class="ro" style="display:block">asymptote: <i>'+xs+'</i> = −'+E.h.toFixed(2)+' '+tUnit(P)+'</span>' : '')
+      +'<span class="r2" tabindex="0" style="display:block;width:max-content"><i>R</i>² = '+P.ifit.r2.toFixed(3)
+      +'<span class="r2pop">Fraction of the variance in your selection the fit explains — 1 = perfect, 0 = no better than a flat line</span></span>');
   } else if(S.tool==="point"){
     if(P.point==null){ show('<span class="ro-hint">click or drag along the trace</span>'); return; }
     const i=nearest(s,P.point);
@@ -998,7 +1044,7 @@ function niceTicks(min,max,target){ if(!(max>min)){min-=1;max+=1;} const step=ni
   const lo=Math.floor(min/step)*step, hi=Math.ceil(max/step)*step, t=[];
   for(let v=lo; v<=hi+step*1e-6; v+=step) t.push(Math.abs(v)<step*1e-6?0:v);
   return {lo,hi,step,ticks:t}; }
-function fmt(v){ const a=Math.abs(v); if(a!==0 && (a<1e-3||a>=1e5)) return v.toExponential(0);
+function fmt(v){ const a=Math.abs(v); if(a!==0 && (a<1e-3||a>=1e7)) return v.toExponential(0);   // 1e7, not 1e5 (2026-11-25): pressures in Pa, ~101 000, read as numbers
   return (Math.round(v*1000)/1000).toString(); }
 function polyline(xs,ys,color,w){ ctx.strokeStyle=getCss(color); ctx.lineWidth=w; ctx.beginPath();
   for(let i=0;i<xs.length;i++){ i?ctx.lineTo(xs[i],ys[i]):ctx.moveTo(xs[i],ys[i]); } ctx.stroke(); ctx.lineWidth=1; }
@@ -1008,6 +1054,7 @@ function renderPanel(P){
   cv=P.cv; ctx=P.ctx;
   const W=cv.clientWidth,H=cv.clientHeight; ctx.clearRect(0,0,W,H);
   const s=series(P);
+  if(!s && CONFIG.blankEmpty) return;   // `blankEmpty:true` in CONFIG: an empty plot is just blank (Thunder and Lightning, 2026-11-25)
   if(!s){ ctx.fillStyle=getCss("--muted"); ctx.font=font(14); ctx.textAlign="center"; ctx.textBaseline="middle";
     ctx.fillText(P.label ? ("Load the “"+P.label+"” export with the picker above.")
                          : "Load your phyphox .zip (top-left) to plot acceleration against time.", W/2, H/2); return; }
@@ -1019,7 +1066,8 @@ function renderPanel(P){
   // showed when a tick happened to land at the horizontal center — Get Air's elevator files put "10" there
   // and printed it through the middle of "t (s)". The title now gets a row of its own rather than sharing.
   const TDp=tempDef(P);
-  const mL=TDp?112:58, mR=(showX||showV)?62:18, mT=16, mB=isLast?42:24, ph=H-mT-mB, px=W-mL-mR;
+  const pdM=PANELDEF.find(d=>(d.key||"")===P.key)||{};   // `mL:` on a slot: a wider left margin for long tick labels (Pa, 2026-11-25)
+  const mL=pdM.mL||(TDp?112:58), mR=(showX||showV)?62:18, mT=16, mB=isLast?42:24, ph=H-mT-mB, px=W-mL-mR;
   if(P.readout) P.readout.style.marginLeft = TDp ? "54px" : "";      // the readout sits just inside the plot's left edge, wherever that is
 
   // The TIME axis always spans the whole recording, cropped or not — that is the deliberate half of the
@@ -1039,7 +1087,9 @@ function renderPanel(P){
   const pdE=PANELDEF.find(d=>(d.key||"")===P.key)||{};
   if(pdE.extendTo0) tLo0=Math.min(tLo0,0);              // Thunder and Lightning's whistle: the line is read where it meets zero
   if(pdE.pad){ const sp=(tHi0-tLo0)||1; tLo0-=pdE.pad*sp; tHi0+=pdE.pad*sp; }   // a few dots need room at the ends
-  const T=niceTicks(tLo0, tHi0, 6);
+  let T=niceTicks(tLo0, tHi0, 6);
+  { const lo=invAxisLo(P, T.lo, T.hi);   // Fit 1/X's reveal: the axis slides left to the asymptote
+    if(lo<T.lo){ const T2=niceTicks(lo, T.hi, 6); T={lo, hi:T.hi, step:T2.step, ticks:T2.ticks.filter(v=>v>=lo-1e-9)}; } }
   const cr=cropRange(s,P);
   const inA=s.a.slice(cr[0],cr[1]+1);
   let aLo=Math.min.apply(null,inA), aHi=Math.max.apply(null,inA);
@@ -1100,7 +1150,7 @@ function renderPanel(P){
   if(TDp){
     // two scales for one curve: the color (nearest the plot) and, left of it, the temperature it stands for.
     // °C is marked only where the color means one: from `lo` (color 0, "or colder") to lo+band (color 1, "or warmer").
-    axisTitleV(mL-40, mT+ph/2, "", A.sym, "--muted");   // gray, like its ticks (Daniel, 2026-11-13)
+    axisTitleV(pdM.mL ? 14 : mL-40, mT+ph/2, "", A.sym, "--muted");   // gray, like its ticks (Daniel, 2026-11-13)
     const xT=mL-58; ctx.strokeStyle=getCss("--line"); ctx.lineWidth=1;
     const yA=ay(Math.min(1,Ay.hi)), yB=ay(Math.max(0,Ay.lo)); ctx.beginPath(); ctx.moveTo(xT,yA); ctx.lineTo(xT,yB); ctx.stroke();
     ctx.fillStyle=getCss("--ink"); ctx.font=font(11); ctx.textAlign="right"; ctx.textBaseline="middle";
@@ -1179,6 +1229,22 @@ function renderPanel(P){
   } else {
     polyline(s.t.map(tx), s.a.map(ay), "--trace", num("--stroke-trace"));
   }
+  /* Magnify (Thunder and Lightning, 2026-11-26, Daniel): hover over the trace and a full-height strip, MAG_HW px either side
+     of the cursor, shows the data MAG_Z times closer in time (same vertical scale), between solid amber edges. Made for a
+     6 s voice recording, where single pressure wiggles are a few ms apart and invisible at full width. */
+  if(S.tool==="magnify" && P.hover!=null && !pdE.dots){
+    const MAG_HW=70, MAG_Z=25, xc=tx(P.hover), x0=Math.max(mL,xc-MAG_HW), x1=Math.min(mL+px,xc+MAG_HW);
+    const span=(T.hi-T.lo)/px, tc=P.hover, X=t=>xc+(t-tc)/(span/MAG_Z);
+    const lo=tc-(xc-x0)*span/MAG_Z, hi=tc+(x1-xc)*span/MAG_Z;
+    ctx.save(); ctx.clearRect(x0,mT,x1-x0,ph); ctx.fillStyle=getCss("--bg"); ctx.globalAlpha=.96; ctx.fillRect(x0,mT,x1-x0,ph); ctx.globalAlpha=1;
+    ctx.beginPath(); ctx.rect(x0,mT,x1-x0,ph); ctx.clip();
+    if(0>=Ay.lo && 0<=Ay.hi){ ctx.strokeStyle=getCss("--grid"); ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(x0,ay(0)); ctx.lineTo(x1,ay(0)); ctx.stroke(); }
+    let i0=0, i1=s.t.length-1; while(i0<i1 && s.t[i0]<lo) i0++; while(i1>i0 && s.t[i1]>hi) i1--;
+    const xs=[],ys=[]; for(let i=Math.max(0,i0-1);i<=Math.min(s.t.length-1,i1+1);i++){ xs.push(X(s.t[i])); ys.push(ay(s.a[i])); }
+    polyline(xs,ys,"--trace",num("--stroke-trace"));
+    ctx.restore();
+    ctx.strokeStyle=getCss("--edge"); ctx.lineWidth=2; [x0,x1].forEach(x=>{ ctx.beginPath(); ctx.moveTo(x,mT); ctx.lineTo(x,mT+ph); ctx.stroke(); }); ctx.lineWidth=1;
+  }
   if(pdE.extendTo0 && S.tool==="slope" && P.sel){ const L=slopeFit(s,P); if(L){     // dashed, from zero to the window
     ctx.strokeStyle=getCss("--result"); ctx.lineWidth=1.5; ctx.setLineDash([6,5]);
     ctx.beginPath(); ctx.moveTo(tx(0),ay(L.b)); ctx.lineTo(tx(L.t0),ay(L.m*L.t0+L.b)); ctx.stroke(); ctx.setLineDash([]);
@@ -1228,6 +1294,23 @@ function renderPanel(P){
     ctx.setLineDash([6,5]); ctx.globalAlpha=.7; polyline(xs2,ys2,"--result",num("--stroke-result")); ctx.globalAlpha=1; ctx.setLineDash([]);
     const xs=[],ys=[]; for(let k=0;k<=120;k++){ const t=s.t[r[0]]+(t1-s.t[r[0]])*k/120; xs.push(tx(t)); ys.push(ay(f(t))); }
     polyline(xs,ys,"--result",num("--stroke-result"));
+    ctx.restore();
+  }
+
+  // Fit 1/X: the fitted curve over the window, solid; on across the rest of the axis, dashed (as Fit Exponential's);
+  // once every point is in and the axis has finished sliding, the vertical asymptote at x = −h, dashed.
+  if(S.tool==="fitinv" && P.ifit && P.sel){
+    const F=P.ifit, r=selRange(s,P), f=x=>F.A/(x+F.h), x0=s.t[r[0]], x1=s.t[r[1]], lo=Math.max(T.lo,-F.h+1e-6);
+    ctx.save(); ctx.beginPath(); ctx.rect(mL,mT,px,ph); ctx.clip();
+    const seg=(a,b,K)=>{ const xs=[],ys=[]; for(let k=0;k<=K;k++){ const u=k/K, x=a+(b-a)*(a<x0? 1-Math.pow(1-u,3) : u); const y=f(x);
+      xs.push(tx(x)); ys.push(ay(Math.min(y, Ay.hi+10*(Ay.hi-Ay.lo)))); } return [xs,ys]; };
+    ctx.setLineDash([6,5]); ctx.globalAlpha=.7;
+    if(lo<x0){ const [a,b]=seg(lo,x0,200); polyline(a,b,"--result",num("--stroke-result")); }
+    if(x1<T.hi){ const [a,b]=seg(x1,T.hi,80); polyline(a,b,"--result",num("--stroke-result")); }
+    ctx.globalAlpha=1; ctx.setLineDash([]);
+    { const [a,b]=seg(x0,x1,120); polyline(a,b,"--result",num("--stroke-result")); }
+    if(F.all && P._inv && P._inv.done && -F.h>=T.lo){ const xa=tx(-F.h); ctx.setLineDash([7,6]);
+      polyline([xa,xa],[mT,mT+ph],"--result",num("--stroke-result")); ctx.setLineDash([]); }
     ctx.restore();
   }
 
@@ -1311,7 +1394,7 @@ function renderPanel(P){
     ctx.beginPath(); ctx.moveTo(x,mT); ctx.lineTo(x,mT+ph); ctx.stroke(); ctx.setLineDash([]);
     ctx.fillStyle=getCss("--mark"); ctx.beginPath(); ctx.arc(x,y,4,0,7); ctx.fill(); ctx.lineWidth=1; }
   // selection edges (avg / integrate / fit sine): dashed amber context lines bounding the selection
-  if((S.tool==="avg"||S.tool==="slope"||S.tool==="dblint"||S.tool==="integrate"||S.tool==="fitsine"||S.tool==="fitdamped"||S.tool==="fitexp") && P.sel){ const r=selRange(s,P);
+  if((S.tool==="avg"||S.tool==="slope"||S.tool==="dblint"||S.tool==="integrate"||S.tool==="fitsine"||S.tool==="fitdamped"||S.tool==="fitexp"||S.tool==="fitinv") && P.sel){ const r=selRange(s,P);
     ctx.strokeStyle=getCss("--edge"); ctx.lineWidth=num("--stroke-mark"); ctx.setLineDash([4,4]);
     [r[0],r[1]].forEach(i=>{ const x=tx(s.t[i]);
       ctx.beginPath(); ctx.moveTo(x,mT); ctx.lineTo(x,mT+ph); ctx.stroke(); }); ctx.setLineDash([]); ctx.lineWidth=1;
@@ -1358,6 +1441,7 @@ function wirePointer(P){
   P.cv.addEventListener("pointerdown",e=>{
     S.activeIdx=P.i;
     if(!P.ds) return;
+    if(S.tool==="magnify"){ P.hover=pxToTime(P,e.clientX); renderPanel(P); updatePlotReadout(P); return; }   // a tap magnifies there (touch)
     P.cv.setPointerCapture(e.pointerId);
     const t=pxToTime(P,e.clientX);
     if(S.tool==="crop"){
@@ -1376,9 +1460,11 @@ function wirePointer(P){
       render(); return;
     }
     if(S.tool==="point"){ P.point=t; P.drag={pt:true}; render(); setReadout(); }
-    else { P.drag={t0:t}; P.sel={a:t,b:t}; if(S.tool==="dblint"||S.tool==="integrate") P.integ=null; if(S.tool==="fitsine") P.fit=null; if(S.tool==="fitdamped") P.dfit=null; if(S.tool==="fitexp") P.efit=null; render(); setReadout(); }
+    else { P.drag={t0:t}; P.sel={a:t,b:t}; if(S.tool==="dblint"||S.tool==="integrate") P.integ=null; if(S.tool==="fitsine") P.fit=null; if(S.tool==="fitdamped") P.dfit=null; if(S.tool==="fitexp") P.efit=null; if(S.tool==="fitinv"){ P.ifit=null; P._inv=null; } render(); setReadout(); }
   });
+  P.cv.addEventListener("pointerleave",()=>{ if(P.hover!=null){ P.hover=null; render(); setReadout(); } });
   P.cv.addEventListener("pointermove",e=>{
+    if(S.tool==="magnify" && P.ds){ P.hover=pxToTime(P,e.clientX); if(!P._magFrame) P._magFrame=requestAnimationFrame(()=>{ P._magFrame=0; renderPanel(P); updatePlotReadout(P); }); return; }
     if(!P.drag) return;
     if(P.drag.crop){ P.crop[P.drag.crop]=pxToTime(P,e.clientX); render(); return; }
     if(P.drag.pt){ P.point=pxToTime(P,e.clientX); render(); setReadout(); return; }   // Select Point: live drag
@@ -1388,6 +1474,7 @@ function wirePointer(P){
     if(S.tool==="fitdamped" && !P._dfFrame){ P._dfFrame=requestAnimationFrame(()=>{ P._dfFrame=0;
       if(P.drag && P.sel){ doFitDamped(series(P),P,true); render(); setReadout(); } }); }
     if(S.tool==="fitexp") doFitExp(s,P);
+    if(S.tool==="fitinv") doFitInv(s,P);
     render(); setReadout();
   });
   P.cv.addEventListener("pointerup",e=>{
@@ -1401,10 +1488,11 @@ function wirePointer(P){
     }
     if(P.drag.pt){ P.drag=null; return; }
     const t=pxToTime(P,e.clientX);
-    if(Math.abs(t-P.drag.t0)<1e-3){ P.sel=null; P.integ=null; P.fit=null; P.dfit=null; P.efit=null; }
+    if(Math.abs(t-P.drag.t0)<1e-3){ P.sel=null; P.integ=null; P.fit=null; P.dfit=null; P.efit=null; P.ifit=null; }
     else { P.sel={a:P.drag.t0,b:t}; if(S.tool==="dblint"||S.tool==="integrate") doIntegrate(series(P),P); if(S.tool==="fitsine"){ doFitSine(series(P),P); syncFitControls(); }
       if(S.tool==="fitdamped"){ doFitDamped(series(P),P); syncDampedControls(); }
       if(S.tool==="fitexp"){ doFitExp(series(P),P); expDerived(); expAutofill(); }
+      if(S.tool==="fitinv") doFitInv(series(P),P);
       if(S.tool==="slope") slopeAutofill(); }
     P.drag=null; render(); setReadout();
   });
@@ -1416,7 +1504,7 @@ document.querySelectorAll("#tools button").forEach(b=>b.addEventListener("click"
   // Switching tools clears the MEASUREMENT state on every visible panel — but never the crop. A crop is
   // a viewing decision that outlives the tool that made it; clearing it here would throw the student
   // back to a flat line the instant they picked up Average Value to measure inside it.
-  visiblePanels().forEach(P=>{ P.point=null; P.sel=null; P.integ=null; P.fit=null; P.dfit=null; P.efit=null;
+  visiblePanels().forEach(P=>{ P.point=null; P.sel=null; P.integ=null; P.fit=null; P.dfit=null; P.efit=null; P.ifit=null;
     if(S.tool==="crop" && !P.crop){ const s=series(P); if(s) P.crop={a:s.t[0],b:s.t[s.t.length-1]}; } });
   updateCtx(); resize(); setReadout(); updateFitLabel();
 }));
@@ -2274,7 +2362,7 @@ function renderStep(){
   }
   // `tool: fitexp` pins Fit Exponential the same way (Cool Hand Luke, 2026-11-12). With `CONFIG.pinTools`, `tool: point`
   // and `tool: avg` pin too; without it they stay what they were in every earlier deck, a note for the reader.
-  if((st.tool==="fitexp" || (CONFIG.pinTools && (st.tool==="point" || st.tool==="avg" || st.tool==="slope"))) && S.tool!==st.tool && TOOLS.indexOf(st.tool)>=0){
+  if((st.tool==="fitexp" || st.tool==="fitinv" || (CONFIG.pinTools && (st.tool==="point" || st.tool==="avg" || st.tool==="slope"))) && S.tool!==st.tool && TOOLS.indexOf(st.tool)>=0){
     S.tool=st.tool;
     document.querySelectorAll("#tools button").forEach(x=>x.classList.toggle("on",x.dataset.tool===st.tool));
     updateCtx(); resize(); setReadout(); updateFitLabel();
@@ -2371,6 +2459,12 @@ function renderStep(){
       const d=document.createElement("div"); d.className="choice"; d.innerHTML='<span class="ci">'+choiceLabel(i)+')</span> '+c; choiceEls.push(d);
       d.addEventListener("click",()=>{
         if(d.dataset.locked==="1") return;
+        // `anychoice:true` (Thunder and Lightning, 2026-11-26): a poll, not a test. Every pick is accepted and none is
+        // marked right; the pick is outlined in gray, the others dim, and the step's feedback (which says why) appears.
+        if(st.anychoice){
+          choiceEls.forEach((x,idx)=>{ x.dataset.locked="1"; x.classList.add("locked"); x.classList.remove("wrong");
+            x.style.outline = idx===i ? "2px solid var(--muted)" : ""; if(idx===i) x.classList.remove("locked"); });
+          S.answers["q"+S.step]=i; setFb(st.feedback); refreshNext(); return; }
         if(isCorrect(st,i)){
           if(S.lockTimer){ clearInterval(S.lockTimer); S.lockTimer=null; }
           choiceEls.forEach((x,idx)=>{ x.classList.remove("wrong","locked"); x.dataset.locked="1";
@@ -2397,7 +2491,10 @@ function renderStep(){
       grid.appendChild(d);
     });
     main.appendChild(grid);
-    if(S.answers["q"+S.step]!=null){                                 // restore: light up every correct choice
+    if(S.answers["q"+S.step]!=null && st.anychoice){
+      choiceEls.forEach((x,idx)=>{ x.dataset.locked="1"; if(idx!==S.answers["q"+S.step]) x.classList.add("locked"); else x.style.outline="2px solid var(--muted)"; });
+      setFb(st.feedback);
+    } else if(S.answers["q"+S.step]!=null){                                 // restore: light up every correct choice
       choiceEls.forEach((x,idx)=>{ x.dataset.locked="1"; x.classList.add(isCorrect(st,idx)?"correct":"locked"); });
       setFb("✓ "+st.feedback);
     }
@@ -2431,7 +2528,7 @@ function renderStep(){
       if(fields.length>1 && (st.figure || pair)) wrap.classList.add("byrow"); }
     fields.forEach(f=>{
       const row=document.createElement("div"); row.className="inrow";
-      row.innerHTML='<label>'+f.label+':</label><input type="number" step="any" style="width:88px"> <span class="unit">'+unitText(f.unit)+'</span>';
+      row.innerHTML='<label>'+f.label+(/[?:]$/.test(f.label)?'':':')+'</label><input type="number" step="any" style="width:88px"> <span class="unit">'+unitText(f.unit)+'</span>';
       const inp=row.querySelector("input");
       inp.dataset.key=f.key;                        // lets a top-region sim write the box it drives (makeSim)
       if(st.autofill){ inp.readOnly=true; inp.tabIndex=-1; inp.classList.add("autofill"); inp.placeholder="from fit";

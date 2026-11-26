@@ -129,11 +129,14 @@ function onMsg(m){
   }
   if(m.phone!==LC.phone) return;
   if(m.type==="data" && m.run===LC.run && LC.buf){
-    if(LC.seen.has(m.seq)) return; LC.seen.add(m.seq);
+    if(LC.seen.has(m.seq)) return; LC.seen.add(m.seq); LC.lastData=performance.now(); if(m.of) LC.of=m.of;
     const B=LC.buf; for(let i=0;i<m.t.length;i++){ B.t.push(m.t[i]); B.a.push(m.a[i]); }
     drawLive();
     if(LC.recState==="finishing" && LC.expected!=null && LC.seen.size>=LC.expected) finish();
+  } else if(m.type==="rec" && m.run===LC.run){
+    LC.recAt=performance.now(); paint();                 // the phone's microphone has really started (2026-11-26)
   } else if(m.type==="done" && m.run===LC.run){
+    LC.clip=+m.clip||0;
     if(LC.mic && LC.recState==="rec") LC.recState="finishing";
     LC.expected=m.batches; if(LC.seen.size>=m.batches) finish();
   } else if(m.type==="error"){
@@ -161,12 +164,12 @@ function begin(){
   LC.run=Math.random().toString(36).slice(2,8);
   LC.mic=isMic(NARR[S.step]);
   if(LC.mic){
-    LC.buf={ t:[], a:[] }; LC.seen=new Set(); LC.expected=null;
+    LC.buf={ t:[], a:[] }; LC.seen=new Set(); LC.expected=null; LC.recAt=null; LC.lastData=null; LC.of=null; LC.clip=0;
     LC.recState="rec"; LC.startedAt=performance.now();
     P._lc="rec"; LC.error=null; P.ds=null; P.sel=null; P.point=null; P.fileName=null;
-    LC.conn.send({ type:"start", phone:LC.phone, run:LC.run, src:"mic", seconds:NARR[S.step].live.seconds||0.25 });
+    LC.conn.send({ type:"start", phone:LC.phone, run:LC.run, src:"mic", seconds:NARR[S.step].live.seconds||0.25, rate:NARR[S.step].live.rate||0 });   // rate: the phone averages down to it (voices, 2026-11-26)
     logEv("begin", { slot:P.key, mic:true }); render(); paint();
-    const myRun=LC.run; setTimeout(()=>{ if(LC.recState!=="idle" && LC.run===myRun){ LC.recState="finishing"; finish(); } }, 6000);   // a lost "done"
+    micWatch(LC.run, NARR[S.step].live.seconds||0.25);
     return;
   }
   LC.axis=(NARR[S.step].requireAxis||"z").replace(/^g/,"");
@@ -177,6 +180,17 @@ function begin(){
   LC.conn.send({ type:"start", phone:LC.phone, run:LC.run, src:"lin", axis:LC.axis, show:LC.axis, batchMs:LCFG.batchMs });
   logEv("begin", { slot:P.key });
   render(); paint(); tick();
+}
+// 2026-11-26 (Daniel: a 6 s voice came back as 2.9 s): no fixed deadline. Wait for the phone to start; once the clip's
+// length has passed, keep waiting as long as batches keep arriving, and finish when they stop for 4 s.
+function micWatch(myRun, secs){
+  if(LC.run!==myRun || LC.recState==="idle") return;
+  const now=performance.now(), t0=LC.recAt || (LC.lastData!=null ? LC.startedAt : null);
+  if(t0==null && now-LC.startedAt>8000){
+    abortRun(); LC.error="The phone didn't start recording. Check that its page is still open (or scan the code again), then press Record again."; paint(); return; }
+  if(t0!=null && now>t0+secs*1000+4000 && now-(LC.lastData||0)>4000){ LC.recState="finishing"; finish(); return; }
+  if(secs>=1) paint();
+  setTimeout(()=>micWatch(myRun, secs), 250);
 }
 function tick(){
   if(LC.recState!=="rec") return;
@@ -196,6 +210,8 @@ function toParsed(B){
   const idx=B.t.map((_,i)=>i).sort((i,j)=>B.t[i]-B.t[j]);
   const pick=a=>idx.map(i=>a[i]);
   if(LC.mic){ const a=pick(B.a), m=a.reduce((x,y)=>x+y,0)/(a.length||1); let pk=1e-9; a.forEach(v=>{ pk=Math.max(pk,Math.abs(v-m)); });
+    if(((NARR[S.step]||{}).live||{}).seconds>=1)   // a long clip (a voice) is plotted in seconds
+      return { headers:["Time (s)","Pressure p (arb.)"], cols:{ "Time (s)":pick(B.t).map(t=>+(t/1000).toFixed(5)), "Pressure p (arb.)":a.map(v=>+((v-m)/pk).toFixed(4)) } };
     return { headers:["Time (ms)","Pressure p (arb.)"], cols:{ "Time (ms)":pick(B.t), "Pressure p (arb.)":a.map(v=>+((v-m)/pk).toFixed(4)) } }; }
   const H=["Time (s)","Linear Acceleration "+LC.axis+" (m/s^2)"];
   const cols={}; cols[H[0]]=pick(B.t); cols[H[1]]=pick(B.a);
@@ -220,7 +236,7 @@ function finish(){
       ingestParsed({ headers:full.headers, cols }, Z); Z.supplied=true; if(Z.file) Z.file.style.display="none"; } }
   const n=LC.buf.t.length, dur=LC.buf.t[n-1]-LC.buf.t[0];
   P.fileName="live capture";
-  P._lcMeta={ n, dur, rate: dur>0 ? (n-1)/dur : 0, run:LC.run };
+  P._lcMeta={ n, dur, rate: dur>0 ? (n-1)/dur : 0, run:LC.run, clip:LC.mic ? LC.clip||0 : 0 };
   P._lc="review";
   logEv("review", { slot:P.key, n, dur:+dur.toFixed(2) });
   render(); setReadout(); paint(); refreshNext();
@@ -298,7 +314,12 @@ function paint(){
      +'</div></div>';
     if(LC.error) h+='<div class="lc-err">'+esc(LC.error)+'</div>';
   } else if(LC.recState!=="idle" && LC.mic){
-    h+='<div class="lc-big lc-rec">Recording a quarter second…</div><p class="lc-sub">Keep the note going.</p>';
+    const secs=(st.live&&st.live.seconds)||0.25;
+    const now=performance.now(), left=LC.recAt!=null ? secs-(now-LC.recAt)/1000 : null;
+    if(secs>=1 && LC.recAt==null && !LC.seen.size) h+='<div class="lc-big">Starting the phone\'s microphone…</div><p class="lc-sub">Get ready.</p>';
+    else if(secs>=1 && left!=null && left>0) h+='<div class="lc-big lc-rec">Recording · '+Math.ceil(left)+' s left</div><p class="lc-sub">Speak now.</p>';
+    else if(secs>=1) h+='<div class="lc-big">Receiving…</div><p class="lc-sub">The phone is sending the recording'+(LC.of?': '+Math.round(100*LC.seen.size/LC.of)+'%':'')+'. You can stop talking.</p>';
+    else h+='<div class="lc-big lc-rec">Recording a quarter second…</div><p class="lc-sub">Keep the note going.</p>';
   } else if(LC.recState==="rec"){
     h+='<div class="lc-big lc-rec">Recording'+(multi?' · '+esc(((T&&T.label)||"").replace(/^.*—\s*/,"").toLowerCase()):'')+'</div>'
      +'<div class="lc-stats"><span id="lc-time">0.0 s</span> · <span>'+LC.buf.t.length+' samples</span></div>'
@@ -308,14 +329,16 @@ function paint(){
   } else if(T && T._lc==="review"){
     const m=T._lcMeta||{};
     h+='<div class="lc-big">Keep this run?</div>'
-     +(isMic(st) ? '<p class="lc-sub">'+(m.n||0)+' samples over '+(m.dur||0).toFixed(0)+' ms. A steady wave or a squeak: you can check it zoomed in on a later step.</p>'
+     +(isMic(st) && ((st.live&&st.live.seconds)||0)>=1 ? '<p class="lc-sub">'+(m.n||0)+' samples over '+((m.dur||0)/1000).toFixed(1)+' s.</p>'
+       : isMic(st) ? '<p class="lc-sub">'+(m.n||0)+' samples over '+(m.dur||0).toFixed(0)+' ms. A steady wave or a squeak: you can check it zoomed in on a later step.</p>'
                  : '<p class="lc-sub">'+(m.n||0)+' samples over '+(m.dur||0).toFixed(1)+' s · '+Math.round(m.rate||0)+' per second</p>')
+     +(isMic(st) && (m.clip||0)>0.002 ? '<div class="lc-err">Too loud: the microphone clipped. Hold the phone a little farther away and try again.</div>' : '')
      +'<div class="lc-btns"><button class="deck-go lc-ghost" data-lc="again">Try again</button>'
      +'<button class="deck-go lc-accept" data-lc="accept">Accept</button></div>';
   } else {
     h+='<div class="lc-big lc-ok">✓ Phone connected</div>'
      +'<p class="lc-sub">'+(multi?'Next: the <b>'+esc(((T&&T.label)||"").replace(/^.*—\s*/,"").toLowerCase())+'</b> run. ':'')
-     +(isMic(st) ? 'Start a steady note first, then press <b>Record</b>.</p>' : 'Press <b>Record</b>, then do the experiment.</p>')
+     +(isMic(st) && ((st.live&&st.live.seconds)||0)>=1 ? 'Press <b>Record</b>, then speak.</p>' : isMic(st) ? 'Start a steady note first, then press <b>Record</b>.</p>' : 'Press <b>Record</b>, then do the experiment.</p>')
      +'<button class="deck-go lc-begin" data-lc="begin"><span class="lc-dot"></span>Record</button>';
     if(LC.error) h+='<div class="lc-err">'+esc(LC.error)+'</div>';
   }
@@ -369,6 +392,7 @@ renderPanel=function(P){
   const st=NARR[S.step];
   if(st && st.live && !LC.showFile && liveSlots(st).indexOf(P.key)>=0 && !series(P)){
     const c=P.ctx, W=P.cv.clientWidth, H=P.cv.clientHeight; c.clearRect(0,0,W,H);
+    if(CONFIG.blankEmpty) return;   // the deck asked for empty plots to stay blank (Thunder and Lightning, 2026-11-25)
     c.fillStyle=getCss("--muted"); c.font=font(14); c.textAlign="center"; c.textBaseline="middle";
     const lab=(P.label||"").replace(/^.*—\s*/,"").toLowerCase();
     c.fillText(LC.target!==P.key ? (isMic(st) ? lab.replace(/^./,ch=>ch.toUpperCase())+" goes here, after "+((panelByKey(LC.target)||{}).label||"").replace(/^.*—\s*/,"").toLowerCase()+"."

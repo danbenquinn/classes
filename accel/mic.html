@@ -42,7 +42,7 @@
 const params = new URLSearchParams(location.search), ROOM = (params.get("room") || "").toUpperCase(), SIM = params.has("sim");
 const me = { id: "m-" + randomId(), role: "phone" };
 const $ = (id) => document.getElementById(id);
-let conn = null, state = "start", ctx = null, node = null, sr = 48000, run = null;
+let conn = null, state = "start", ctx = null, node = null, sr = 48000, run = null, want = 0, secsWant = 0.25, cd = null;
 function show(dot, title, sub, btn) { $("dot").className = "dot " + dot; $("title").textContent = title; $("sub").textContent = sub;
   $("go").hidden = !btn; if (btn) $("go").textContent = btn; }
 if (!ROOM) show("warn", "No deck code", "Scan the QR code on your group's laptop to open this page.");
@@ -53,7 +53,7 @@ class Grab extends AudioWorkletProcessor {
     this.port.onmessage = (e) => { this.buf = new Float32Array(e.data.n); this.k = 0; }; }
   process(inputs) { const x = inputs[0] && inputs[0][0]; if (!x) return true;
     for (let i = 0; i < x.length; i++) { const a = Math.abs(x[i]); if (a > this.pk) this.pk = a;
-      if (this.buf) { this.buf[this.k++] = x[i]; if (this.k === this.buf.length) { this.port.postMessage({ type: "clip", buf: this.buf }, [this.buf.buffer]); this.buf = null; } } }
+      if (this.buf) { if (this.k === 0) this.port.postMessage({ type: "began" }); this.buf[this.k++] = x[i]; if (this.k === this.buf.length) { this.port.postMessage({ type: "clip", buf: this.buf }, [this.buf.buffer]); this.buf = null; } } }
     if (currentFrame - this.last > sampleRate / 20) { this.port.postMessage({ type: "level", pk: this.pk }); this.pk = 0; this.last = currentFrame; }
     return true; } }
 registerProcessor("grab", Grab);`;
@@ -79,17 +79,37 @@ function onWorklet(e) {
   if (m.type === "level") {
     const p = Math.max(0, Math.min(100, 100 * Math.log(Math.max(m.pk, 0.003) / 0.003) / Math.log(1 / 0.003)));
     $("bar").style.width = p + "%"; $("bar").style.background = m.pk > 0.98 ? "var(--rec)" : "var(--ok)";
-  } else if (m.type === "clip" && run) sendClip(m.buf, run);
+  } else if (m.type === "began" && run) {
+    // 2026-11-26: the deck counts down from the moment the phone really starts, not from when it pressed Record
+    conn.send({ type: "rec", phone: me.id, run });
+    if (secsWant >= 1) { const end = performance.now() + secsWant * 1000; clearInterval(cd);
+      const upd = () => { const left = Math.max(0, Math.ceil((end - performance.now()) / 1000)); $("sub").textContent = left + " s left."; };
+      upd(); cd = setInterval(upd, 200); }
+  } else if (m.type === "clip" && run) {
+    clearInterval(cd); cd = null;
+    let nc = 0; for (let i = 0; i < m.buf.length; i++) if (Math.abs(m.buf[i]) > 0.98) nc++;
+    const clip = nc / Math.max(1, m.buf.length);
+    // `rate` (voices, 2026-11-26): average down to about that many samples a second before sending, so 6 s of speech
+    // is ~72,000 numbers instead of ~290,000. Block means are a gentle low-pass, so nothing aliases in.
+    let buf = m.buf, rate = sr;
+    if (want > 0 && want < sr) { const k = Math.max(1, Math.round(sr / want)), n = Math.floor(buf.length / k), out = new Float32Array(n);
+      for (let j = 0; j < n; j++) { let s = 0; for (let q = 0; q < k; q++) s += buf[j * k + q]; out[j] = s / k; }
+      buf = out; rate = sr / k; }
+    sendClip(buf, run, rate, clip);
+  }
 }
-async function sendClip(buf, r) {
+async function sendClip(buf, r, rate, clip) {
+  rate = rate || sr;
   const N = 2000, batches = Math.ceil(buf.length / N);
+  if (batches > 3) show("wait", "Sending…", "Sending the recording to the laptop.");
   for (let b = 0; b < batches; b++) {
+    if (batches > 3) $("sub").textContent = "Sending the recording to the laptop: " + Math.round(100 * b / batches) + "%";
     const t = [], a = [];
-    for (let i = b * N; i < Math.min(buf.length, (b + 1) * N); i++) { t.push(+(i / sr * 1000).toFixed(4)); a.push(Math.round(buf[i] * 1e4) / 1e4); }
-    conn.send({ type: "data", phone: me.id, run: r, seq: b, t, a });
+    for (let i = b * N; i < Math.min(buf.length, (b + 1) * N); i++) { t.push(+(i / rate * 1000).toFixed(4)); a.push(Math.round(buf[i] * 1e4) / 1e4); }
+    conn.send({ type: "data", phone: me.id, run: r, seq: b, of: batches, t, a });
     await new Promise((res) => setTimeout(res, 120));     // supabase-js throttles bursts; space the batches
   }
-  conn.send({ type: "done", phone: me.id, run: r, n: buf.length, batches });
+  conn.send({ type: "done", phone: me.id, run: r, n: buf.length, batches, clip: +(clip || 0).toFixed(4) });
   run = null; connected();
 }
 
@@ -111,11 +131,12 @@ function onMessage(m) {
   else if (m.type === "busy" && m.phone === me.id) busy();
   else if (m.phone !== me.id) return;
   else if (m.type === "start") {
-    run = m.run; state = "rec"; show("rec", "Recording", "A quarter of a second, starting now.");
+    run = m.run; state = "rec"; want = +m.rate || 0; const secs = +m.seconds || 0.25; secsWant = secs;
+    show("rec", "Recording", secs >= 1 ? secs + " s left." : "A quarter of a second, starting now.");
     node.port.postMessage({ n: Math.round((+m.seconds || 0.25) * sr) });
   } else if (m.type === "release") { state = "released"; show("", "Done", "All recordings are in. You can close this page."); }
 }
-function connected() { state = "connected"; show("ok", "Connected", "Point the microphone at the whistle. The laptop's Record button takes a quarter second."); }
+function connected() { state = "connected"; show("ok", "Connected", "Point the microphone at the sound. The laptop's Record button starts the recording."); }
 function busy() { state = "released"; show("warn", "Deck is busy", "Another phone is already connected to this deck."); }
 </script>
 </body>
