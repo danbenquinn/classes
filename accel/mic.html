@@ -45,6 +45,7 @@ const params = new URLSearchParams(location.search), ROOM = (params.get("room") 
 const me = { id: "m-" + randomId(), role: "phone" };
 const $ = (id) => document.getElementById(id);
 let conn = null, state = "start", ctx = null, node = null, sr = 48000, run = null, want = 0, secsWant = 0.25, cd = null;
+let stream = null, lock = null, lostT = null;   // held so the microphone can be turned OFF (2026-11-27)
 function show(dot, title, sub, btn) { $("dot").className = "dot " + dot; $("title").textContent = title; $("sub").textContent = sub;
   $("go").hidden = !btn; if (btn) $("go").textContent = btn; }
 if (!ROOM) show("warn", "No deck code", "Scan the QR code on your group's laptop to open this page.");
@@ -69,12 +70,32 @@ async function startMic() {
     const o = ctx.createOscillator(), o3 = ctx.createOscillator(), g3 = ctx.createGain(); o.frequency.value = 700; o3.frequency.value = 2100; g3.gain.value = 0.25;
     src = ctx.createGain(); src.gain.value = 0.4; o.connect(src); o3.connect(g3); g3.connect(src); o.start(); o3.start();
   } else {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 } });
+    stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 } });
     src = ctx.createMediaStreamSource(stream);
   }
   const mute = ctx.createGain(); mute.gain.value = 0; src.connect(node); node.connect(mute); mute.connect(ctx.destination);
   node.port.onmessage = onWorklet;
-  try { if ("wakeLock" in navigator) await navigator.wakeLock.request("screen"); } catch {}
+  try { if ("wakeLock" in navigator) lock = await navigator.wakeLock.request("screen"); } catch {}
+}
+// The microphone OFF (2026-11-27, Daniel: a phone that still seems to be listening after the deck has moved on would weird
+// students out): stop the tracks (the browser's red/orange "in use" light goes out), close the audio graph, let the
+// screen sleep. Called when the deck lets this phone go, when the deck disappears, and when the page is closed.
+function stopMic() {
+  clearInterval(cd); cd = null;
+  try { if (stream) stream.getTracks().forEach((t) => t.stop()); } catch {}
+  try { if (node) node.disconnect(); } catch {}
+  try { if (ctx) ctx.close(); } catch {}
+  try { if (lock) lock.release(); } catch {}
+  stream = null; node = null; ctx = null; lock = null; run = null;
+  $("meter").hidden = true; setSay("");
+}
+addEventListener("pagehide", stopMic);
+// The deck (role "analyzer") gone for 20 s while this phone waits: mic off.
+function onPeers(list) {
+  if (list.some((p) => p.role === "analyzer")) { clearTimeout(lostT); lostT = null; return; }
+  if (lostT || state !== "connected") return;
+  lostT = setTimeout(() => { lostT = null;
+    if (state === "connected") { state = "released"; stopMic(); show("", "Disconnected", "The deck has closed, so the microphone is off.", "Connect again"); } }, 20000);
 }
 function onWorklet(e) {
   const m = e.data;
@@ -116,12 +137,12 @@ async function sendClip(buf, r, rate, clip) {
 }
 
 $("go").onclick = async () => {
-  if (state !== "start" || !ROOM) return;
+  if (!(state === "start" || state === "released") || !ROOM) return;   // "released": Connect again, for the next recording
   state = "connecting"; show("wait", "Connecting…", "Finding your deck.");
   try { await startMic(); }
   catch (e) { state = "start"; show("warn", "Microphone needed", "Allow microphone access when asked, in Safari or Chrome. (" + (e.message || e) + ")", "Try again"); return; }
   $("meter").hidden = false;
-  try { conn = await openRoom(ROOM, me, { onMessage, onPeers: () => {} }); }
+  try { if (!conn) conn = await openRoom(ROOM, me, { onMessage, onPeers }); }
   catch (e) { state = "start"; show("warn", "Couldn't connect", e.message, "Try again"); return; }
   conn.send({ type: "hello", phone: me.id });
   setTimeout(() => { if (state === "connecting") show("wait", "Waiting for the deck…", "Make sure the deck's capture step is open."); }, 4000);
@@ -138,11 +159,12 @@ function onMessage(m) {
     run = m.run; state = "rec"; want = +m.rate || 0; const secs = +m.seconds || 0.25; secsWant = secs;
     show("rec", "Recording", secs >= 1 ? secs + " s left." : "A quarter of a second, starting now.");
     node.port.postMessage({ n: Math.round((+m.seconds || 0.25) * sr) });
-  } else if (m.type === "release") { state = "released"; show("", "Done", "All recordings are in. You can close this page."); }
+  } else if (m.type === "release") { state = "released"; stopMic();
+    show("", "Done", (m.why === "leave" ? "The deck has moved on" : "All recordings are in") + ", and the microphone is off. You can close this page.", "Connect again"); }
 }
 function connected() { state = "connected"; show("ok", "Connected", "Point the microphone at the sound. The laptop's Record button starts the recording."); }
 function setSay(t) { $("say").textContent = t ? "Say: " + t : ""; $("say").hidden = !t; }   // a line to read aloud (2026-11-27)
-function busy() { state = "released"; show("warn", "Deck is busy", "Another phone is already connected to this deck."); }
+function busy() { state = "released"; stopMic(); show("warn", "Deck is busy", "Another phone is already connected to this deck. The microphone is off.", "Try again"); }
 </script>
 </body>
 </html>
