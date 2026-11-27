@@ -18,6 +18,7 @@
   @keyframes spin { to { transform: rotate(360deg); } }
   h1 { font-size: 26px; font-weight: 600; margin: 0 0 10px; }
   p { margin: 0; color: var(--muted); }
+  .say { margin: 22px 0 0; color: var(--fg); font-size: 26px; font-weight: 700; line-height: 1.3; }
   .meter { height: 14px; background: var(--line); border-radius: 6px; overflow: hidden; margin: 22px 0 0; }
   .meter div { height: 100%; width: 0; background: var(--ok); }
   button { margin-top: 30px; width: 100%; padding: 18px; border: 0; border-radius: 14px; background: var(--accent); color: #fff; font: 600 18px/1 inherit; font-family: inherit; }
@@ -29,6 +30,7 @@
   <div id="dot" class="dot"></div>
   <h1 id="title">Microphone</h1>
   <p id="sub">Tap below to connect this phone to the deck.</p>
+  <p id="say" class="say" hidden></p>
   <div class="meter" id="meter" hidden><div id="bar"></div></div>
   <button id="go">Tap to connect</button>
 </main>
@@ -130,13 +132,16 @@ function onMessage(m) {
   else if (m.type === "claim") { if (m.phone === me.id) { if (!run) connected(); } else if (state === "connecting") busy(); }
   else if (m.type === "busy" && m.phone === me.id) busy();
   else if (m.phone !== me.id) return;
+  else if (m.type === "say") setSay(m.text);
   else if (m.type === "start") {
+    if (m.say != null) setSay(m.say);
     run = m.run; state = "rec"; want = +m.rate || 0; const secs = +m.seconds || 0.25; secsWant = secs;
     show("rec", "Recording", secs >= 1 ? secs + " s left." : "A quarter of a second, starting now.");
     node.port.postMessage({ n: Math.round((+m.seconds || 0.25) * sr) });
   } else if (m.type === "release") { state = "released"; show("", "Done", "All recordings are in. You can close this page."); }
 }
 function connected() { state = "connected"; show("ok", "Connected", "Point the microphone at the sound. The laptop's Record button starts the recording."); }
+function setSay(t) { $("say").textContent = t ? "Say: " + t : ""; $("say").hidden = !t; }   // a line to read aloud (2026-11-27)
 function busy() { state = "released"; show("warn", "Deck is busy", "Another phone is already connected to this deck."); }
 </script>
 </body>
