@@ -122,8 +122,8 @@ function openLocal(){
 function onMsg(m){
   if(!m || !m.type) return;
   if(m.type==="hello"){
-    if(!LC.phone){ LC.phone=m.phone; LC.conn.send({ type:"claim", phone:LC.phone }); logEv("phone-connected"); paint(); }
-    else if(m.phone===LC.phone) LC.conn.send({ type:"claim", phone:LC.phone });
+    if(!LC.phone){ LC.phone=m.phone; LC.phoneStep=S.step; LC.conn.send({ type:"claim", phone:LC.phone }); sendSay(); logEv("phone-connected"); paint(); }
+    else if(m.phone===LC.phone){ LC.conn.send({ type:"claim", phone:LC.phone }); sendSay(); }
     else LC.conn.send({ type:"busy", phone:m.phone });
     return;
   }
@@ -144,6 +144,12 @@ function onMsg(m){
     LC.phone=null; LC.error="The phone says: "+m.msg; abortRun(); paint();
   }
 }
+// A line to read aloud (2026-11-27, Thunder and Lightning's voices): any `.lc-say` element in the step's text goes to the
+// phone too, shown big there, so the person speaking has it in hand. "" clears it (a step without one).
+// "a quarter second", "an eighth of a second", "0.3 s": how a short clip is named on screen (2026-11-28: 1/8 s whistles)
+function shortLabel(s){ return Math.abs(s-0.25)<1e-6 ? "a quarter second" : Math.abs(s-0.125)<1e-6 ? "an eighth of a second" : s+" s"; }
+function sayText(){ const el=document.querySelector(".lc-say"); return el ? el.textContent.trim() : ""; }
+function sendSay(){ if(LC.conn && LC.phone) LC.conn.send({ type:"say", phone:LC.phone, text:sayText() }); }
 function onPeers(list){
   if(!LC.phone) return;
   if(list.some(p=>p.id===LC.phone)){ clearTimeout(LC.lostTimer); LC.lostTimer=null; return; }
@@ -167,7 +173,7 @@ function begin(){
     LC.buf={ t:[], a:[] }; LC.seen=new Set(); LC.expected=null; LC.recAt=null; LC.lastData=null; LC.of=null; LC.clip=0;
     LC.recState="rec"; LC.startedAt=performance.now();
     P._lc="rec"; LC.error=null; P.ds=null; P.sel=null; P.point=null; P.fileName=null;
-    LC.conn.send({ type:"start", phone:LC.phone, run:LC.run, src:"mic", seconds:NARR[S.step].live.seconds||0.25, rate:NARR[S.step].live.rate||0 });   // rate: the phone averages down to it (voices, 2026-11-26)
+    LC.conn.send({ type:"start", phone:LC.phone, run:LC.run, src:"mic", seconds:NARR[S.step].live.seconds||0.25, rate:NARR[S.step].live.rate||0, say:sayText() });   // rate: the phone averages down to it (voices, 2026-11-26)
     logEv("begin", { slot:P.key, mic:true }); render(); paint();
     micWatch(LC.run, NARR[S.step].live.seconds||0.25);
     return;
@@ -209,7 +215,16 @@ function stop(){
 function toParsed(B){
   const idx=B.t.map((_,i)=>i).sort((i,j)=>B.t[i]-B.t[j]);
   const pick=a=>idx.map(i=>a[i]);
-  if(LC.mic){ const a=pick(B.a), m=a.reduce((x,y)=>x+y,0)/(a.length||1); let pk=1e-9; a.forEach(v=>{ pk=Math.max(pk,Math.abs(v-m)); });
+  // How a recording is scaled (2026-11-28, both Daniel):
+  //  * a VOICE (a clip of a second or more): by its loudest sample, which lands at 0.9, so nothing is ever cut off;
+  //    its loudest bursts are the point of the next questions ("which sound made the biggest peak?")
+  //  * a short WHISTLE note: by its STEADY sound, the 99.5th percentile of |v - mean|, at 0.9, so a click or squeak
+  //    at the start can't shrink the note; only a true spike beyond 1.0 (11 % above that) is clipped
+  if(LC.mic){ const a0=pick(B.a), m=a0.reduce((x,y)=>x+y,0)/(a0.length||1);
+    const long=(((NARR[S.step]||{}).live||{}).seconds||0)>=1;
+    const ab=a0.map(v=>Math.abs(v-m)).sort((x,y)=>x-y);
+    const pk=Math.max(1e-9, (long ? ab[ab.length-1] : ab[Math.min(ab.length-1, Math.floor(0.995*ab.length))]) / 0.9);
+    const a= long ? a0 : a0.map(v=>m+Math.max(-pk, Math.min(pk, v-m)));
     if(((NARR[S.step]||{}).live||{}).seconds>=1)   // a long clip (a voice) is plotted in seconds
       return { headers:["Time (s)","Pressure p (arb.)"], cols:{ "Time (s)":pick(B.t).map(t=>+(t/1000).toFixed(5)), "Pressure p (arb.)":a.map(v=>+((v-m)/pk).toFixed(4)) } };
     return { headers:["Time (ms)","Pressure p (arb.)"], cols:{ "Time (ms)":pick(B.t), "Pressure p (arb.)":a.map(v=>+((v-m)/pk).toFixed(4)) } }; }
@@ -260,8 +275,10 @@ function accept(){
   P.liveRun = { slot:P.key, axisPlotted:P.sigH, meta:P._lcMeta, data:P.ds && P.ds.cols };   // the submission reads this
   const st=NARR[S.step];
   LC.target=nextTarget(st);
-  if(!LC.target && LC.phone){                     // the step's last slot: let the phone go
-    LC.conn.send({ type:"release", phone:LC.phone }); logEv("released"); LC.phone=null;
+  // the step's last slot: let the phone go. NOT on a microphone step (2026-11-28, Daniel: retaking a note meant
+  // reconnecting every time): the phone stays until the deck leaves the step, which lets it go (see renderStep's hook)
+  if(!LC.target && LC.phone && !LC.mic){
+    LC.conn.send({ type:"release", phone:LC.phone }); logEv("released"); LC.phone=null; LC.phoneStep=null;
   }
   paint(); refreshNext();
 }
@@ -302,8 +319,10 @@ function paint(){
     h+='<div class="lc-err">Couldn\'t reach the live-capture server: '+esc(LC.error||"")+'</div>'
      +'<button class="deck-go" data-lc="retry">Try connecting again</button>';
   } else if(!LC.target){
-    h+='<div class="lc-big lc-ok">✓ Kept'+(multi?" both":"")+'</div><p class="lc-sub">Press <b>Next ›</b>.</p>'
-     +'<div class="lc-links">'+ks.map(k=>{ const P=panelByKey(k); return '<a href="#" data-lc="redo" data-k="'+k+'">Record '+esc(multi?((P&&P.label)||k).replace(/^.*—\s*/,"").toLowerCase():"it")+' again</a>'; }).join(" · ")+'</div>';
+    // (2026-11-28: five whistle notes, so "all five", not "both"; and "X = 7 cm" keeps its capital X)
+    const nm=k=>{ const P=panelByKey(k), l=((P&&P.label)||k).replace(/^.*—\s*/,""); return /=/.test(l) ? l : l.toLowerCase(); };
+    h+='<div class="lc-big lc-ok">✓ Kept'+(multi?(ks.length===2?" both":" all "+(["","","","three","four","five","six"][ks.length]||ks.length)):"")+'</div><p class="lc-sub">Press <b>Next ›</b> when you\'re happy with '+(multi?"them":"it")+'.</p>'
+     +'<div class="lc-links">'+ks.map(k=>'<a href="#" data-lc="redo" data-k="'+k+'">Record '+esc(multi?nm(k):"it")+' again</a>').join(" · ")+'</div>';
   } else if(!LC.phone && LC.recState==="idle" && !(T && T._lc==="review")){
     h+='<div class="lc-qrrow"><img class="lc-qr" alt="QR code for the phone page" src="'+qrImg()+'">'
      +'<div><div class="lc-big">Scan with your phone</div>'
@@ -319,7 +338,7 @@ function paint(){
     if(secs>=1 && LC.recAt==null && !LC.seen.size) h+='<div class="lc-big">Starting the phone\'s microphone…</div><p class="lc-sub">Get ready.</p>';
     else if(secs>=1 && left!=null && left>0) h+='<div class="lc-big lc-rec">Recording · '+Math.ceil(left)+' s left</div><p class="lc-sub">Speak now.</p>';
     else if(secs>=1) h+='<div class="lc-big">Receiving…</div><p class="lc-sub">The phone is sending the recording'+(LC.of?': '+Math.round(100*LC.seen.size/LC.of)+'%':'')+'. You can stop talking.</p>';
-    else h+='<div class="lc-big lc-rec">Recording a quarter second…</div><p class="lc-sub">Keep the note going.</p>';
+    else h+='<div class="lc-big lc-rec">Recording '+shortLabel(secs)+'…</div><p class="lc-sub">Keep the note going.</p>';
   } else if(LC.recState==="rec"){
     h+='<div class="lc-big lc-rec">Recording'+(multi?' · '+esc(((T&&T.label)||"").replace(/^.*—\s*/,"").toLowerCase()):'')+'</div>'
      +'<div class="lc-stats"><span id="lc-time">0.0 s</span> · <span>'+LC.buf.t.length+' samples</span></div>'
@@ -337,7 +356,7 @@ function paint(){
      +'<button class="deck-go lc-accept" data-lc="accept">Accept</button></div>';
   } else {
     h+='<div class="lc-big lc-ok">✓ Phone connected</div>'
-     +'<p class="lc-sub">'+(multi?'Next: the <b>'+esc(((T&&T.label)||"").replace(/^.*—\s*/,"").toLowerCase())+'</b> run. ':'')
+     +'<p class="lc-sub">'+(multi?'Next: the <b>'+esc((l=>/=/.test(l)?l:l.toLowerCase())(((T&&T.label)||"").replace(/^.*—\s*/,"")))+'</b> run. ':'')
      +(isMic(st) && ((st.live&&st.live.seconds)||0)>=1 ? 'Press <b>Record</b>, then speak.</p>' : isMic(st) ? 'Start a steady note first, then press <b>Record</b>.</p>' : 'Press <b>Record</b>, then do the experiment.</p>')
      +'<button class="deck-go lc-begin" data-lc="begin"><span class="lc-dot"></span>Record</button>';
     if(LC.error) h+='<div class="lc-err">'+esc(LC.error)+'</div>';
@@ -381,6 +400,11 @@ renderStep=function(){
   const st=NARR[S.step];
   // leaving a step mid-recording abandons that run: nothing half-recorded survives into a later step
   if(LC.recState!=="idle" && !(st && st.live && liveSlots(st).indexOf(LC.target)>=0)){ if(LC.conn&&LC.phone) LC.conn.send({type:"stop",phone:LC.phone,run:LC.run}); abortRun(); }
+  // Leaving the MICROPHONE step the phone was connected on, by any route (Next, Back, a jump): let it go, so its
+  // microphone turns off (2026-11-27). The next recording section shows its code again; the phone can rescan or tap
+  // Connect again. (Accelerometer decks keep their phone across steps, as before.)
+  if(LC.phone && LC.phoneStep!=null && LC.phoneStep!==S.step && isMic(NARR[LC.phoneStep])){
+    if(LC.conn) LC.conn.send({ type:"release", phone:LC.phone, why:"leave" }); logEv("released-on-leave"); LC.phone=null; LC.phoneStep=null; }
   if(st && st.live){ try { mount(st); } catch(e){ console.error("live-capture:", e); } }
   // Off a capture step the pickers come back, except over a run that was captured live: "Choose File · No
   // file chosen" beside a trace the phone recorded reads as a demand for a file nobody needs.
@@ -397,7 +421,7 @@ renderPanel=function(P){
     const lab=(P.label||"").replace(/^.*—\s*/,"").toLowerCase();
     c.fillText(LC.target!==P.key ? (isMic(st) ? lab.replace(/^./,ch=>ch.toUpperCase())+" goes here, after "+((panelByKey(LC.target)||{}).label||"").replace(/^.*—\s*/,"").toLowerCase()+"."
                                          : "The "+lab+" run goes here, after the "+((panelByKey(LC.target)||{}).label||"").replace(/^.*—\s*/,"").toLowerCase()+" one.")
-             : LC.phone ? (isMic(st) ? "Start a steady note, then press Record. A quarter second draws here." : "Press Record below, then do the experiment. The recording draws here.")
+             : LC.phone ? (isMic(st) ? "Start a steady note, then press Record. "+shortLabel(((st.live||{}).seconds)||0.25).replace(/^./,c=>c.toUpperCase())+" draws here." : "Press Record below, then do the experiment. The recording draws here.")
              : "Scan the code below with your phone to record into this plot.", W/2, H/2);
     return;
   }
@@ -439,6 +463,7 @@ css.textContent=`
 .lc-card .lc-sub{color:var(--muted);margin:0 0 8px;}
 .lc-card .lc-code{font-family:var(--font-mono);font-size:20px;letter-spacing:.18em;color:var(--ink);margin:4px 0;}
 .lc-card .lc-ok{color:var(--ok);}
+.lc-say{display:block;font-size:2em;font-weight:700;line-height:1.25;margin:.15em 0;}
 .lc-card .lc-rec{color:var(--mma-red);display:flex;align-items:center;gap:8px;}
 .lc-card .lc-rec::before{content:"";width:10px;height:10px;border-radius:50%;background:var(--mma-red);animation:lcpulse 1s ease-in-out infinite;}
 @keyframes lcpulse{50%{opacity:.25;}}

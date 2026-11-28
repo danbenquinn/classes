@@ -28,7 +28,7 @@ const codeHash = s => cyrb53(String(s||"").trim().toLowerCase());   // normalize
 // with a letter someone puts on a graphic, so this is house-wide rather than a Workshop 1 switch.
 const ROMAN=["i","ii","iii","iv","v","vi","vii","viii","ix","x","xi","xii"];
 const choiceLabel = i => ROMAN[i] || String(i+1);
-const TOOLDEF={point:"Select Point", avg:"Average Value", integrate:"Integrate", dblint:"Double Integrate", fitsine:"Fit Sine", fitdamped:"Fit Damped", fitexp:"Fit Exponential", fitinv:"Fit 1/X", magnify:"Magnify", crop:"Crop", slope:"Slope"};
+const TOOLDEF={point:"Select Point", avg:"Average Value", integrate:"Integrate", dblint:"Double Integrate", fitsine:"Fit Sine", fitdamped:"Fit Damped", fitexp:"Fit Exponential", fitinv:"Fit A/(X+B)", magnify:"Magnify", crop:"Crop", slope:"Slope"};
 const TOOLS=(typeof CONFIG!=='undefined'&&CONFIG&&Array.isArray(CONFIG.tools)&&CONFIG.tools.length)
   ? CONFIG.tools.filter(t=>TOOLDEF[t]) : ["point","avg","dblint","fitsine"];
 const _toolsHTML=TOOLS.map((t,i)=>'<button data-tool="'+t+'"'+(i===0?' class="on"':'')+'>'+TOOLDEF[t]+'</button>').join("");
@@ -410,6 +410,9 @@ function slopeAutofill(){
   if(!st || !st.autofill || st.checkKind!=="slopefit") return;
   const P = st.fitSlot ? panelByKey(st.fitSlot) : visiblePanels().find(p=>p.sel); if(!P || !P.sel) return;
   const R=slopeShown(P), f=fieldsOf(st)[0]; if(!R || !f) return;
+  // the same number already in the box: leave it, and leave the step passed (2026-11-28, Daniel: flipping back to an
+  // answered step re-filled it, which cleared its Enter and made him press it again)
+  if(S.raw[f.key]===R.txt) return;
   S.raw[f.key]=R.txt; S.answers[f.key]=R.v;
   const box=document.querySelector('#stepbody input[data-key="'+f.key+'"]'); if(box) box.value=R.txt;
   S.answers["ok"+S.step]=false; const fb=$("deckfb"); if(fb) fb.innerHTML="";
@@ -688,9 +691,11 @@ function dampedAutofill(){
   if(!st || !st.autofill || st.checkKind!=="dampfit") return;
   const P = st.fitSlot ? panelByKey(st.fitSlot) : visiblePanels().find(p=>p.dfit); if(!P || !P.dfit) return;
   const E=dampedShown(P.dfit), fs=fieldsOf(st);
+  let changed=false;   // (2026-11-28) unchanged numbers leave the step passed; see slopeAutofill
   [[fs[0],E.w],[fs[1],E.z]].forEach(([f,v])=>{ if(!f || !Number.isFinite(v)) return;
-    const txt=v.toFixed(f.dp!=null ? f.dp : 3); S.raw[f.key]=txt; S.answers[f.key]=parseFloat(txt);
+    const txt=v.toFixed(f.dp!=null ? f.dp : 3); if(S.raw[f.key]===txt) return; changed=true; S.raw[f.key]=txt; S.answers[f.key]=parseFloat(txt);
     const box=document.querySelector('#stepbody input[data-key="'+f.key+'"]'); if(box) box.value=txt; });
+  if(!changed) return;
   S.answers["ok"+S.step]=false; const fb=$("deckfb"); if(fb) fb.innerHTML="";
   if(typeof refreshNext==="function") refreshNext();
 }
@@ -778,9 +783,11 @@ function expAutofill(){
   const P = st.fitSlot ? panelByKey(st.fitSlot) : visiblePanels().find(p=>p.efit); if(!P || !P.efit) return;
   const E=expShown(P.efit, axisInfo(P.sigH).dp), fs=fieldsOf(st);
   const vals = fs.length>1 ? [E.c,E.tau] : [E.tau];      // field order: (plateau,) then τ
+  let changed=false;   // (2026-11-28) unchanged numbers leave the step passed; see slopeAutofill
   fs.forEach((f,i)=>{ const v=vals[i]; if(!f || !Number.isFinite(v)) return;
-    const txt=v.toFixed(f.dp!=null ? f.dp : 1); S.raw[f.key]=txt; S.answers[f.key]=parseFloat(txt);
+    const txt=v.toFixed(f.dp!=null ? f.dp : 1); if(S.raw[f.key]===txt) return; changed=true; S.raw[f.key]=txt; S.answers[f.key]=parseFloat(txt);
     const box=document.querySelector('#stepbody input[data-key="'+f.key+'"]'); if(box) box.value=txt; });
+  if(!changed) return;
   S.answers["ok"+S.step]=false; const fb=$("deckfb"); if(fb) fb.innerHTML="";
   if(typeof refreshNext==="function") refreshNext();
 }
@@ -807,7 +814,7 @@ function doFitInv(s,P){
   if(P.ifit){ P.ifit.all = r[0]===0 && r[1]===s.t.length-1; P.ifit.n=r[1]-r[0]+1; P.ifit.N=s.t.length; }
 }
 // What the readout PRINTS, and what a deck's check should compare against: A to three significant figures, h to 2 dp.
-function invShown(F){ return {A:parseFloat(F.A.toPrecision(3)), h:parseFloat(F.h.toFixed(2))}; }
+function invShown(F){ return {A:parseFloat(F.A.toPrecision(3)), h:parseFloat(F.h.toFixed(1))}; }   // B to 1 decimal (2026-11-28): what the step asks for, and what a slide whistle's cm supports
 // The reveal: P._invLo eases from the axis's own left end to one that takes in x = −h (1.2 s), then stays.
 function invAxisLo(P, base, tHi){
   const F=P.ifit; if(!(S.tool==="fitinv" && F && F.all && P.sel && F.h>0)){ P._inv=null; return base; }
@@ -957,15 +964,19 @@ function updatePlotReadout(P){
   } else if(S.tool==="fitinv"){
     if(!P.ifit){ show('<span class="ro-hint">drag across the points to fit</span>'); return; }
     const E=invShown(P.ifit), xs=xSym(P).sym, nm = A.roman ? A.sym : '<i>'+A.sym+'</i>';
-    show('<span class="formula">'+nm+' ≈ '+E.A+' / (<i>'+xs+'</i> '+(E.h<0?'− ':'+ ')+Math.abs(E.h).toFixed(2)+')'
+    show('<span class="formula">'+nm+' ≈ '+E.A+' / (<i>'+xs+'</i> '+(E.h<0?'− ':'+ ')+Math.abs(E.h).toFixed(1)+')'
       +(P.ifit.all ? '' : ' <span class="ro-hint" style="font-family:var(--font-sans)">('+P.ifit.n+' of '+P.ifit.N+' points)</span>')+'</span>'
-      +(P.ifit.all && P.ifit.h>0 ? '<span class="ro" style="display:block">asymptote: <i>'+xs+'</i> = −'+E.h.toFixed(2)+' '+tUnit(P)+'</span>' : '')
+      // (no separate asymptote line, 2026-11-27, Daniel: students read the hidden length off the fitted function itself)
       +'<span class="r2" tabindex="0" style="display:block;width:max-content"><i>R</i>² = '+P.ifit.r2.toFixed(3)
       +'<span class="r2pop">Fraction of the variance in your selection the fit explains — 1 = perfect, 0 = no better than a flat line</span></span>');
   } else if(S.tool==="point"){
     if(P.point==null){ show('<span class="ro-hint">click or drag along the trace</span>'); return; }
     const i=nearest(s,P.point);
-    const td = timeDecimals(s);          // never finer than the sample interval — see timeDecimals()
+    // never finer than the sample interval (see timeDecimals()); but on a plot of a few typed points (`dots`), X is
+    // shown as entered, 11.5 as 11.5, not rounded by the spacing (2026-11-28: the whistle's 11.5 cm read "12 cm")
+    const pdD=PANELDEF.find(d=>(d.key||"")===P.key)||{};
+    const td = pdD.dots ? Math.min(3, Math.max(0, ...s.t.map(v=>{ const m=String(+v.toFixed(3)).split(".")[1]; return m ? m.length : 0; })))
+                        : timeDecimals(s);
     const TDp=A.slopeScale&&tempDef(P), Tp=TDp ? '&nbsp;·&nbsp;<i>T</i> ≈ '+(TDp.lo+TDp.band*s.a[i]).toFixed(1)+' °C' : '';   // a `temp:` slot reads in °C too
     show('<span class="ro"><i>'+xSym(P).sym+'</i> = '+s.t[i].toFixed(td)+' '+tUnit(P)+'&nbsp;·&nbsp;'+(A.roman?A.sym:'<i>'+A.sym+'</i>')+' = '+s.a[i].toFixed(A.dp)+(A.roman?'':' '+A.unit)+Tp+'</span>');
   } else if(S.tool==="avg"){
@@ -1062,12 +1073,25 @@ function renderPanel(P){
   // Stacked panels share one time axis, so only the BOTTOM one carries the `t (s)` title — the convention
   // for a column of plots, and here also the only way to fit it: a half-height panel has no room to give.
   const vis=visiblePanels(), isLast = !vis.length || vis[vis.length-1]===P;
+  // A dense stack on one shared time axis (4+ plots and `matchX`): only the bottom plot carries the time numbers and
+  // title; the others drop their tick labels and give the room to the trace (2026-11-28, Daniel: five whistle notes)
+  const shareX = vis.length>=4 && !!(NARR[S.step] && NARR[S.step].matchX), bare = shareX && !isLast;
+  // The bottom panel also carries the axis title, 18 px more margin; in a stack, give that panel 18 px more height
+  // so its PLOT is as tall as the others (2026-11-28, Thunder and Lightning: the lowest whistle note, always at the
+  // bottom of five, looked like it had the smallest swing). Panels share the space through flex; this nudges the basis.
+  // In a dense stack (4+ plots, each only a few tens of px tall) the readout rides in the panel's header strip,
+  // beside Signal, instead of over the trace, where it hid the very peaks being read (2026-11-28, the five whistle notes)
+  { const dense = vis.length>=4, home = dense ? P.strip : (P.cv && P.cv.parentNode);
+    if(P.readout && home && P.readout.parentNode!==home){ home.appendChild(P.readout); }
+    if(P.readout) P.readout.classList.toggle("in-strip", dense); }
+  { const want = (isLast && vis.length>1) ? (shareX ? "34px" : "18px") : "";
+    if(P.root && P.root.style.flexBasis!==want){ P.root.style.flexBasis=want; requestAnimationFrame(()=>{ try{ resize(); }catch(e){} }); } }   // resize: refit the canvases, then draw
   // mB was 34, which put the axis title's cap-height straight through the tick labels' descenders. It only
   // showed when a tick happened to land at the horizontal center — Get Air's elevator files put "10" there
   // and printed it through the middle of "t (s)". The title now gets a row of its own rather than sharing.
   const TDp=tempDef(P);
   const pdM=PANELDEF.find(d=>(d.key||"")===P.key)||{};   // `mL:` on a slot: a wider left margin for long tick labels (Pa, 2026-11-25)
-  const mL=pdM.mL||(TDp?112:58), mR=(showX||showV)?62:18, mT=16, mB=isLast?42:24, ph=H-mT-mB, px=W-mL-mR;
+  const mL=pdM.mL||(TDp?112:58), mR=(showX||showV)?62:18, mT=16, mB=isLast?42:(bare?8:24), ph=H-mT-mB, px=W-mL-mR;
   if(P.readout) P.readout.style.marginLeft = TDp ? "54px" : "";      // the readout sits just inside the plot's left edge, wherever that is
 
   // The TIME axis always spans the whole recording, cropped or not — that is the deliberate half of the
@@ -1087,6 +1111,9 @@ function renderPanel(P){
   const pdE=PANELDEF.find(d=>(d.key||"")===P.key)||{};
   if(pdE.extendTo0) tLo0=Math.min(tLo0,0);              // Thunder and Lightning's whistle: the line is read where it meets zero
   if(pdE.pad){ const sp=(tHi0-tLo0)||1; tLo0-=pdE.pad*sp; tHi0+=pdE.pad*sp; }   // a few dots need room at the ends
+  // `origin:true` on a slot (2026-11-28, Thunder and Lightning's hallway): both axes start at exactly 0, so points at
+  // (0, 0) sit on the corner; their markers are drawn unclipped (below), hanging just over the axes
+  if(pdE.origin) tLo0=Math.min(0, s.t[0]);
   let T=niceTicks(tLo0, tHi0, 6);
   { const lo=invAxisLo(P, T.lo, T.hi);   // Fit 1/X's reveal: the axis slides left to the asymptote
     if(lo<T.lo){ const T2=niceTicks(lo, T.hi, 6); T={lo, hi:T.hi, step:T2.step, ticks:T2.ticks.filter(v=>v>=lo-1e-9)}; } }
@@ -1110,7 +1137,8 @@ function renderPanel(P){
   if(OV) OV.forEach(c=>{ for(const v of c.a){ if(v<aLo) aLo=v; if(v>aHi) aHi=v; } });
   if(pdE.extendTo0 && S.tool==="slope" && P.sel){ const L0=slopeFit(s,P); if(L0){ aLo=Math.min(aLo,L0.b); aHi=Math.max(aHi,L0.b); } }
   if(pdE.dots){ const sp=(aHi-aLo)||Math.abs(aHi)||1; aLo-=0.08*sp; aHi+=0.08*sp; }
-  let Ay=niceTicks(aLo, aHi, 5);
+  if(pdE.origin) aLo=Math.min(0, Math.min.apply(null, inA));
+  let Ay=niceTicks(aLo, aHi, ph<60 ? 2 : 5);   // a short plot gets fewer y labels (-1, 0, 1), so they don't pile up (2026-11-28)
   // `yFix:[lo,hi]` on the slot (Cool Hand Luke, 2026-11-13, Daniel): the vertical axis is EXACTLY this, whatever the data
   // do, so every run is read on one scale. Traces are clipped to the plot, so a curve that spills just runs off.
   { const pdx=PANELDEF.find(d=>(d.key||"")===P.key)||{};
@@ -1165,7 +1193,14 @@ function renderPanel(P){
   ctx.strokeStyle=getCss("--line"); ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(mL,mT); ctx.lineTo(mL,mT+ph); ctx.lineTo(W-mR,mT+ph); ctx.stroke();
   // time ticks + title
   ctx.textAlign="center"; ctx.textBaseline="top"; ctx.fillStyle=getCss("--muted"); ctx.font=font(11);
-  T.ticks.forEach(v=>{ ctx.fillText(fmt(v), tx(v), mT+ph+7); });
+  // `xTicks:` on a panel def (2026-11-27, Thunder and Lightning's stairwell): named ticks, [[value, "label"], …], in place
+  // of the numbers, e.g. "Landing B · 0.00 m". A function is called for them, so a deck can set them at run time.
+  const XTd = typeof pdE.xTicks==="function" ? pdE.xTicks() : pdE.xTicks;
+  if(Array.isArray(XTd) && XTd.length){ ctx.strokeStyle=getCss("--line");
+    XTd.forEach(([v,lab])=>{ if(v<T.lo-1e-9 || v>T.hi+1e-9) return; const x=tx(v);
+      ctx.save(); ctx.setLineDash([3,4]); ctx.beginPath(); ctx.moveTo(x,mT); ctx.lineTo(x,mT+ph); ctx.stroke(); ctx.restore();   // a faint guide up from each
+      ctx.beginPath(); ctx.moveTo(x,mT+ph); ctx.lineTo(x,mT+ph+4); ctx.stroke(); ctx.fillText(lab, x, mT+ph+7); }); }
+  else if(!bare) T.ticks.forEach(v=>{ ctx.fillText(fmt(v), tx(v), mT+ph+7); });
   if(isLast){ const yy=mT+ph+31; ctx.textAlign="left"; ctx.textBaseline="alphabetic"; ctx.fillStyle=getCss("--muted");   // x-axis title: t italic, (s) roman
     const ut=" ("+tUnit(P)+")", XS=xSym(P), wd=XS.word ? XS.word+" " : "";
     ctx.font=font(12); const ww=ctx.measureText(wd).width; ctx.font=ifont(12); const vw=ctx.measureText(XS.sym).width; ctx.font=font(12); const uw=ctx.measureText(ut).width;
@@ -1225,10 +1260,15 @@ function renderPanel(P){
     const on=OV.find(c=>c.on); polyline(s.t.map(tx), s.a.map(ay), on?on.color:"--trace", 2.25);
   } else if(pdE.dots){
     // a handful of measured points (Thunder and Lightning: four landings, five whistle notes, fifteen hallway delays)
+    if(pdE.origin){ ctx.restore(); }          // (origin) step out of the plot's clip so a dot on an axis isn't cut in half
     ctx.fillStyle=getCss("--trace"); for(let i=0;i<s.t.length;i++){ ctx.beginPath(); ctx.arc(tx(s.t[i]),ay(s.a[i]),5,0,2*Math.PI); ctx.fill(); }
+    if(pdE.origin){ ctx.save(); ctx.beginPath(); ctx.rect(mL,mT,px,ph); ctx.clip(); }   // …and back in, for what follows
   } else {
     polyline(s.t.map(tx), s.a.map(ay), "--trace", num("--stroke-trace"));
   }
+  // `annot:` on a panel def (2026-11-27): a deck's own drawing over the plot, after the trace and under Magnify's strip.
+  // Called as annot(P, ctx, {tx, ay, mL, mT, ph, px, T}); Thunder and Lightning labels the words of a recorded voice.
+  if(typeof pdE.annot==="function"){ try{ pdE.annot(P, ctx, {tx, ay, mL, mT, ph, px, T}); }catch(e){ console.warn("annot", e); } }
   /* Magnify (Thunder and Lightning, 2026-11-26, Daniel): hover over the trace and a full-height strip, MAG_HW px either side
      of the cursor, shows the data MAG_Z times closer in time (same vertical scale), between solid amber edges. Made for a
      6 s voice recording, where single pressure wiggles are a few ms apart and invisible at full width. */
@@ -1864,7 +1904,10 @@ function inputIssue(st){
     const P = st.fitSlot ? panelByKey(st.fitSlot) : (visiblePanels().find(p=>p.sel) || null), R=P&&P.sel&&S.tool==="slope" ? slopeShown(P) : null;
     if(Number.isFinite(v)){
       if(!R){ if(!st.autofill && S.answers["seen_"+f.key]!==v) return fbText(st,"fit","Drag a window across the stretch with <b>Slope</b> first."); }
-      else if(Math.abs(v-R.v)>0.02*Math.abs(R.v)+1e-9) return fbText(st,"check","{label} doesn't match the slope on screen.",{label:f.label, expected:R.txt});
+      // a box that asks for a POSITIVE number (its range starts at 0 or above) is checked against the slope's size, so a
+      // step can ask for "the rate at which pressure decreases" (2026-11-28, Thunder and Lightning) while the readout is negative
+      else if((pos=>Math.abs(v-(pos?Math.abs(R.v):R.v))>0.02*Math.abs(R.v)+1e-9)(f.range && f.range[0]>=0))
+        return fbText(st,"check","{label} doesn't match the slope on screen.",{label:f.label, expected:(f.range && f.range[0]>=0) ? String(R.txt).replace(/^[−-]/,"") : R.txt});
       else S.answers["seen_"+f.key]=v; } }
   /* `calc` (Cool Hand Luke, 2026-11-12): a box whose value follows by arithmetic from boxes the group filled earlier.
      The deck says how: CONFIG.calc[<input key>] = { f: a => expected, tol: 0.03, slips: [{ f: a => value, say: "…" }] },
@@ -2383,7 +2426,10 @@ function renderStep(){
   // TEACHER MODE's sample-data lever, on any step that gates on a file. Deliberately not permanent
   // furniture: a student who can see it will use it, and the workshop is about measuring your OWN wave.
   // It rides at the top of the prose, like the disclaimer banner, because it overrides the whole step.
-  if(st.gate==="data" && ungated() && (typeof DEMO_CSV!=="undefined" && DEMO_CSV)){
+  // (2026-11-28) also when the deck's per-slot samples, DEMO_CSVS, cover one of the step's own slots (Thunder and
+  // Lightning's five whistle notes, which are recorded live, so DEMO_CSV is empty there)
+  const slotDemo = typeof DEMO_CSVS!=="undefined" && DEMO_CSVS && [].concat(st.slots||[], (st.live&&st.live.slots)||[]).some(k=>DEMO_CSVS[k]);
+  if(st.gate==="data" && ungated() && ((typeof DEMO_CSV!=="undefined" && DEMO_CSV) || slotDemo)){
     const row=document.createElement("div"); row.className="samplerow";
     const btn=document.createElement("button"); btn.className="deck-go"; btn.textContent="Load sample data";
     btn.addEventListener("click",()=>{ if(loadDemoData()){ btn.disabled=true; btn.textContent="Sample data loaded ✓"; } });
@@ -2540,7 +2586,11 @@ function renderStep(){
         lab.innerHTML='<input type="checkbox"> '+f.skip; row.appendChild(lab);
         const cb=lab.querySelector("input"), sync=()=>{ inp.disabled=cb.checked; if(cb.checked){ inp.value=""; S.answers[f.key]=NaN; S.raw[f.key]=""; } };
         cb.checked=!!S.answers[f.key+"_skip"]; sync();
-        cb.addEventListener("change",()=>{ S.answers[f.key+"_skip"]=cb.checked; sync(); S.answers["ok"+S.step]=false; clearFb(); refreshNext(); }); }
+        // Ticking only takes a box OUT of the checks, so it can't turn a passed step into a failing one: the step keeps its
+        // Enter (2026-11-28, Daniel: ticking a box on an answered step locked Next). Unticking brings back an empty box
+        // that needs a value, so that one does ask for Enter again.
+        cb.addEventListener("change",()=>{ S.answers[f.key+"_skip"]=cb.checked; sync();
+          if(!cb.checked){ S.answers["ok"+S.step]=false; clearFb(); } refreshNext(); }); }
       // `input`, not `change`: `change` only fires on blur, so a student who retyped a number and
       // reached straight for Enter was being judged on the previous one. Editing any value RETRACTS
       // the submission — what they had checked is not what is in the boxes any more.

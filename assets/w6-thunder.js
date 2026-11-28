@@ -14,8 +14,8 @@
    THE HALLWAY RUN. Five phones on pop/hallway.html each save one row through save_class_run, named
    "W6-hallway-<d>m" (d = 0, 8, 16, 24, 32), each holding three trials of { t1, t2 } on that phone's own clock.
    The first `hall:` step fetches all five (get_class_run, newest within CONFIG.w6.maxAgeMin). Nothing there yet:
-   the step says so and offers "Check again". "Use the sample data" loads CONFIG.w6.sample (simulated; see the
-   manifest) and says so; teacher mode does that by itself.
+   the table stays empty, "No data yet". "Check for a new run" fetches again; "Load simulated data" loads CONFIG.w6.sample
+   (simulated; see the manifest) and says so; teacher mode does that by itself.
 
    THE TABLE, on `hall:` steps (top: html, <div id="w6-hall">). Since 2026-11-23 each phone syncs itself (its sync ping
    is 0, so t1 = 0 and t2 = its stopwatch t), which leaves two stages:
@@ -25,7 +25,7 @@
 (function(){
 "use strict";
 if(typeof NARR==="undefined" || typeof S==="undefined") return;
-const C=Object.assign({ floor:4.46, dists:[0,8,16,24,32], maxAgeMin:720,
+const C=Object.assign({ floor:4.46, dists:[0,8,16,24,32], maxAgeMin:120,
   url:"https://rdbacwwbeyeqdkswwvjt.supabase.co", key:"sb_publishable_IQNxMMynit0aWtOS3tjiRQ_h5sNo159" },
   (typeof CONFIG!=="undefined" && CONFIG && CONFIG.w6) || {});
 const ok=Number.isFinite, A=()=>S.answers;
@@ -39,6 +39,9 @@ function put(key, headers, cols, name){
   P._w6sig=sig; P.supplied=true; if(P.file) P.file.style.display="none";
   const cur=S.activeIdx; ingestParsed({ headers, cols }, P); S.activeIdx=cur; P.fileName=name;
 }
+// the stairwell plot keeps p-stair-go's x axis on every step (Daniel, 2026-11-27): a tick at each landing, "Floor B Landing · 0.00 m"
+try{ const d=(CONFIG.panels||[]).find(d=>d.key==="stair");
+  if(d) d.xTicks=()=>[["B",0],["1",1],["2",2],["3",3]].map(([lab,i])=>[+(i*C.floor).toFixed(2), "Floor "+lab+" Landing · "+(i*C.floor).toFixed(2)+" m"]); }catch(e){}
 function buildStair(){
   const keys=["p_B","p_1","p_2","p_3"]; let v=keys.map(k=>A()[k]), name="your four landings";
   if(!v.every(ok)){ if(!teacher() || !C.demoStair) return; v=C.demoStair; name="sample landings (Quinn, 2026-11-20)"; }
@@ -49,7 +52,7 @@ function whistleRows(a){
   a=a||A(); let rows=[], name="your notes";
   for(let i=1;i<=5;i++){ const X=(C.X||[2,4,6,8,10])[i-1], f=a["w_f"+i];        // f_res typed on w-period (Daniel, 2026-11-25)
     if(a["w_f"+i+"_skip"]) continue; if(ok(X) && ok(f) && f>0) rows.push([X, f]); }
-  if(rows.length<2 && teacher() && C.demoW){ rows=C.demoW.X.map((X,i)=>[X, 10000/C.demoW.t[i]]); name="sample notes (Quinn's whistle, 2.5 to 15.2 cm)"; }
+  if(rows.length<2 && teacher() && C.demoW){ rows=C.demoW.X.map((X,i)=>[X, 10000/C.demoW.t[i]]); name="sample notes (Quinn's whistle, "+C.demoW.X[0]+" to "+C.demoW.X[C.demoW.X.length-1]+" cm)"; }
   rows.sort((p,q)=>p[0]-q[0]); return { rows, name };
 }
 function buildWhistle(){
@@ -146,7 +149,7 @@ document.addEventListener("pointerup", ()=>{ if(!FP.drag) return; FP.drag=false;
 addEventListener("resize", fpRedraw);
 
 /* ------------------------------ the hallway run ------------------------------ */
-const H={ state:"idle", rows:null, src:null, at:null, missing:[] };
+const H={ state:"idle", rows:null, src:null, at:null, missing:[], msg:"" };   // msg: the little status note, lower right (2026-11-28)
 window.__w6Hall=H;
 async function fetchOne(d){
   const r=await fetch(C.url.replace(/\/$/,"")+"/rest/v1/rpc/get_class_run", { method:"POST",
@@ -154,21 +157,33 @@ async function fetchOne(d){
   if(!r.ok) throw new Error("HTTP "+r.status);
   return r.json();
 }
+// (2026-11-28, Daniel) A check never wipes what is on screen: nothing newer found leaves the current data (class run or
+// simulated) in place and says so in the status note. Teacher mode still falls back to the simulated run by itself.
 async function loadHall(force){
   if(!force && (H.state==="loading" || H.state==="live" || H.state==="sample")) return;
-  H.state="loading"; paintAll();
+  const prevAt=H.at, had=!!H.rows;
+  H.state="loading"; H.msg="Checking…"; paintAll();
   try{
     const got=await Promise.all(C.dists.map(d=>fetchOne(d).catch(()=>null)));
-    const rows=[]; H.missing=[]; let at=null;
+    const rows=[], missing=[]; let at=null;
     got.forEach((j,i)=>{ const d=C.dists[i];
-      if(!j || !j.run || !Array.isArray(j.run.trials)){ H.missing.push(d); return; }
+      if(!j || !j.run || !Array.isArray(j.run.trials)){ missing.push(d); return; }
       j.run.trials.forEach(t=>{ if(ok(t.t1) && ok(t.t2)) rows.push({ distance:d, trial:t.trial, t1:t.t1, t2:t.t2 }); });
       const ti=new Date(j.created_at); if(!at || ti>at) at=ti; });
-    if(H.missing.indexOf(0)>=0 || !rows.length){ H.rows=null; H.state="none"; if(teacher()) useSample("teacher mode"); else paintAll(); return; }
-    H.rows=rows; H.src="live"; H.at=at; H.state="live"; afterLoad();
-  }catch(e){ H.state="none"; H.err=String(e.message||e); if(teacher()) useSample("teacher mode"); else paintAll(); }
+    if(missing.indexOf(0)>=0 || !rows.length){ return nothingNew(had, force); }
+    const same = H.src==="live" && prevAt && at && at.getTime()===prevAt.getTime();
+    H.rows=rows; H.missing=missing; H.src="live"; H.at=at; H.state="live";
+    H.msg = !force ? "" : same ? "No newer data found" : "New run loaded";
+    afterLoad();
+  }catch(e){ H.err=String(e.message||e); nothingNew(had, force, true); }
 }
-function useSample(why){ H.rows=(C.sample||[]).slice(); H.src="sample"; H.why=why; H.missing=[]; H.state="sample"; afterLoad(); }
+function nothingNew(had, force, err){
+  if(had){ H.state=H.src; H.msg = err ? "Couldn't reach the server" : "No newer data found"; paintAll(); return; }
+  H.rows=null; H.state="none";
+  if(teacher()){ useSample("teacher mode"); return; }
+  H.msg = err ? "Couldn't reach the server" : force ? "No data yet" : ""; paintAll();
+}
+function useSample(why){ H.rows=(C.sample||[]).slice(); H.src="sample"; H.why=why; H.missing=[]; H.at=null; H.state="sample"; H.msg="Simulated data loaded"; afterLoad(); }
 function afterLoad(){ buildHall(); paintAll(); if(typeof render==="function") render(); if(typeof refreshNext==="function") refreshNext(); }
 function trials(){ return [...new Set((H.rows||[]).map(r=>r.trial))].sort((a,b)=>a-b); }
 function row(d,k){ return (H.rows||[]).find(r=>r.distance===d && r.trial===k) || null; }
@@ -195,26 +210,22 @@ function paint(st){
   const el=document.getElementById("w6-hall"); if(!el) return;
   const stage=stageFor(st, S.step), flash = lastStage!=null && lastStage!==stage; lastStage=stage;
   let h="";
-  if(!H.rows){
-    h='<div class="w6-wait"><div class="w6-big">'+(H.state==="loading" ? "Loading the hallway run…" : "No hallway data yet")+'</div>'
-     +(H.state==="loading" ? "" : '<p>Wait for the class run in the hallway, then check again.</p>'
-       +'<p><a href="#" data-w6="reload">Check again</a> · <a href="#" data-w6="sample">use the sample data</a> <span class="w6-mut">(only if your instructor says so)</span></p>')+'</div>';
-    el.innerHTML=h; return;
-  }
-  const T=trials(), fx=v=>v.toFixed(4), cls=flash?" w6-flash":"";
+  // no data yet: the same table, empty (no separate waiting screen, 2026-11-28)
+  const T=H.rows ? trials() : [1,2,3], fx=v=>v.toFixed(4), cls=flash?" w6-flash":"";
   const head = stage===1 ? ['$\\Delta t$ (s)'] : ['$\\Delta t-\\Delta t_{0\\,\\text{m}}$ (ms)'];   // Δt, the stopwatch reading (Daniel, 2026-11-25)
   h+='<div class="w6-grid w6-s'+stage+'">';
   C.dists.forEach(d=>{
-    h+='<div class="w6-card"><div class="w6-d">'+d+' m'+(H.missing.indexOf(d)>=0?' <span class="w6-mut">(no data)</span>':'')+'</div><table><tr><th>trial</th>'
+    h+='<div class="w6-card"><div class="w6-d">'+d+' m'+(H.rows && H.missing.indexOf(d)>=0?' <span class="w6-mut">(no data)</span>':'')+'</div><table><tr><th>trial</th>'
       +head.map(x=>'<th>'+x+'</th>').join("")+'</tr>';
     T.forEach(k=>{ const r=row(d,k);
       if(!r){ h+='<tr><td>'+k+'</td>'+head.map(()=>'<td>—</td>').join("")+'</tr>'; return; }
       const cells = stage===1 ? [fx(r.t2-r.t1)] : [(delayMs(d,k)??NaN).toFixed(2)];
       h+='<tr><td>'+k+'</td>'+cells.map(c=>'<td class="'+cls.trim()+'">'+c+'</td>').join("")+'</tr>'; });
     h+='</table></div>'; });
-  h+='</div><p class="w6-src">'+(H.src==="live" ? '<b>Class run</b>, submitted by '+fmtAt(H.at)+(H.missing.length?' · missing: '+H.missing.map(d=>d+' m').join(", "):'')
-       : '<b>Sample run</b> (simulated: '+(H.why||"")+'). Phones at 0–32 m, about 0.15 m and 0.15 ms of noise.')
-    +' · <a href="#" data-w6="reload">check for a newer run</a>'+(H.src==="live"?' · <a href="#" data-w6="sample">use the sample data</a>':'')+'</p>';
+  // one line under the table: what's shown, two links, and a status note at the right (2026-11-28, Daniel)
+  const what = !H.rows ? "No data yet" : H.src==="live" ? "Data captured at "+fmtAt(H.at) : "Simulated data";
+  h+='</div><div class="w6-src"><span><b>'+what+'</b> · <a href="#" data-w6="reload">Check for a new run</a> · <a href="#" data-w6="sample">Load simulated data</a></span>'
+    +'<span class="w6-stat">'+(H.msg||"")+'</span></div>';
   el.innerHTML=h;
   if(typeof typesetMath==="function") typesetMath(el);
 }
@@ -255,7 +266,7 @@ function niceStep(span){ const r=span/5, p=Math.pow(10,Math.floor(Math.log10(r))
 function stairLive(){
   const el=document.getElementById("w6-stairlive"); if(!el) return;
   const css=n=>getComputedStyle(document.body).getPropertyValue(n).trim()||"#888";
-  const W=el.clientWidth||900, Hh=el.clientHeight||400, mL=86, mR=30, mT=26, mB=58, pw=W-mL-mR, ph=Hh-mT-mB;
+  const W=el.clientWidth||900, Hh=el.clientHeight||400, mL=86, mR=84, mT=26, mB=58, pw=W-mL-mR, ph=Hh-mT-mB;
   const pts=LAND.map(([k,lab],i)=>({ h:i*C.floor, p:A()[k], lab })).filter(q=>ok(q.p) && q.p>80000 && q.p<120000);
   let lo=100750, hi=100960;   // Pa (Daniel, 2026-11-25: the stairwell is entered and shown in Pa)
   if(pts.length===1 && (pts[0].p<lo || pts[0].p>hi)){ const c=pts[0].p, half=(hi-lo)/2; lo=c-half; hi=c+half; }
@@ -268,7 +279,7 @@ function stairLive(){
       +`<text x="${mL-8}" y="${y+4}" text-anchor="end" font-size="13" fill="${css("--muted")}">${v.toFixed(dp)}</text>`; }
   LAND.forEach(([k,lab],i)=>{ const x=X(i*C.floor);
     g+=`<line x1="${x}" x2="${x}" y1="${mT}" y2="${mT+ph}" stroke="${css("--line")}" stroke-width="1" stroke-dasharray="3 4"/>`
-      +`<text x="${x}" y="${mT+ph+20}" text-anchor="middle" font-size="13" fill="${css("--muted")}">Landing ${lab} · ${(i*C.floor).toFixed(2)} m</text>`; });
+      +`<text x="${x}" y="${mT+ph+20}" text-anchor="middle" font-size="13" fill="${css("--muted")}">Floor ${lab} Landing · ${(i*C.floor).toFixed(2)} m</text>`; });
   g+=`<text x="${mL+pw/2}" y="${Hh-10}" text-anchor="middle" font-size="13" fill="${css("--muted")}">height <tspan font-style="italic">h</tspan> (m)</text>`
     +`<text transform="translate(18,${mT+ph/2}) rotate(-90)" text-anchor="middle" font-size="13" fill="${css("--muted")}">pressure <tspan font-style="italic">p</tspan> (Pa)</text>`;
   pts.forEach(q=>{ g+=`<circle cx="${X(q.h)}" cy="${Y(q.p)}" r="7" fill="${css("--trace")}"/>`
@@ -311,7 +322,9 @@ function playOnce(st){
 function whistleFig(st){
   const tm=document.getElementById("topmedia"); if(!tm) return;
   let f=tm.querySelector(".w6-wfig");
-  if(st.whistlefig && !f){ f=document.createElement("img"); f.className="w6-wfig"; f.src=typeof st.whistlefig==="string" ? st.whistlefig : "media/whistle-ell.svg"; f.alt="slide whistle: X runs from the end of the plastic to the end of the handle"; tm.appendChild(f); }
+  if(st.whistlefig && !f){ f=document.createElement("img"); f.className="w6-wfig"; f.src=typeof st.whistlefig==="string" ? st.whistlefig : "media/whistle-ell-rod.svg"; f.alt="slide whistle: X runs from the end of the plastic to the end of the handle"; tm.appendChild(f); }
+  if(st.whistlefig && f){ const want=typeof st.whistlefig==="string" ? st.whistlefig : "media/whistle-ell-rod.svg";   // w-intro -> w-predict: swap the drawing
+    if(f.getAttribute("src")!==want) f.setAttribute("src", want); }
   if(!st.whistlefig && f) f.remove();
   document.body.classList.toggle("w6-wfig-on", !!st.whistlefig);
 }
@@ -331,7 +344,10 @@ function whistlePair(st){
   q.insertAdjacentElement("afterend", d);
 }
 
-/* ------------------------------ two pistons and something to put on one (`pistonsim:"bottle"|"air"`; Daniel, 2026-11-26) ------------------------------
+/* ------------------------------ two pistons and something to put on one (`pistonsim:"block"|"air"`; Daniel, 2026-11-26) ------------------------------
+   2026-11-27 (Daniel): the load is a 35 lb (15.9 kg) cinder block ("block"; any value but "air" gives it), or a massless, very tall box of
+   air ("air"): a column 1 m x 1 m across (the piston's own width) and 13.5 m tall, the stairwell's height from Landing B to
+   Landing 3, which rises off the top of the canvas and fades out. 13.5 m of 1.2 kg/m3 air is 16.2 kg: the two weigh the same.
    Live, in the browser. Two identical containers of air, each closed by a piston of face 1 m²; a few dozen particles bounce
    inside each, and each piston jiggles a little about its resting height. A green probe in each container's lower left feeds
    a needle gauge just outside it. Off to the right sits the load: a 1.2 kg water bottle ("bottle"), or a massless box holding
@@ -345,7 +361,7 @@ const PIS={ raf:0 };
 function pistonSim(st){
   const el=document.getElementById("w6-piston"); if(!el) return;
   cancelAnimationFrame(PIS.raf);
-  const kind=st.pistonsim==="air"?"air":"bottle", key=st.id+"_placed";
+  const kind=st.pistonsim==="air"?"air":"block", key=st.id+"_placed";
   const W=el.clientWidth||1200, H=el.clientHeight||500, dpr=window.devicePixelRatio||1;
   el.innerHTML=`<canvas width="${Math.round(W*dpr)}" height="${Math.round(H*dpr)}" style="width:${W}px;height:${H}px;display:block;touch-action:none"></canvas>`;
   const cv=el.querySelector("canvas"), g=cv.getContext("2d"); g.scale(dpr,dpr);
@@ -358,31 +374,35 @@ function pistonSim(st){
     for(let k=0;k<36;k++){ const a=Math.random()*2*Math.PI, v=95+30*Math.random();
       c.p.push({x:c.x+8+Math.random()*(cw-16), y:floorY-8-Math.random()*(h0-16), vx:v*Math.cos(a), vy:v*Math.sin(a)}); } });
   const shelf={x:W*0.78, y:floorY};
-  const load={ w:kind==="air"?56:40, h:kind==="air"?56:80, x:0, y:0, on:false, drag:null, back:null };
+  const load={ w:kind==="air"?cw-2:84, h:kind==="air"?shelf.y:54, x:0, y:0, on:false, drag:null, back:null };   // the column: as wide as the piston, up past the top
   const restPos=()=>({x:shelf.x-load.w/2, y:shelf.y-load.h});
   Object.assign(load, restPos());
   if(A()[key+"_on"]){ load.on=true; C[1].h=C[1].target=h1; }
   const pistonY=(c,t)=>floorY-c.h+0.9*Math.sin(11*t+(c===C[0]?0:2))+0.6*Math.sin(19*t+1);
   const drawLoad=(x,y)=>{ g.save();
-    if(kind==="bottle"){ const w=load.w, h=load.h, r=8;
-      g.fillStyle="rgba(120,180,235,.35)"; g.strokeStyle="#9fd0ff"; g.lineWidth=2;
-      g.beginPath(); g.moveTo(x+w*0.32,y+10); g.lineTo(x+w*0.32,y+18); g.quadraticCurveTo(x,y+22,x,y+32); g.lineTo(x,y+h-r);
-      g.quadraticCurveTo(x,y+h,x+r,y+h); g.lineTo(x+w-r,y+h); g.quadraticCurveTo(x+w,y+h,x+w,y+h-r); g.lineTo(x+w,y+32);
-      g.quadraticCurveTo(x+w,y+22,x+w*0.68,y+18); g.lineTo(x+w*0.68,y+10); g.closePath(); g.fill(); g.stroke();
-      g.fillStyle="rgba(90,160,230,.55)"; g.fillRect(x+2,y+38,w-4,h-40);                                   // the water
-      g.fillStyle="#5e81b5"; g.fillRect(x+w*0.28,y+2,w*0.44,9);                                            // the cap
-      g.fillStyle=INK; g.font='700 11px Inter, sans-serif'; g.textAlign="center"; g.textBaseline="middle"; g.fillText("1.2 kg", x+w/2, y+h*0.64);
-    } else { const w=load.w, h=load.h;
-      g.fillStyle="rgba(160,205,240,.42)"; g.fillRect(x,y,w,h); g.setLineDash([5,4]); g.strokeStyle="#cfe3f2"; g.lineWidth=1.6; g.strokeRect(x,y,w,h); g.setLineDash([]);
-      g.fillStyle=INK; g.font='700 14px Inter, sans-serif'; g.textAlign="center"; g.textBaseline="middle"; g.fillText("AIR", x+w/2, y+h/2-7);
-      g.font='600 11px Inter, sans-serif'; g.fillText("1.2 kg", x+w/2, y+h/2+10); }
+    if(kind==="block"){ const w=load.w, th=14, fh=load.h-th;                 // a cinder block: its top (two hollow cores) and its face
+      g.fillStyle="#a3a49f"; g.fillRect(x,y,w,th); g.fillStyle="#3b3c3f";
+      const hw=w/2-15; g.fillRect(x+9,y+3,hw,th-6); g.fillRect(x+w/2+6,y+3,hw,th-6);
+      g.fillStyle="#808179"; g.fillRect(x,y+th,w,fh); g.strokeStyle="#c3c4bf"; g.lineWidth=1.2; g.strokeRect(x+0.5,y+0.5,w-1,load.h-1);
+      g.fillStyle=INK; g.font='700 13px Inter, sans-serif'; g.textAlign="center"; g.textBaseline="middle"; g.fillText("35 lb", x+w/2, y+th+fh/2);   // in pounds (Daniel, 2026-11-27): students convert
+    } else { const w=load.w, yb=y+load.h, yt=Math.max(0,y), fade=Math.min(320,yb-yt);   // the column: solid at its foot, fading out upward
+      const gr=g.createLinearGradient(0,yb,0,yb-fade); gr.addColorStop(0,"rgba(160,205,240,.42)"); gr.addColorStop(1,"rgba(160,205,240,0)");
+      g.fillStyle=gr; g.fillRect(x,yt,w,yb-yt);
+      const gl=g.createLinearGradient(0,yb,0,yb-fade); gl.addColorStop(0,"#cfe3f2"); gl.addColorStop(1,"rgba(207,227,242,0)");
+      g.setLineDash([5,4]); g.strokeStyle=gl; g.lineWidth=1.6; g.beginPath(); g.moveTo(x,yt); g.lineTo(x,yb); g.lineTo(x+w,yb); g.lineTo(x+w,yt); g.stroke(); g.setLineDash([]);
+      g.fillStyle=INK; g.textAlign="center"; g.textBaseline="middle";
+      g.font='700 14px Inter, sans-serif'; g.fillText("AIR", x+w/2, yb-44);
+      g.font='600 11px Inter, sans-serif'; g.fillText("1 m × 1 m across", x+w/2, yb-24);
+      g.fillStyle=MUT; g.fillText("↑ 13.5 m tall", x+w/2, yb-74); }
     g.restore(); };
   const gauge=(cx,cy,r,rel)=>{ g.save(); g.fillStyle="#16171a"; g.strokeStyle=INK; g.lineWidth=1.8; g.beginPath(); g.arc(cx,cy,r,0,7); g.fill(); g.stroke();
     for(let k=-5;k<=5;k++){ const th=(90-23*k)*Math.PI/180, r0=r*(k===0?0.70:0.80); g.strokeStyle=k===0?INK:MUT; g.lineWidth=k===0?1.6:1;
       g.beginPath(); g.moveTo(cx+r0*Math.cos(th),cy-r0*Math.sin(th)); g.lineTo(cx+0.93*r*Math.cos(th),cy-0.93*r*Math.sin(th)); g.stroke(); }
     const ang=Math.max(-115,Math.min(115,230*(rel-1))), th=(90-ang)*Math.PI/180;
     g.strokeStyle=INK; g.lineWidth=2.6; g.lineCap="round"; g.beginPath(); g.moveTo(cx,cy); g.lineTo(cx+0.8*r*Math.cos(th),cy-0.8*r*Math.sin(th)); g.stroke();
-    g.fillStyle=INK; g.beginPath(); g.arc(cx,cy,0.09*r,0,7); g.fill(); g.restore(); };
+    g.fillStyle=INK; g.beginPath(); g.arc(cx,cy,0.09*r,0,7); g.fill();
+    g.font='12px Inter, sans-serif'; g.textAlign="center"; g.textBaseline="bottom"; g.fillText("pressure", cx, cy-r-5);   // every gauge says what it reads (Daniel, 2026-11-26)
+    g.restore(); };
   // pointer: pick up the load, drop it near the right piston to snap, anywhere else to send it home
   const pt=e=>{ const r=cv.getBoundingClientRect(); return {x:e.clientX-r.left, y:e.clientY-r.top}; };
   const hit=q=>q.x>=load.x-6 && q.x<=load.x+load.w+6 && q.y>=load.y-6 && q.y<=load.y+load.h+6;
@@ -410,15 +430,16 @@ function pistonSim(st){
       g.fillStyle=PEARL; for(const q of c.p){ g.beginPath(); g.arc(q.x,q.y,4,0,7); g.fill(); }
       g.fillStyle="#6b7079"; g.fillRect(xl+1,py-PT,cw-2,PT); g.fillStyle="#9aa0a8"; g.fillRect(xl+1,py-PT,cw-2,3);
       g.fillStyle="#4d5158"; g.fillRect(xl+cw/2-3,py-PT-22,6,22); g.fillRect(xl+cw/2-14,py-PT-26,28,5);   // rod and knob, so it reads as a piston
-      const prx=xl+14, pry=floorY-16, gx=xl-52, gy=pry-6, gr=26;
-      g.strokeStyle=GREEN; g.globalAlpha=.85; g.lineWidth=1.4; g.beginPath(); g.moveTo(prx,pry); g.bezierCurveTo(prx-30,pry+18,gx+gr+20,gy-14,gx+gr,gy); g.stroke(); g.globalAlpha=1;
+      // probe in the lower corner on the OUTSIDE edge of each container: lower left for the left one, lower right for the
+      // right one (Daniel, 2026-11-27), its gauge just outside that wall
+      const sd=ci===1?1:-1, prx=ci===1?xr-14:xl+14, pry=floorY-16, gx=ci===1?xr+52:xl-52, gy=pry-6, gr=26, ex=gx-sd*gr;
+      g.strokeStyle=GREEN; g.globalAlpha=.85; g.lineWidth=1.4; g.beginPath(); g.moveTo(prx,pry); g.bezierCurveTo(prx+sd*30,pry+18,ex-sd*20,gy-14,ex,gy); g.stroke(); g.globalAlpha=1;
       g.fillStyle=GREEN; g.fillRect(prx-6,pry-6,12,12);
       gauge(gx,gy,gr,c.sig);
       if(ci===1 && load.on && !load.drag) drawLoad(xl+cw/2-load.w/2, py-PT-26-load.h);
     });
-    g.fillStyle=MUT; g.font='13px Inter, sans-serif'; g.textAlign="center"; g.fillText("each piston: 1 m² face", (C[0].x+C[1].x+cw)/2, floorY+24);
     // the shelf and the load when it isn't riding the piston
-    g.strokeStyle=WALL; g.lineWidth=2; g.beginPath(); g.moveTo(shelf.x-50,shelf.y+2); g.lineTo(shelf.x+50,shelf.y+2); g.stroke();
+    g.strokeStyle=WALL; g.lineWidth=2; g.beginPath(); g.moveTo(shelf.x-Math.max(50,load.w/2+10),shelf.y+2); g.lineTo(shelf.x+Math.max(50,load.w/2+10),shelf.y+2); g.stroke();
     if(load.back){ const u=Math.min(1,(now-load.back.t0)/350), R=restPos(); load.x=load.back.x0+(R.x-load.back.x0)*u; load.y=load.back.y0+(R.y-load.back.y0)*u; if(u>=1) load.back=null; }
     if(!load.on || load.drag) drawLoad(load.x, load.y);
     if(!load.on && !load.drag && !S.answers[key]){ g.fillStyle=MUT; g.font='13px Inter, sans-serif'; g.textAlign="center"; g.fillText("drag me", shelf.x, shelf.y+22); }
@@ -475,11 +496,14 @@ function stormMap(){
     if(t<0.45) bolt(c[0],c[1],1.3, (Math.floor(t*30)%3===1) ? 0.35 : 1);                 // a flickering bolt
     if(t<tLight){ const r=Rmax*t/tLight; g.strokeStyle=YEL; g.lineWidth=4; g.beginPath(); g.arc(c[0],c[1],r,0,7); g.stroke(); label("lightning", c[0], c[1]-r-14, YEL); }
     if(t<tThunder){ const r=343*t/mpp; g.strokeStyle="#ffffff"; g.lineWidth=3; g.beginPath(); g.arc(c[0],c[1],r,0,7); g.stroke(); if(r>6) label("thunder", c[0], c[1]-r-14, "#ffffff"); }
-    // a 1-mile scale bar, bottom center (Daniel, 2026-11-25)
-    { const L=1609.34/mpp, x0=W/2-L/2, x1=W/2+L/2, yb=H-22; g.lineCap="butt";
-      [["rgba(0,0,0,.85)",7],[INK,3]].forEach(([col,lw])=>{ g.strokeStyle=col; g.lineWidth=lw; g.beginPath();
-        g.moveTo(x0,yb-8); g.lineTo(x0,yb); g.lineTo(x1,yb); g.lineTo(x1,yb-8); g.stroke(); });
-      label("1 mile", W/2, yb-14, INK); }
+    // scale bars, bottom center: 1 mile (Daniel, 2026-11-25) and, just above it, 1 km (2026-11-28), both starting at the
+    // same left end so their lengths compare at a glance
+    { const Lm=1609.34/mpp, x0=W/2-Lm/2, g0=g; g.lineCap="butt";
+      const bar=(L,yb,txt)=>{ [["rgba(0,0,0,.85)",7],[INK,3]].forEach(([col,lw])=>{ g0.strokeStyle=col; g0.lineWidth=lw; g0.beginPath();
+        g0.moveTo(x0,yb-8); g0.lineTo(x0,yb); g0.lineTo(x0+L,yb); g0.lineTo(x0+L,yb-8); g0.stroke(); });
+        label(txt, x0+L/2, yb-14, INK); };
+      bar(Lm, H-22, "1 mile");
+      bar(1000/mpp, H-58, "1 kilometer"); }
     MAP.raf=requestAnimationFrame(frame); };
   MAP.raf=requestAnimationFrame(frame);
 }
@@ -542,7 +566,8 @@ css.textContent=`
 .w6-card th:first-child{width:34%;}
 .w6-flash{animation:w6flash 1.2s ease-out;}
 @keyframes w6flash{from{background:var(--band-amber);}}
-.w6-src{font-size:var(--fs-label);color:var(--muted);margin:0 14px 10px;}
+.w6-src{font-size:var(--fs-label);color:var(--muted);margin:0 14px 10px;display:flex;justify-content:space-between;gap:12px;}
+.w6-stat{color:var(--muted);font-style:italic;}
 .w6-src a,.w6-wait a{color:var(--accent);}
 .w6-wait{padding:30px;text-align:center;color:var(--muted);}
 .w6-big{font-size:22px;font-weight:700;color:var(--ink);margin-bottom:8px;}
@@ -561,6 +586,10 @@ body.w6-five .pstrip .plabel{text-transform:none;letter-spacing:0;}   /* "X = 2 
 .w6-replay{position:absolute;right:16px;bottom:16px;z-index:6;font:600 14px var(--font-sans);padding:8px 14px;border-radius:8px;border:1px solid rgba(255,255,255,.35);background:rgba(0,0,0,.55);color:#fff;cursor:pointer;}
 .w6-replay[hidden]{display:none;}
 body.w6-voice .pstrip input[type=file]{display:none;}
+/* a thumbnail clip inside a step's feedback (s-intro's slow-motion speaker, 2026-11-27) */
+.w6-fbvid{display:block;width:180px;max-width:100%;border-radius:6px;margin:8px 0 4px;}
+.w6-credit{display:block;font-size:var(--fs-label);color:var(--muted);}
+.w6-credit a{color:var(--accent);}
 #w6-map .w6-tiles{position:absolute;inset:0;filter:invert(1) hue-rotate(180deg) brightness(.85) contrast(.9) saturate(.6);}   /* OSM's light map, turned dark */
 #w6-map .w6-tiles img{position:absolute;max-width:none;user-select:none;pointer-events:none;}
 #w6-map .w6-mapcv{position:absolute;left:0;top:0;}
@@ -593,3 +622,100 @@ body.w6-stair4 #stepbody .inputs{grid-template-columns:repeat(4,max-content)!imp
 document.head.appendChild(css);
 if(NARR[S.step]) renderStep();
 })();
+
+
+
+/* ------------------------------ approximate word positions under a voice (`v1`, `v2`; Daniel, 2026-11-27) ------------------------------
+   The sentence is KNOWN (the `.lc-say` line on the recording step, read aloud), so no speech recognition: the words are
+   placed from the recording's loudness alone, on the laptop. (1) A 10 ms RMS envelope, smoothed over 30 ms, in decibels; the
+   noise floor is its 10th percentile. (2) The speech is the biggest run of loud frames (short gaps bridged), eased out to where it fades. (3) The
+   words share that stretch as they do when Daniel says it (SAY_SEED; by syllables for another sentence). (4) Each boundary
+   between words then moves to a quiet dip nearby: a small dynamic program over the dips (local minima of the envelope),
+   each scored by how quiet it is and how far it moves the boundary, keeping the words in order and at least 70 ms long.
+   Labeled on the plot as approximate. Run-together words ("minor changes") can land a little off. */
+// Daniel saying the sentence naturally (2026-11-27, a phone recording): each word's share of the time from the first sound
+// to the last. Found by aligning the recording against eight synthesized readings (espeak-ng, four voices x two speeds,
+// MFCC + DTW); the eight agreed to within 0.05 s at every boundary. Not even: "in" takes 4 %, "pressure" 13 %.
+const SAY_SEED={ words:"to speak is to make minor changes in pressure over time".split(" "),   // "hear" -> "speak", "sense" -> "make" (2026-11-27): one syllable for one, the shares kept
+  share:[0.064, 0.103, 0.070, 0.052, 0.104, 0.103, 0.126, 0.043, 0.129, 0.109, 0.096] };
+function sayLine(){
+  for(const s of NARR){ const m=/lc-say[^>]*>([^<]*)</.exec(s.lead||""); if(m) return m[1].replace(/["“”]/g,"").trim(); }
+  return "";
+}
+function syllables(w){
+  w=w.toLowerCase().replace(/[^a-z]/g,""); if(!w) return 1;
+  let n=(w.match(/[aeiouy]+/g)||[]).length;
+  if(/[^aeiouy]e$/.test(w) && !/le$/.test(w) && n>1) n--;            // a silent final e: "time", "sense", "pressure"
+  return Math.max(1,n);
+}
+function voiceWords(P){
+  const s=series(P); if(!s || s.t.length<2000) return null;
+  if(P._words && P._words.ds===P.ds) return P._words.w;
+  const words=sayLine().split(/\s+/).filter(Boolean); if(!words.length) return null;
+  const n=s.t.length, span=s.t[n-1]-s.t[0], sec=span>100?0.001:1;    // the plot's time unit: s (or ms)
+  const dt=span*sec/(n-1), fl=Math.max(1,Math.round(0.01/dt)), nf=Math.floor(n/fl);
+  let mean=0; for(let i=0;i<n;i++) mean+=s.a[i]; mean/=n;
+  const E=new Float64Array(nf);
+  for(let k=0;k<nf;k++){ let q=0; for(let i=k*fl;i<(k+1)*fl;i++){ const v=s.a[i]-mean; q+=v*v; } E[k]=Math.sqrt(q/fl); }
+  const Es=E.map((_,k)=>(E[Math.max(0,k-1)]+E[k]+E[Math.min(nf-1,k+1)])/3);
+  const srt=Array.from(Es).sort((a,b)=>a-b), floor=srt[Math.floor(0.10*nf)], peak=srt[Math.floor(0.98*nf)];
+  if(!(peak>floor*2.5)) return (P._words={ds:P.ds, w:null}).w;        // no clear speech
+  // judged in DECIBELS (2026-11-27: on a linear scale the soft hiss of a final "s" looked like silence, and a boundary
+  // fell inside "sense"): L is the envelope's log, 0 at the noise floor and 1 near the loudest vowels
+  const lf=Math.log(floor+1e-9), lp=Math.log(peak), L=Es.map(v=>(Math.log(v+1e-9)-lf)/(lp-lf));
+  // the SENTENCE is the biggest run of loud frames, gaps under 0.35 s bridged: a click or a cough well before or after it
+  // is left out (2026-11-27: a tap at the end of Daniel's recording had stretched the speech by a second). Its ends then
+  // ease outward to where the sound fades into the floor, to catch a soft first "h" or a last "s".
+  const segs=[]; let k=0;
+  while(k<nf){ if(L[k]>0.4){ let e=k; while(e+1<nf && L[e+1]>0.4) e++; if(e-k>=2) segs.push([k,e]); k=e+1; } else k++; }
+  if(!segs.length) return (P._words={ds:P.ds, w:null}).w;
+  const gapF=Math.round(0.35/(fl*dt)), runs=[];
+  segs.forEach(sg=>{ const r=runs[runs.length-1]; if(r && sg[0]-r[1]<=gapF){ r[1]=sg[1]; r.push(sg); } else runs.push([sg[0],sg[1],sg]); });
+  const mass=r=>{ let m=0; for(let q=r[0];q<=r[1];q++) m+=Math.max(0,L[q]); return m; };
+  const best=runs.reduce((a,b)=>mass(b)>mass(a)?b:a);
+  let k0=best[0], k1=best[1];
+  while(k0>0 && L[k0-1]>0.2 && best[0]-k0<15) k0--;
+  while(k1<nf-1 && L[k1+1]>0.2 && k1-best[1]<15) k1++;
+  if(k1-k0 < words.length*5) return (P._words={ds:P.ds, w:null}).w;
+  // the first guess, in frames: each word's share of the sentence as Daniel says it (SEED, from his recording); for any
+  // other sentence, shares by syllable count
+  const seed=SAY_SEED.words.join(" ").toLowerCase()===words.join(" ").toLowerCase().replace(/[.,!?;:]/g,"") ? SAY_SEED.share : null;
+  const wt=seed || words.map(w=>syllables(w)+0.4), W=wt.reduce((a,b)=>a+b,0);
+  const guess=[]; let c=0; for(let j=0;j<words.length-1;j++){ c+=wt[j]; guess.push(k0+(k1-k0)*c/W); }
+  // the quiet dips: local minima of the smoothed envelope inside the speech
+  const dips=[]; for(let k=k0+3;k<k1-3;k++) if(Es[k]<=Es[k-1] && Es[k]<=Es[k+1] && Es[k]<=Es[k-2] && Es[k]<=Es[k+2]) dips.push(k);
+  const avgW=(k1-k0)/words.length, minW=7;
+  // DP: boundary j takes its guess (unsnapped, a small fixed cost) or one dip; cost = quietness + shift^2
+  const cost=(j,k)=>{ const sh=(k-guess[j])/(0.45*avgW); return 4.0*Math.max(0,L[k]) + 0.5*sh*sh; };   // a real pause outweighs a near one
+  const cands=guess.map((g,j)=>{ const L=[{k:Math.round(g), c:1.6}];
+    dips.forEach(k=>{ if(Math.abs(k-g)<0.8*avgW) L.push({k, c:cost(j,k)}); }); return L; });
+  let prev=[{k:k0, c:0, path:[]}];
+  for(let j=0;j<cands.length;j++){
+    const cur=[];
+    for(const cd of cands[j]){ let best=null;
+      for(const p of prev){ if(cd.k-p.k<minW) continue; const tot=p.c+cd.c; if(!best || tot<best.c) best={k:cd.k, c:tot, path:p.path.concat(cd.k)}; }
+      if(best) cur.push(best); }
+    if(!cur.length){ prev=null; break; } prev=cur; }
+  let B; if(prev){ const fin=prev.filter(p=>k1-p.k>=minW).sort((a,b)=>a.c-b.c)[0]; B=fin ? fin.path : guess.map(Math.round); }
+  else B=guess.map(Math.round);
+  const edges=[k0].concat(B,[k1]), t=k=>s.t[0]+(k*fl+fl/2)*dt/sec;
+  const out=words.map((w,j)=>({w, t0:t(edges[j]), t1:t(edges[j+1])}));
+  P._words={ds:P.ds, w:out}; return out;
+}
+function drawVoiceWords(P, ctx, G){
+  const W=voiceWords(P); if(!W) return;
+  const yb=G.mT+G.ph-4, cs=getComputedStyle(document.documentElement), BG=(cs.getPropertyValue("--plot-bg")||cs.getPropertyValue("--bg")).trim()||"#141417";
+  ctx.save(); ctx.font='11px Inter, system-ui, sans-serif'; ctx.textAlign="center"; ctx.textBaseline="bottom";
+  ctx.strokeStyle=getComputedStyle(document.documentElement).getPropertyValue("--line").trim()||"#444"; ctx.lineWidth=1;
+  ctx.fillStyle=getComputedStyle(document.documentElement).getPropertyValue("--ink").trim()||"#eee";
+  W.forEach((x,j)=>{ const a=G.tx(x.t0), b=G.tx(x.t1);
+    if(j>0){ ctx.beginPath(); ctx.moveTo(a,yb-14); ctx.lineTo(a,yb+2); ctx.stroke(); }
+    const lab=x.w.replace(/[.,!?;:]+$/,""), wd=ctx.measureText(lab).width, cx=(a+b)/2;
+    ctx.save(); ctx.globalAlpha=.82; ctx.fillStyle=BG; ctx.fillRect(cx-wd/2-3, yb-13, wd+6, 14); ctx.restore();   // legible over the trace
+    ctx.fillText(lab, cx, yb); });
+  ctx.fillStyle=getComputedStyle(document.documentElement).getPropertyValue("--muted").trim()||"#999";
+  ctx.font='italic 11px Inter, system-ui, sans-serif'; ctx.textAlign="right"; ctx.textBaseline="top";
+  ctx.fillText("word positions are approximate", G.mL+G.px-6, G.mT+4);
+  ctx.restore();
+}
+try{ (CONFIG.panels||[]).forEach(d=>{ if(d.key==="v1"||d.key==="v2") d.annot=drawVoiceWords; }); }catch(e){}

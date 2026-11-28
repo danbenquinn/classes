@@ -202,6 +202,9 @@
   .plotreadout{position:absolute;left:64px;top:8px;z-index:2;display:none;line-height:1.5;pointer-events:none;
     font-variant-numeric:tabular-nums;}
   .plotreadout .formula,.plotreadout .ro{display:block;color:var(--result);font-size:var(--fs-ui);font-weight:600;}
+  /* in a dense stack the readout sits in the panel's header strip, right of Signal (2026-11-28) */
+  .plotreadout.in-strip{position:static;margin-left:auto !important;line-height:1.2;overflow:hidden;text-overflow:ellipsis;}
+  .plotreadout.in-strip .formula,.plotreadout.in-strip .ro,.plotreadout.in-strip .r2{display:inline;margin:0 0 0 10px;}
   .plotreadout .formula{font-family:var(--font-mono);font-size:12px;font-weight:400;}
   .plotreadout .ro-sub{color:var(--muted);font-weight:400;}
   .plotreadout .ro-ctx{color:var(--edge);font-weight:400;}   /* amber "over X s" context, beside the green value */

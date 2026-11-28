@@ -157,7 +157,7 @@ function onMessage(m) {
   else if (m.type === "start") {
     if (m.say != null) setSay(m.say);
     run = m.run; state = "rec"; want = +m.rate || 0; const secs = +m.seconds || 0.25; secsWant = secs;
-    show("rec", "Recording", secs >= 1 ? secs + " s left." : "A quarter of a second, starting now.");
+    show("rec", "Recording", secs >= 1 ? secs + " s left." : (Math.abs(secs - 0.125) < 1e-6 ? "An eighth of a second" : Math.abs(secs - 0.25) < 1e-6 ? "A quarter of a second" : secs + " s") + ", starting now.");
     node.port.postMessage({ n: Math.round((+m.seconds || 0.25) * sr) });
   } else if (m.type === "release") { state = "released"; stopMic();
     show("", "Done", (m.why === "leave" ? "The deck has moved on" : "All recordings are in") + ", and the microphone is off. You can close this page.", "Connect again"); }
